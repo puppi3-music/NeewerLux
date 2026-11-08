@@ -38,7 +38,7 @@ uv run NeewerLux.py
 With pip:
 
 ```
-pip install "PySide6>=6.7,<7" "bleak>=0.22,<4"
+pip install "PySide6>=6.7,<7" "bleak>=0.22,<4" "sounddevice>=0.5" "numpy>=1.26" "python-rtmidi>=1.5"
 python NeewerLux.py
 ```
 
@@ -87,6 +87,34 @@ An animation is a list of keyframes. Each keyframe holds a colour for some time,
 Playback settings: speed (0.25x to 4x), update rate during fades (1 to 30 per second, default 5), brightness scaling (applied at playback, the file is unchanged), looping, and whether to return the lights to their previous state when the animation ends. With parallel writes on, every light is updated at once rather than one after another, which keeps fades smooth with several lights; turn it off if your Bluetooth adapter struggles.
 
 New animations can start from one of six templates, or be built in the animation editor, which works on keyframes as a table with a live colour preview and a JSON tab for direct editing. Animation files are JSON in `light_prefs/animations` and target lights by name, number, MAC address, or `*` for all of them.
+
+### Sound reactive
+
+The Sound tab drives the lights from audio. It listens to an input device several times a second (15 by default) and splits the sound into bass, mids and highs. It also picks out beats, and it adjusts to the volume automatically, so quiet and loud tracks both use the full brightness range. Modes:
+
+- **Spectrum colour**: the colour follows the pitch of the sound. Bass goes red/orange, vocals green, hi-hats blue/violet. Brightness follows loudness.
+- **Beat colour jump**: a new colour on every beat.
+- **Bass pulse**: brightness pumps to the kick and bass, and the colour follows how hard it hits: soft bass on the first palette colour, hard kicks and each beat (including MIDI clock beats) toward the last. On Auto it stays blue.
+- **Frequency bands**: light 1 follows the bass (red), light 2 the mids (green), light 3 the highs (blue), repeating. A single light blends all three.
+- **Rainbow drift**: the colour moves round the wheel, faster when the music is louder.
+
+The **Colours** row picks the colours the modes use. *Auto* keeps the colours described above. The other presets are Rainbow, Club, Fire, Ice, Sunset, Ocean, Forest, Red & blue and Purple haze, and each mode then uses only those colours: spectrum colour runs from the first colour (low sounds) to the last (high sounds), beat jump steps between them, bass pulse uses the first, frequency bands use the first three, and rainbow drift fades through them all. Click a colour to change it with a colour wheel, swatches or the system picker, and use + and − to add or remove colours (up to 8). Editing a preset turns it into *Custom*, which is remembered.
+
+**Beats from the sound.** NeewerLux analyses the sound about 94 times a second and spots kicks as sudden jumps in the bass, so a long 808 or a rolling bassline doesn't hide them and soft kicks in quiet passages still count. After about 4 s of a steady beat it finds the tempo (70-180 BPM) and fires each beat on time, early by **Beat lead** to make up for Bluetooth, instead of after the kick is heard; the status line shows the tempo. In a breakdown without kicks it lets go after 4 beats and follows the sound again. Untick **Predict beats from the tempo** to flash on every kick as it is heard.
+
+**Beats from MIDI clock.** A MIDI clock is exact even when the music has no clear kick. DJ software can instead send MIDI clock, its exact tempo and beat position, and NeewerLux can follow it: pick the MIDI input under **Beats from**. Beat effects then land on every beat, and **Colour every** (say 4 beats) changes colour on the bar lines. **Beat lead** fires each beat a little early (50 ms by default) to make up for Bluetooth delay; raise it if the lights land after the kick. If the clock stops, beats come from the sound again until it returns. In Traktor: Preferences > MIDI Clock > tick *Send MIDI Clock*; in Controller Manager add a Generic MIDI device with Out-Port *Traktor Virtual Output*; press the clock-send button in the Master Clock panel, then pick *Traktor Virtual Output* in NeewerLux. If the bar count drifts off the downbeat, press Sync in Traktor's Master Clock panel. Needs `python-rtmidi`, which `uv sync` installs.
+
+Sensitivity, smoothing, colour fade (how smoothly Bass pulse and Beat colour jump glide between colours, separate from smoothing so brightness stays punchy), the brightness range, saturation and the update rate can all be changed while it runs. It drives every connected light, or only the selected ones. Starting an animation stops sound mode, and the other way round.
+
+To follow what your computer is playing rather than a microphone, send the output through a loopback device and pick that device in the Sound tab:
+
+- **macOS**: install [BlackHole](https://existential.audio/blackhole/). In Audio MIDI Setup, create a Multi-Output Device containing your speakers and BlackHole, and make it the sound output. Then choose BlackHole in NeewerLux. The first time, macOS asks for microphone access.
+- **Windows**: enable Stereo Mix in Sound settings, or install VB-Cable.
+- **Linux**: choose the "Monitor of ..." source for your output.
+
+### Text size
+
+**A−** and **A+** in the toolbar change the size of all text, as do Ctrl/Cmd + and −. Ctrl/Cmd 0 resets it. The size is remembered. On macOS the default is 130%.
 
 ## Remote control
 

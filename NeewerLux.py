@@ -82,7 +82,7 @@ PYSIDE_VERSION = 0
 # IMPORT PYSIDE6 (preferred, actively maintained) OR PYSIDE2 (legacy fallback)
 try:
     import PySide6
-    from PySide6.QtCore import Qt, QItemSelectionModel, Signal as QtSignal
+    from PySide6.QtCore import Qt, QItemSelectionModel, QTimer, Signal as QtSignal
     from PySide6.QtGui import QLinearGradient, QColor, QKeySequence, QFont, QIcon, QShortcut
     from PySide6.QtWidgets import QApplication, QMainWindow, QTableWidgetItem, QMessageBox, QInputDialog, QListWidgetItem, QSizePolicy, QPushButton
     PYSIDE_VERSION = 6
@@ -91,7 +91,7 @@ except Exception as e:
     print(f"  [DEBUG] PySide6 import failed: {type(e).__name__}: {e}")
     try:
         import PySide2
-        from PySide2.QtCore import Qt, QItemSelectionModel, Signal as QtSignal
+        from PySide2.QtCore import Qt, QItemSelectionModel, QTimer, Signal as QtSignal
         from PySide2.QtGui import QLinearGradient, QColor, QKeySequence, QFont, QIcon
         from PySide2.QtWidgets import QApplication, QMainWindow, QTableWidgetItem, QShortcut, QMessageBox, QInputDialog, QListWidgetItem, QSizePolicy, QPushButton
         PYSIDE_VERSION = 2
@@ -305,6 +305,7 @@ defaultLightPresetsFile = customLightPresetsFile + ".default"
 # undone by copying the shipped presets back in.
 presetsSeededMarkerFile = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + ".presets_seeded"
 geometryPrefsFile = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "NeewerLux.geometry"
+soundPresetsFile = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "sound_presets.json"
 logFilePath = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "NeewerLux.log"
 
 # FILE LOCKING FOR SINGLE INSTANCE
@@ -422,7 +423,8 @@ try: # try to load the GUI
             # Initialize theme (dark by default)
             self._isDarkTheme = True
             self._forceQuit = False
-            QApplication.instance().setStyleSheet(getThemeQSS(True))
+            self._fontScale = self._loadFontScale()
+            QApplication.instance().setStyleSheet(getThemeQSS(True, self._fontScale))
             self.themeToggleBtn.setText("\u263E")  # moon symbol
 
             # Set window icon (shown in taskbar and title bar)
@@ -1654,6 +1656,19 @@ try: # try to load the GUI
 
             # THEME TOGGLE
             self.themeToggleBtn.clicked.connect(self.toggleTheme)
+
+            # TEXT SIZE: toolbar buttons + Ctrl/Cmd +, -, 0
+            self.fontLargerBtn.clicked.connect(lambda: self.setFontScale(self._fontScale + 0.1))
+            self.fontSmallerBtn.clicked.connect(lambda: self.setFontScale(self._fontScale - 0.1))
+            for seq, fn in (("Ctrl+=", lambda: self.setFontScale(self._fontScale + 0.1)),
+                            ("Ctrl++", lambda: self.setFontScale(self._fontScale + 0.1)),
+                            ("Ctrl+-", lambda: self.setFontScale(self._fontScale - 0.1)),
+                            ("Ctrl+0", lambda: self.setFontScale(self.DEFAULT_FONT_SCALE))):
+                sc = QShortcut(QKeySequence(seq), self)
+                sc.activated.connect(fn)
+
+            # SOUND REACTIVE TAB
+            self.soundSetup()
 
             # HTTP SERVER TOGGLE
             self.httpToggleBtn.clicked.connect(self.toggleHTTPServer)
@@ -3030,10 +3045,352 @@ try: # try to load the GUI
         # === THEME TOGGLE ===
         def toggleTheme(self):
             self._isDarkTheme = not self._isDarkTheme
-            qss = getThemeQSS(self._isDarkTheme)
+            qss = getThemeQSS(self._isDarkTheme, self._fontScale)
             QApplication.instance().setStyleSheet(qss)
             self.themeToggleBtn.setText("\u263E" if self._isDarkTheme else "\u2600")
             self.themeToggleBtn.setToolTip("Switch to light theme" if self._isDarkTheme else "Switch to dark theme")
+
+        # === TEXT SIZE ===
+        # Default is larger on macOS, where Qt draws a point as one pixel and 10pt is tiny.
+        DEFAULT_FONT_SCALE = 1.3 if platform.system() == "Darwin" else 1.0
+
+        def _loadFontScale(self):
+            try:
+                with open(geometryPrefsFile, "r", encoding="utf-8") as f:
+                    return float(json.load(f).get("fontScale", self.DEFAULT_FONT_SCALE))
+            except Exception:
+                return self.DEFAULT_FONT_SCALE
+
+        def setFontScale(self, scale):
+            from neewerlux_theme import FONT_SCALE_MIN, FONT_SCALE_MAX
+            self._fontScale = round(max(FONT_SCALE_MIN, min(FONT_SCALE_MAX, scale)), 2)
+            QApplication.instance().setStyleSheet(getThemeQSS(self._isDarkTheme, self._fontScale))
+            self.statusBar.showMessage("Text size " + str(int(round(self._fontScale * 100))) + "%", 2000)
+            self.saveWindowGeometry()
+
+        # === SOUND REACTIVE ===
+        def soundSetup(self):
+            from neewerlux_audio import MODES, MODE_HELP, AUDIO_AVAILABLE, AUDIO_IMPORT_ERROR
+            self._soundModeHelp = MODE_HELP
+            self.soundModeCombo.addItems(MODES)
+            self.soundModeCombo.currentTextChanged.connect(self._soundSettingsChanged)
+            for sp in (self.soundSensSpin, self.soundSmoothSpin, self.soundMinBriSpin, self.soundMaxBriSpin,
+                       self.soundSatSpin, self.soundRateSpin, self.soundColourFadeSpin):
+                sp.valueChanged.connect(self._soundSettingsChanged)
+            self.soundAllLightsCheck.toggled.connect(self._soundSettingsChanged)
+            self.soundPalette.changed.connect(self._soundSettingsChanged)
+            self.soundRefreshButton.clicked.connect(self.soundRefreshDevices)
+            self.soundBeatSourceCombo.currentIndexChanged.connect(self._soundApplyClock)
+            self.soundClockLeadSpin.valueChanged.connect(self._soundSettingsChanged)
+            self.soundBeatsPerColourSpin.valueChanged.connect(self._soundSettingsChanged)
+            self.soundClockNeedsSoundCheck.toggled.connect(self._soundSettingsChanged)
+            self.soundPredictBeatsCheck.toggled.connect(self._soundSettingsChanged)
+            self._midiClock = None
+            self.soundStartButton.clicked.connect(self.soundStart)
+            self.soundStopButton.clicked.connect(self.soundStop)
+            self._soundTimer = QTimer(self)
+            self._soundTimer.setInterval(50)
+            self._soundTimer.timeout.connect(self._soundTick)
+            if not AUDIO_AVAILABLE:
+                self.soundStartButton.setEnabled(False)
+                self.soundStatusLabel.setText("Sound reactive needs the sounddevice and numpy packages: "
+                                              "run 'uv sync' (or pip install sounddevice numpy). " + AUDIO_IMPORT_ERROR)
+            else:
+                self.soundRefreshDevices()
+            self.soundPresetSaveButton.clicked.connect(self._soundPresetSave)
+            self.soundPresetDeleteButton.clicked.connect(self._soundPresetDelete)
+            self.soundPresetCombo.activated.connect(self._soundPresetLoad)
+            self._soundPresetsRefresh()
+            self._soundSettingsChanged()
+
+        _SOUND_SPINS = (("sensitivity", "soundSensSpin"), ("smoothing", "soundSmoothSpin"),
+                        ("minBri", "soundMinBriSpin"), ("maxBri", "soundMaxBriSpin"),
+                        ("saturation", "soundSatSpin"), ("colourFade", "soundColourFadeSpin"),
+                        ("rate", "soundRateSpin"), ("clockLead", "soundClockLeadSpin"),
+                        ("beatsPerColour", "soundBeatsPerColourSpin"))
+
+        def _soundCollect(self):
+            """The Sound tab settings a preset holds (not the input device or beat source)."""
+            d = {key: getattr(self, attr).value() for key, attr in self._SOUND_SPINS}
+            d.update({
+                "mode": self.soundModeCombo.currentText(),
+                "palettePreset": self.soundPalette.presetName(),
+                "palette": self.soundPalette.palette() if self.soundPalette.presetName() == "Custom" else None,
+                "allLights": self.soundAllLightsCheck.isChecked(),
+                "clockNeedsSound": self.soundClockNeedsSoundCheck.isChecked(),
+                "predictBeats": self.soundPredictBeatsCheck.isChecked(),
+            })
+            return d
+
+        def _soundApply(self, snd):
+            pos = self.soundModeCombo.findText(snd.get("mode", ""))
+            if pos >= 0:
+                self.soundModeCombo.setCurrentIndex(pos)
+            for key, attr in self._SOUND_SPINS:
+                if key in snd:
+                    getattr(self, attr).setValue(int(snd[key]))
+            for key, chk in (("allLights", self.soundAllLightsCheck),
+                             ("clockNeedsSound", self.soundClockNeedsSoundCheck),
+                             ("predictBeats", self.soundPredictBeatsCheck)):
+                if key in snd:
+                    chk.setChecked(bool(snd[key]))
+            if snd.get("palettePreset"):
+                self.soundPalette.setPalette(snd["palettePreset"], snd.get("palette"))
+
+        def _soundPresetsRead(self):
+            try:
+                with open(soundPresetsFile, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                return data if isinstance(data, dict) else {}
+            except Exception:
+                return {}
+
+        def _soundPresetsWrite(self, presets):
+            try:
+                createLightPrefsFolder()
+                with open(soundPresetsFile, "w", encoding="utf-8") as f:
+                    json.dump(presets, f, indent=1)
+                return True
+            except Exception as e:
+                QMessageBox.warning(self, "Sound Presets", "Couldn't save the presets:\n" + str(e))
+                return False
+
+        def _soundPresetsRefresh(self, select=None):
+            names = sorted(self._soundPresetsRead(), key=str.lower)
+            combo = self.soundPresetCombo
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItems(names)
+            if not names:
+                combo.addItem("(no presets saved)")
+                combo.setEnabled(False)
+            else:
+                combo.setEnabled(True)
+                combo.setCurrentIndex(names.index(select) if select in names else -1)
+            combo.blockSignals(False)
+            self.soundPresetDeleteButton.setEnabled(bool(names))
+
+        def _soundPresetLoad(self, *args):
+            name = self.soundPresetCombo.currentText()
+            snd = self._soundPresetsRead().get(name)
+            if snd:
+                self._soundApply(snd)
+                self.statusBar.showMessage("Loaded sound preset \"" + name + "\"", 3000)
+
+        def _soundPresetSave(self):
+            presets = self._soundPresetsRead()
+            current = self.soundPresetCombo.currentText() if presets else ""
+            name, ok = QInputDialog.getText(self, "Save Sound Preset", "Preset name:", text=current)
+            name = (name or "").strip()
+            if not ok or not name:
+                return
+            if name in presets and name != current:
+                reply = QMessageBox.question(self, "Save Sound Preset",
+                                             "A preset called \"" + name + "\" already exists. Replace it?")
+                if reply != QMessageBox.Yes:
+                    return
+            presets[name] = self._soundCollect()
+            if self._soundPresetsWrite(presets):
+                self._soundPresetsRefresh(select=name)
+                self.statusBar.showMessage("Saved sound preset \"" + name + "\"", 3000)
+
+        def _soundPresetDelete(self):
+            name = self.soundPresetCombo.currentText()
+            presets = self._soundPresetsRead()
+            if name not in presets:
+                return
+            reply = QMessageBox.question(self, "Delete Sound Preset", "Delete the preset \"" + name + "\"?")
+            if reply != QMessageBox.Yes:
+                return
+            del presets[name]
+            if self._soundPresetsWrite(presets):
+                self._soundPresetsRefresh()
+
+        def soundRefreshDevices(self):
+            from neewerlux_audio import listInputDevices, preferredDeviceIndex
+            current = self.soundDeviceCombo.currentText()
+            self.soundDeviceCombo.clear()
+            devices = listInputDevices(rescan=soundEngine is None or not soundEngine.running)
+            for idx, name, ch, rate in devices:
+                self.soundDeviceCombo.addItem(name, idx)
+            want = current or getattr(self, "_soundSavedDevice", "")
+            pos = self.soundDeviceCombo.findText(want) if want else -1
+            if pos < 0:
+                pos = self.soundDeviceCombo.findData(preferredDeviceIndex(devices))
+            if pos >= 0:
+                self.soundDeviceCombo.setCurrentIndex(pos)
+            if not devices:
+                self.soundStatusLabel.setText("No audio input devices found")
+            self.soundRefreshMidi()
+
+        def soundRefreshMidi(self):
+            from neewerlux_midi import listPorts, MIDI_AVAILABLE
+            combo = self.soundBeatSourceCombo
+            want = getattr(self, "_soundSavedBeatSource", None)
+            if want is None:
+                want = combo.currentData() or ""
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem("The sound (detect kicks)", "")
+            for p in listPorts():
+                combo.addItem("MIDI clock: " + p, p)
+            if not MIDI_AVAILABLE:
+                combo.setToolTip("MIDI clock needs the python-rtmidi package: run 'uv sync'.")
+            pos = combo.findData(want) if want else 0
+            if want and pos < 0:  # saved port not plugged in now: keep it listed, it is opened when it appears
+                combo.addItem("MIDI clock: " + want + " (not found)", want)
+                pos = combo.count() - 1
+            combo.setCurrentIndex(max(0, pos))
+            combo.blockSignals(False)
+            self._soundApplyClock()
+
+        def _soundApplyClock(self, *args):
+            """Open the chosen MIDI clock port (or none) and hand it to the engine."""
+            port = self.soundBeatSourceCombo.currentData() or ""
+            self._soundSavedBeatSource = port
+            clock = self._midiClock
+            if clock is not None and clock.portName != port:
+                clock.close()
+            err = ""
+            if port and soundEngine is not None and soundEngine.running:
+                if clock is None:
+                    from neewerlux_midi import MidiClock
+                    clock = self._midiClock = MidiClock()
+                if clock.portName != port:
+                    err = clock.open(port)
+            if soundEngine is not None:
+                soundEngine.clock = clock if (port and clock is not None and clock.portName == port) else None
+            self._soundClockError = err
+            self._soundShowClockBadge()
+
+        def _soundShowClockBadge(self, state=None):
+            """Badge next to Beats from: off / waiting / linked with the tempo."""
+            if not self.soundBeatSourceCombo.currentData():
+                text, colour = "", None
+            elif state is None:
+                text, colour = "\u25CB MIDI not linked", "#888"
+            elif state == "error":
+                text, colour = "\u2715 MIDI port missing", "#e05555"
+            elif state == "waiting":
+                text, colour = "\u25CB Waiting for clock", "#d9a400"
+            elif state == "quiet":
+                text, colour = "\u25CB Clock paused (quiet)", "#d9a400"
+            else:
+                text, colour = "\u25CF MIDI linked " + state, "#2fbf4f"
+            if text != self.soundClockBadge.text():
+                self.soundClockBadge.setText(text)
+                self.soundClockBadge.setStyleSheet("color: " + colour + "; font-weight: bold;" if colour else "")
+
+        def _soundTargets(self):
+            if self.soundAllLightsCheck.isChecked():
+                return list(range(len(availableLights)))
+            return sorted(self.selectedLights())
+
+        def _soundSettingsChanged(self, *args):
+            mode = self.soundModeCombo.currentText()
+            self.soundModeHelp.setText(getattr(self, "_soundModeHelp", {}).get(mode, ""))
+            if soundEngine is None:
+                return
+            e = soundEngine
+            e.mode = mode
+            e.sensitivity = self.soundSensSpin.value() / 100.0
+            e.smoothing = self.soundSmoothSpin.value() / 100.0
+            e.colourFade = self.soundColourFadeSpin.value() / 100.0
+            e.minBri = self.soundMinBriSpin.value()
+            e.maxBri = self.soundMaxBriSpin.value()
+            e.saturation = self.soundSatSpin.value()
+            e.palette = self.soundPalette.palette()
+            e.fps = self.soundRateSpin.value()
+            e.targets = self._soundTargets()
+            e.clockLeadMs = self.soundClockLeadSpin.value()
+            e.beatsPerColour = self.soundBeatsPerColourSpin.value()
+            e.clockNeedsSound = self.soundClockNeedsSoundCheck.isChecked()
+            e.predictBeats = self.soundPredictBeatsCheck.isChecked()
+
+        def soundStart(self):
+            if self.soundDeviceCombo.count() == 0:
+                self.soundStatusLabel.setText("No audio input device selected")
+                return
+            if not availableLights:
+                self.soundStatusLabel.setText("No lights connected yet. Meters will still move; scan and connect to drive lights.")
+            if animationRunning:
+                self.animStop()
+            global animParallelWrites
+            animParallelWrites = self.animParallelCheck.isChecked()
+            engine = getSoundEngine()
+            self._soundSettingsChanged()
+            err = engine.start(self.soundDeviceCombo.currentData())
+            if err:
+                self.soundStatusLabel.setText(err)
+                return
+            self.soundStartButton.setEnabled(False)
+            self.soundStopButton.setEnabled(True)
+            self._soundStartedAt = time.monotonic()
+            self._soundDeviceName = self.soundDeviceCombo.currentText()  # changing the list later doesn't switch device
+            self._soundStatusShown = ""
+            self.soundStatusLabel.setText("Opening " + self.soundDeviceCombo.currentText() + "...")
+            self._soundApplyClock()
+            self._soundTimer.start()
+
+        def soundStop(self):
+            stopSoundReactive()
+            if self._midiClock is not None:
+                self._midiClock.close()
+            self._soundTimer.stop()
+            self.soundStartButton.setEnabled(True)
+            self.soundStopButton.setEnabled(False)
+            self.soundStatusLabel.setText("Stopped")
+            self._soundShowClockBadge()
+            for bar in self.soundMeters.values():
+                bar.setValue(0)
+
+        def _soundTick(self):
+            e = soundEngine
+            if e is None or not e.running:
+                err = e.state.get("error") if e is not None else ""
+                self.soundStop()  # stopped elsewhere (an animation started) or the device failed
+                if err:
+                    self.soundStatusLabel.setText(err)
+                return
+            if not e.state.get("opened"):
+                if time.monotonic() - self._soundStartedAt > 3:
+                    self.soundStatusLabel.setText("Still opening the audio device. On macOS, allow microphone access "
+                        "for NeewerLux (or your terminal) in System Settings > Privacy & Security > Microphone.")
+                return
+            n = len(e.targets)
+            msg = ("Listening to " + self._soundDeviceName + ", driving " + str(n) + " light" +
+                   ("" if n == 1 else "s") + (e.state.get("error") and (" (" + e.state["error"] + ")") or ""))
+            if self.soundBeatSourceCombo.currentData():
+                if getattr(self, "_soundClockError", "") and time.monotonic() - getattr(self, "_soundClockRetryAt", 0) > 2:
+                    self._soundClockRetryAt = time.monotonic()  # the port may have been plugged in since
+                    self._soundApplyClock()
+                if getattr(self, "_soundClockError", ""):
+                    msg += ". " + self._soundClockError + ", detecting beats from the sound"
+                    self._soundShowClockBadge("error")
+                elif e.state.get("beatSource") == "clock":
+                    msg += ". MIDI clock " + "%.1f" % e.state.get("bpm", 0) + " BPM, beat " + str(e.state.get("beatInBar", 0)) + "/4"
+                    if e.clockNeedsSound and not e.state.get("heard"):
+                        msg += ", paused: no music heard"
+                        self._soundShowClockBadge("quiet")
+                    else:
+                        self._soundShowClockBadge("%.0f BPM" % e.state.get("bpm", 0))
+                else:
+                    msg += ". Waiting for MIDI clock, detecting beats from the sound"
+                    self._soundShowClockBadge("waiting")
+            if e.state.get("beatSource") == "tempo":
+                msg += ". Tempo from the sound: %.0f BPM" % e.state.get("bpm", 0)
+            if msg != self._soundStatusShown:
+                self._soundStatusShown = msg
+                self.soundStatusLabel.setText(msg)
+            # Follow the light selection while running
+            if not self.soundAllLightsCheck.isChecked() or len(e.targets) != len(availableLights):
+                e.targets = self._soundTargets()
+            st = e.state
+            for key, bar in self.soundMeters.items():
+                bar.setValue(int(st.get(key, 0) * 100))
+            c = QColor.fromHsv(int(st.get("hue", 0)) % 360, int(st.get("sat", 100) * 2.55), int(st.get("bri", 0) * 2.55))
+            border = "#fff" if st.get("beat") else "#555"
+            self.soundSwatch.setStyleSheet("background-color: " + c.name() + "; border: 2px solid " + border + "; border-radius: 4px;")
 
         # === HTTP SERVER TOGGLE ===
         def toggleHTTPServer(self):
@@ -3145,7 +3502,11 @@ try: # try to load the GUI
                     "animLoop": self.animLoopCheck.isChecked(),
                     "animLoopCount": self.animLoopCountSpin.value(),
                     "animParallel": self.animParallelCheck.isChecked(),
-                    "animRevert": self.animRevertCheck.isChecked()
+                    "animRevert": self.animRevertCheck.isChecked(),
+                    "fontScale": self._fontScale,
+                    "sound": dict(self._soundCollect(),
+                                  device=self.soundDeviceCombo.currentText(),
+                                  beatSource=self.soundBeatSourceCombo.currentData() or ""),
                 }
                 # Save current tab index for recall on next launch
                 geo["lastTab"] = self.ColorModeTabWidget.currentIndex()
@@ -3203,6 +3564,16 @@ try: # try to load the GUI
                         self.animParallelCheck.setChecked(geo["animParallel"])
                     if "animRevert" in geo:
                         self.animRevertCheck.setChecked(geo["animRevert"])
+                    snd = geo.get("sound") or {}
+                    if snd:
+                        self._soundSavedDevice = snd.get("device", "")
+                        pos = self.soundDeviceCombo.findText(self._soundSavedDevice)
+                        if pos >= 0:
+                            self.soundDeviceCombo.setCurrentIndex(pos)
+                        self._soundApply(snd)
+                        if "beatSource" in snd:
+                            self._soundSavedBeatSource = snd["beatSource"] or ""
+                            self.soundRefreshMidi()
                     # Restore last active tab (default to Info tab on first launch)
                     if "lastTab" in geo:
                         tabIdx = geo["lastTab"]
@@ -3295,7 +3666,10 @@ try: # try to load the GUI
                     pass
                 httpServerRunning = False
 
-            # STOP ANY RUNNING ANIMATION BEFORE SHUTTING DOWN
+            # STOP SOUND REACTIVE AND ANY RUNNING ANIMATION BEFORE SHUTTING DOWN
+            stopSoundReactive()
+            if getattr(self, "_midiClock", None) is not None:
+                self._midiClock.close()
             if animationRunning:
                 stopAnimation()
 
@@ -4025,6 +4399,25 @@ _logBuffer = []  # buffered log lines for file writing
 _logBufferFlushInterval = 10.0  # seconds between file flushes
 _lastLogFlush = 0
 _bgThreadLogCounter = 0  # throttle "Background Thread Running" messages
+_lastSendTime = 0  # when the last write to a light happened
+_sendModeLogged = False  # whether the current burst of writes logged its send-mode messages
+
+def logSendMode(entering):
+    """Log send-mode transitions once per burst of writes, not on every write.
+
+    Animations, audio, MIDI and slider drags write many times a second; only the
+    first write after a quiet gap of 2 seconds gets logged.
+    """
+    global _lastSendTime, _sendModeLogged
+    now = time.time()
+    if entering:
+        _sendModeLogged = (now - _lastSendTime) > 2
+        if _sendModeLogged:
+            printDebugString("Going into send mode")
+    else:
+        if _sendModeLogged:
+            printDebugString("Leaving send mode and going back to background thread")
+        _lastSendTime = now
 
 def printDebugString(theString):
     global _lastLogFlush, _bgThreadLogCounter
@@ -4531,7 +4924,7 @@ async def writeToLight(selectedLights=0, updateGUI=True, useGlobalValue=True):
     returnValue = "" # same as above, return value "" for GUI, or boolean for CLI
 
     startTimer = time.time() # the start of the triggering
-    printDebugString("Going into send mode")
+    logSendMode(True)
 
     try:
         if updateGUI == True:
@@ -4652,7 +5045,7 @@ async def writeToLight(selectedLights=0, updateGUI=True, useGlobalValue=True):
 
     if updateGUI == True:
         if threadAction != "quit": # if we've been asked to quit somewhere else in the program
-            printDebugString("Leaving send mode and going back to background thread")
+            logSendMode(False)
         else:
             printDebugString("The program has requested to quit, so we're not going back to the background thread")
             returnValue = "quit"
@@ -4850,9 +5243,9 @@ def workerThread(_loop):
         elif threadAction.startswith("psend|"):
             # Parallel animation write, send to all specified lights simultaneously
             lightIndices = [int(x) for x in threadAction.split("|")[1:]]
-            printDebugString("Going into send mode")
+            logSendMode(True)
             _loop.run_until_complete(parallelWriteToLights(lightIndices))
-            printDebugString("Leaving send mode and going back to background thread")
+            logSendMode(False)
             # Update the Status column in the light table so the user sees current values
             try:
                 if mainWindow is not None:
@@ -5688,14 +6081,24 @@ def animationSendFrame(frameCommands, loop):
     if not changedLights:
         return
 
-    # Wait for the worker thread to be free (up to 2 seconds with 10ms granularity)
-    for _ in range(200):
+    signalWorkerSend(changedLights)
+
+
+def signalWorkerSend(changedLights, waitSeconds=2.0, logDrop=True):
+    """Hand a list of light indexes (whose availableLights[i][3] is already set) to the
+    worker thread. Waits up to waitSeconds for the worker to be free, else drops the frame.
+    Returns True if the frame was handed over."""
+    global threadAction
+
+    # Wait for the worker thread to be free (10ms granularity)
+    for _ in range(max(1, int(waitSeconds * 100))):
         if threadAction == "" or threadAction == "finished":
             break
         time.sleep(0.01)
     else:
-        printDebugString("Animation frame dropped: worker busy")
-        return  # worker is still busy, drop this frame (logged, not silent)
+        if logDrop:
+            printDebugString("Animation frame dropped: worker busy")
+        return False  # worker is still busy, drop this frame
 
     # Signal the worker thread and return immediately, do NOT wait for completion.
     # The next call's "wait for free" check handles sequencing.
@@ -5704,6 +6107,45 @@ def animationSendFrame(frameCommands, loop):
     else:
         threadAction = "send|" + "|".join(map(str, changedLights))
     workerWakeEvent.set()
+    return True
+
+
+# ============================================================================
+# SOUND REACTIVE - neewerlux_audio analyses an input device, this sends the colours
+# ============================================================================
+
+soundEngine = None  # created on first use, see getSoundEngine()
+
+
+def soundSendFrame(frame):
+    """frame = {lightIndex: (hue, sat, bri)}. Called from the sound thread.
+    Never blocks for long: if the worker is still busy with the last frame, skip this one."""
+    changed = []
+    for lightIdx, (hue, sat, bri) in frame.items():
+        if lightIdx >= len(availableLights):
+            continue
+        byteVal = calculateByteString(True, colorMode="HSI", HSI_H=hue, HSI_S=sat, HSI_I=bri)
+        actual = applyCCTFallback(lightIdx, byteVal, mode="HSI", hue=hue, bri=bri)
+        if actual is None:
+            continue
+        availableLights[lightIdx][3] = actual
+        changed.append(lightIdx)
+    if not changed:
+        return False
+    return signalWorkerSend(changed, waitSeconds=0.05, logDrop=False)
+
+
+def getSoundEngine():
+    global soundEngine
+    if soundEngine is None:
+        from neewerlux_audio import SoundEngine
+        soundEngine = SoundEngine(soundSendFrame, printDebugString)
+    return soundEngine
+
+
+def stopSoundReactive():
+    if soundEngine is not None and soundEngine.running:
+        soundEngine.stop()
 
 
 def animationEngineThread(animation, loop, speedMultiplier=1.0, loopOverride=None, fps=5, briScale=1.0, maxLoops=0):
@@ -5892,6 +6334,7 @@ def startAnimation(animName, loop, speedMultiplier=1.0, loopOverride=None, fps=5
     if wasRunning:
         _animChainStop = True
     stopAnimation()
+    stopSoundReactive()  # an animation and sound reactive mode would fight over the lights
 
     if not wasRunning:
         preAnimationStates = {}

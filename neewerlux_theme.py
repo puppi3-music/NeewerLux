@@ -23,8 +23,13 @@ PAD_TOOLTIP = "6px 8px"
 
 FONT_UI = '"Segoe UI", "Helvetica Neue", sans-serif'
 FONT_MONO = '"Consolas", "Menlo", "DejaVu Sans Mono", monospace'
-FONT_SIZE = "10pt"
-FONT_SIZE_SM = "9pt"
+# Font sizes in points at 100% scale. getThemeQSS(scale=...) multiplies them,
+# which is how the A-/A+ toolbar buttons resize the whole interface.
+FONT_SIZE = 10
+FONT_SIZE_SM = 9
+FONT_SIZE_XS = 8    # preset buttons
+FONT_SIZE_LG = 11   # Apply button
+FONT_SIZE_ICON = 12 # theme toggle glyph
 
 DARK = {
     # surfaces, deepest to lightest
@@ -110,7 +115,7 @@ QPushButton:pressed { background-color: $accent; color: $onAccent; }
 QPushButton:disabled { background-color: $bg2; color: $textFaint; border-color: $border; }
 QPushButton#httpToggleBtn { padding: $padButtonSm; font-size: $fontSizeSm; border: 1px solid $borderStrong; color: $textDim; }
 QPushButton#httpToggleBtn[httpActive="true"] { border-color: $success; color: $successText; }
-QPushButton#themeToggleBtn { padding: $padButtonSm; font-size: 12pt; border: 1px solid $borderStrong; }
+QPushButton#themeToggleBtn { padding: $padButtonSm; font-size: $fontSizeIcon; border: 1px solid $borderStrong; }
 QTableWidget {
     background-color: $bg1; alternate-background-color: $bg2;
     border: 1px solid $border; gridline-color: $border; color: $text;
@@ -164,6 +169,11 @@ QCheckBox { color: $text; spacing: 6px; }
 QCheckBox::indicator { width: 16px; height: 16px; border: 1px solid $borderStrong; border-radius: $radiusSm; background-color: $bg2; }
 QCheckBox::indicator:checked { background-color: $accent; border-color: $accent; }
 QLabel { color: $text; }
+QLabel[dim="true"] { color: $textDim; font-size: $fontSizeSm; }
+QPushButton#fontSizeBtn { padding: $padButtonSm; border: 1px solid $borderStrong; min-width: 26px; }
+QPushButton#paletteStepBtn { padding: 2px 0px; font-size: $fontSizeIcon; }
+QProgressBar { background-color: $bg2; border: 1px solid $border; border-radius: $radiusSm; }
+QProgressBar::chunk { background-color: $accent; border-radius: $radiusSm; }
 QToolTip { background-color: $bg3; border: 1px solid $accent; color: $text; padding: $padTooltip; border-radius: $radiusMd; font-size: $fontSizeSm; }
 QStatusBar { background-color: $bg0; color: $accent; font-size: $fontSizeSm; border-top: 1px solid $border; }
 QMenuBar { background-color: $bg1; color: $text; border-bottom: 1px solid $border; }
@@ -172,7 +182,7 @@ QMenu { background-color: $bg2; border: 1px solid $border; color: $text; }
 QMenu::item:selected { background-color: $accentSoft; }
 QPushButton[presetButton="true"] {
     background-color: $bg2; border: 1px solid $border; border-radius: $radiusMd;
-    color: $text; font-size: 8pt; min-height: 55px;
+    color: $text; font-size: $fontSizeXs; min-height: $presetMinHeight;
 }
 QPushButton[presetButton="true"]:hover { border-color: $accent; background-color: $bg4; }
 QPushButton[presetButton="true"]:pressed { background-color: $accent; color: $onAccent; }
@@ -181,7 +191,7 @@ QPushButton[presetType="global"]:hover { background-color: $globalWashHover; bor
 QPushButton[presetType="snap"] { background-color: $successWash; border: 1px solid $success; color: $successText; }
 QPushButton[presetType="snap"]:hover { background-color: $successWashHover; border-color: $successHover; }
 QPushButton[activeScene="true"] { background-color: $successWash; border: 1px solid $success; color: $successText; }
-QPushButton#applyButton { background-color: $accentWash; border: 1px solid $accent; color: $accentText; font-weight: bold; font-size: 11pt; }
+QPushButton#applyButton { background-color: $accentWash; border: 1px solid $accent; color: $accentText; font-weight: bold; font-size: $fontSizeLg; }
 QPushButton#applyButton:hover { background-color: $accentWashHover; border-color: $accentHover; }
 QSplitter::handle { background-color: $border; height: 3px; width: 3px; }
 QSplitter::handle:hover { background-color: $accent; }
@@ -206,9 +216,19 @@ _GEOMETRY = {
     "padButtonSm": PAD_BUTTON_SM,
     "padTooltip": PAD_TOOLTIP,
     "fontUI": FONT_UI,
-    "fontSize": FONT_SIZE,
-    "fontSizeSm": FONT_SIZE_SM,
 }
+
+FONT_SCALE_MIN = 0.8
+FONT_SCALE_MAX = 2.5
+
+
+def _fontTokens(scale):
+    scale = max(FONT_SCALE_MIN, min(FONT_SCALE_MAX, float(scale)))
+    pt = lambda v: "%gpt" % round(v * scale, 1)
+    return {"fontSize": pt(FONT_SIZE), "fontSizeSm": pt(FONT_SIZE_SM), "fontSizeXs": pt(FONT_SIZE_XS),
+            "fontSizeLg": pt(FONT_SIZE_LG), "fontSizeIcon": pt(FONT_SIZE_ICON),
+            # preset buttons hold three lines of text, so they grow with it
+            "presetMinHeight": "%dpx" % round(55 * max(1.0, scale))}
 
 
 def getThemeTokens(isDark=True):
@@ -216,6 +236,6 @@ def getThemeTokens(isDark=True):
     return DARK if isDark else LIGHT
 
 
-def getThemeQSS(isDark=True):
-    """Return the QSS for the requested theme."""
-    return _TEMPLATE.substitute(dict(_GEOMETRY, **getThemeTokens(isDark)))
+def getThemeQSS(isDark=True, scale=1.0):
+    """Return the QSS for the requested theme, with font sizes multiplied by scale."""
+    return _TEMPLATE.substitute(dict(_GEOMETRY, **_fontTokens(scale), **getThemeTokens(isDark)))

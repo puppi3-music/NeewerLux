@@ -2,6 +2,19 @@
 
 Changes relative to upstream [NeewerLite-Python v0.12d](https://github.com/taburineagle/NeewerLite-Python).
 
+## Unreleased
+
+### Added
+- **Sound reactive mode.** A new Sound tab colours the lights from an audio input in five modes: spectrum colour, beat colour jump, bass pulse, frequency bands, and rainbow drift. It has bass/mid/high meters, beat detection and automatic gain. With a loopback device (BlackHole, Stereo Mix, a PulseAudio monitor) it follows whatever the computer is playing. Needs `sounddevice` and `numpy`, which `uv sync` now installs.
+- **Colour palettes for sound mode.** The Sound tab's Colours row sets which colours every sound mode uses: Auto (the built-in colours), nine presets, or your own palette of up to 8 colours chosen with a colour wheel, swatches or the system picker. This replaces the Bass pulse hue setting.
+- **Beats from MIDI clock.** The Sound tab can take its beats from a MIDI clock input such as Traktor Virtual Output instead of detecting them in the sound, so beat effects land on every beat. Adds a clock lead (to cover Bluetooth delay), colour changes every N beats (on bar lines with a clock), and falls back to the sound when the clock stops. Clock beats pause after 1.5 s without music, since Traktor keeps clocking when the decks stop ("Clock beats only while music plays", on by default). Needs `python-rtmidi`, which `uv sync` now installs.
+- **Better beat detection from the sound.** Every block of sound is analysed (about 94 times a second, not 15), so no kick falls between frames. Kicks are found as sudden jumps in the bass instead of loud bass, so long 808s and rolling basslines don't hide or fake them, and soft kicks in quiet passages still count. After about 4 s the tempo (70-180 BPM) is found in the sound and beats fire on time, early by the beat lead (formerly clock lead), instead of 45-65 ms after each kick; the status line shows it. "Predict beats from the tempo" (on by default) turns this off. On synthetic house, hip-hop, drum'n'bass and quiet passages, predicted beats land within 5 ms of the beat, against 45-65 ms late with some missed and extra beats before.
+- **Sound brightness uses the full range.** Automatic gain measures each level between the recent quiet and the recent peak, so the quietest moments of the music reach your minimum brightness instead of sitting near half. Beat colour jump takes its brightness from the bass, so it dips between kicks.
+- **Spectrum colour and Bass pulse use the whole palette.** Spectrum colour spreads over the range of pitch the music actually covers, so the first and last colours show up, not only the middle ones. Bass pulse colours by how hard the bass hits, from the first palette colour for soft bass toward the last for hard kicks and each beat (MIDI clock beats included), instead of staying on the first colour. The colour glides between palette colours rather than jumping with each flash, rising quickly on a kick and easing back. Beat colour jump glides to each new colour too, over part of the time until the next change. A new Colour fade setting (default 75%) sets how smooth both are, separately from Smoothing, so brightness stays punchy: 75% glides for three quarters of the gap, 95% fades continuously, 0 cuts hard.
+- **Sound presets.** The Preset row at the top of the Sound tab saves the current Sound settings under a name and loads them back with one pick: mode, sliders, palette, beat options and the all-lights choice. The input device and beat source stay as they are. Presets are kept in `light_prefs/sound_presets.json`.
+- **Easier colour picking in HSI mode.** A colour wheel, 15 one-click swatches and a button for the system colour picker sit under the HSI sliders.
+- **Adjustable text size.** A− / A+ toolbar buttons and Ctrl/Cmd +, − and 0 scale all interface text from 80% to 250%. The setting is remembered, and the default on macOS is 130%.
+
 ## v1.3.0 - 2026-10-02
 
 ### Added

@@ -34,6 +34,11 @@ Changelog = "https://github.com/poizenjam/NeewerLux/blob/main/CHANGELOG.md"
 gui = ["PySide6>=6.7,<7"]
 # Used by the release workflow to build the Windows executable.
 build = ["pyinstaller>=6.10"]
+audio = [
+    "numpy>=1.26",
+    "sounddevice>=0.5",
+    "python-rtmidi>=1.5",
+]
 
 [tool.uv]
 # NeewerLux is a flat-layout script application, not an installable package.
@@ -42,4 +47,4 @@ build = ["pyinstaller>=6.10"]
 package = false
 # "uv sync" gives you the full desktop app. Headless installs opt out with
 # "uv sync --no-default-groups".
-default-groups = ["gui"]
+default-groups = ["gui", "audio"]
