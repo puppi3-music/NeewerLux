@@ -3077,11 +3077,11 @@ try: # try to load the GUI
             self.soundModeCombo.addItems(MODES)
             self.soundModeCombo.currentTextChanged.connect(self._soundSettingsChanged)
             self.soundRollStyleCombo.currentTextChanged.connect(self._soundSettingsChanged)
-            for sp in (self.soundSensSpin, self.soundSmoothSpin, self.soundMinBriSpin, self.soundMaxBriSpin,
+            for sp in (self.soundBrightSensSpin, self.soundKickSensSpin, self.soundSmoothSpin, self.soundMinBriSpin, self.soundMaxBriSpin,
                        self.soundSatSpin, self.soundRateSpin, self.soundColourFadeSpin):
                 sp.valueChanged.connect(self._soundSettingsChanged)
             self.soundAllLightsCheck.toggled.connect(self._soundSettingsChanged)
-            self.soundRollLimitCheck.toggled.connect(self._soundRollLimitToggled)
+            self.soundFlashLevelCombo.activated.connect(self._soundFlashLevelChosen)
             self.soundPalette.changed.connect(self._soundSettingsChanged)
             self.soundRefreshButton.clicked.connect(self.soundRefreshDevices)
             self.soundMidiRefreshButton.clicked.connect(self._soundMidiRefreshClicked)
@@ -3108,23 +3108,32 @@ try: # try to load the GUI
             self._soundPresetsRefresh()
             self._soundSettingsChanged()
 
-        def _soundRollLimitToggled(self, on):
-            """Turning the strobe limit off has to be confirmed, because of who it can harm."""
-            if not on:
-                answer = QMessageBox.warning(self, "Turn off the flash limit?",
-                    "Lights will no longer be held to 3 flashes a second, and drum rolls will flash between Min and Max bright several times a second.\n\n"
-                    "Flashing like this can trigger seizures in people with photosensitive epilepsy "
-                    "and can affect others too. Only turn this off if everyone who can see the lights "
-                    "knows and has agreed.\n\nTurn the limit off?",
-                    QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel)
-                if answer != QMessageBox.Yes:
-                    self.soundRollLimitCheck.blockSignals(True)
-                    self.soundRollLimitCheck.setChecked(True)
-                    self.soundRollLimitCheck.blockSignals(False)
-                    return
+        def _soundFlashLevelChosen(self, _index):
+            """Anything above Standard has to be confirmed, because of who it can harm."""
+            level = self.soundFlashLevelCombo.currentData()
+            if level != "Standard" and self._soundConfirmFlashLevel(level).exec() != QMessageBox.Yes:
+                self.soundFlashLevelCombo.setCurrentIndex(0)
             self._soundSettingsChanged()
 
-        _SOUND_SPINS = (("sensitivity", "soundSensSpin"), ("smoothing", "soundSmoothSpin"),
+        def _soundConfirmFlashLevel(self, level):
+            """The warning for a level above Standard, with links to epilepsy associations. Not a native dialog, which may not make links clickable."""
+            off = level == "Off"
+            box = QMessageBox(QMessageBox.Warning, "Turn the flash limit off?" if off else "Use the Show flash limit?",
+                ("Off removes the limit, so each light can flash as fast as the music drives it, for as long as it plays. " if off else
+                "Show lets each light flash up to 10 times a second. ") + "Flashing at this rate can trigger seizures in people "
+                "with photosensitive epilepsy, and even a few seconds can be enough. It can affect others too.<br><br>"
+                "Only use it with a flashing-lights notice where people will see it before they can see the lights. "
+                "A notice warns people, it doesn't make the flashing safe.<br><br>"
+                'About photosensitive epilepsy: <a href="https://www.canadianepilepsyalliance.org/about-epilepsy/types-of-seizures/photosensitive-epilepsy/">Canadian Epilepsy Alliance</a>, '
+                '<a href="https://epilepsysociety.org.uk/about-epilepsy/epileptic-seizures/seizure-triggers/photosensitive-epilepsy">Epilepsy Society (UK)</a><br><br>'
+                "Is a notice posted?", QMessageBox.Yes | QMessageBox.Cancel, self)
+            box.setTextFormat(Qt.RichText)
+            box.setDefaultButton(QMessageBox.Cancel)
+            box.setOption(QMessageBox.Option.DontUseNativeDialog)
+            return box
+
+        _SOUND_SPINS = (("sensitivity", "soundBrightSensSpin"), ("kickSensitivity", "soundKickSensSpin"),
+                        ("smoothing", "soundSmoothSpin"),
                         ("minBri", "soundMinBriSpin"), ("maxBri", "soundMaxBriSpin"),
                         ("saturation", "soundSatSpin"), ("colourFade", "soundColourFadeSpin"),
                         ("rate", "soundRateSpin"), ("clockLead", "soundClockLeadSpin"),
@@ -3145,6 +3154,8 @@ try: # try to load the GUI
             return d
 
         def _soundApply(self, snd):
+            if "sensitivity" in snd and "kickSensitivity" not in snd:  # saved when one control set both
+                snd = dict(snd, kickSensitivity=snd["sensitivity"])
             pos = self.soundModeCombo.findText(snd.get("mode", ""))
             if pos >= 0:
                 self.soundModeCombo.setCurrentIndex(pos)
@@ -3335,11 +3346,12 @@ try: # try to load the GUI
                 return
             e = soundEngine
             e.mode = mode
-            e.sensitivity = self.soundSensSpin.value() / 100.0
+            e.brightSensitivity = self.soundBrightSensSpin.value() / 100.0
+            e.kickSensitivity = self.soundKickSensSpin.value() / 100.0
             e.smoothing = self.soundSmoothSpin.value() / 100.0
             e.colourFade = self.soundColourFadeSpin.value() / 100.0
             e.rollStyle = self.soundRollStyleCombo.currentText()
-            e.flashLimit = self.soundRollLimitCheck.isChecked()
+            e.flashLevel = self.soundFlashLevelCombo.currentData()
             e.minBri = self.soundMinBriSpin.value()
             e.maxBri = self.soundMaxBriSpin.value()
             e.saturation = self.soundSatSpin.value()

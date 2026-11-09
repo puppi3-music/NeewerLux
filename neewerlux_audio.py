@@ -57,7 +57,7 @@ MODES = [
 
 MODE_HELP = {
     "Spectrum colour": "Low sounds take the first palette colour, high sounds the last (Auto: bass red/orange, vocals green, hats blue/violet). Brightness follows loudness.",
-    "Beat colour jump": "Each detected beat moves to another palette colour (Auto: any colour), gliding there over part of the time until the next change: Colour fade 75% fills three quarters of it, 95% fades continuously, 0 cuts hard. Brightness follows the bass while kicks play and flashes on the beat. A loud sound with no kicks holds it up and changes colour each bar.",
+    "Beat colour jump": "Each detected beat moves to another palette colour (Auto: any colour), gliding there over part of the time until the next change: Colour fade 75% fills three quarters of it, 95% fades continuously, 0 cuts hard. Brightness follows the bass while kicks play and flashes on the beat. A loud sound with no kicks holds it up, its colour following the notes (the same chord comes back in the same colour), or changing each bar if the notes don't.",
     "Bass pulse": "Brightness pumps with the kicks and the bass under them, and the colour follows how hard it hits: soft bass on the first palette colour, hard kicks and each beat toward the last (stays blue on Auto).",
     "Frequency bands": "Light 1 = bass, light 2 = mids, light 3 = highs, repeating, in palette colours 1-3 (Auto: red, green, blue). One light blends all three.",
     "Rainbow drift": "Slides through the palette colours (Auto: the whole colour wheel), faster when it is louder. Beats give it a push.",
@@ -84,12 +84,24 @@ KICK = (40, 160)    # Hz: where kick drums are looked for
 KICK_MIN_RISE = 0.12  # a kick raises the bass by at least this much (log10 power, about 1.2 dB per bin) over the typical rise
 KICK_SHARE = 0.7      # ... and reaches this share of the strongest rise in the last 1.5 s
 KICK_ABS_RISE = 0.6    # ... and at least this much (6 dB a bin); kicks measure 1-2.5
+KICK_GUIDED_WINDOW = 0.06  # seconds: a rise this close to where the beat grid puts a kick has a lower bar to clear
+KICK_GUIDED_SHARE = 0.35   # ... this share of the strongest recent rise, as soft kicks sit well under the loud ones
+KICK_GUIDED_RISE = 0.35    # ... at least this much
+KICK_GUIDED_SPREAD = 1.5   # ... and this many spreads over the typical rise, not 3
+KICK_GUIDED_AGREE = 0.5    # with a MIDI clock, only while this share of recent kicks agree with the offset learned, as a stale one would let in the wrong beats
+KICK_GUIDED_FIRM = 0.06    # seconds: a guided kick whose rise clears the usual bar within this long was a full kick all along
 FIRST_KICK_GAP = 1.5   # seconds without a kick before the next one counts as a first kick
 FIRST_KICK_BEATS = 2.5  # ... or this many usual gaps between kicks, so a short break at a fast tempo counts too
 FIRST_KICK_SHORTEST = 1.0  # ... though never fewer seconds than this
 FIRST_KICK_WEIGHT = 0.5  # a first kick rises from quiet, so it reads higher than the kicks after it
 MIN_BEAT_GAP = 0.18   # seconds: kicks closer than this count once
-KICK_ON_BEAT = 0.06   # seconds: with a MIDI clock, a kick must land this close to a whole beat
+KICK_ON_BEAT = 0.06   # seconds: with a MIDI clock, a kick must land this close to a whole beat, or to where kicks have been landing against it
+KICK_PHASE_KEEP = 16   # recent kicks remembered to learn how far the clock sits from the sound (input and MIDI delays differ per setup)
+KICK_PHASE_MIN = 6     # kicks needed before going by them
+KICK_PHASE_SHARE = 0.4 # share of those that must land together
+KICK_PHASE_MAX = 0.14  # seconds the clock may sit from the sound, and never over 0.3 of a beat, so off-beat bass can't be learned as the kick
+KICK_PHASE_FAR_SHARE = 0.6  # share that must land together for a phase further off than that: a clock can sit anywhere against the sound, but it takes strong agreement
+KICK_PHASE_FAR_KICKS = 8    # ... counted out of at least this many, so a few off-beat bass notes at the start can't set it
 KICK_HOLD_BEATS = 2.25  # beats after a kick that kicks still count as playing (so a kick every 2 beats keeps them on)
 KICKLESS_BASS = 0.2   # share of the bass that still reaches the brightness in the beat modes while no kicks play
 TEMPO_MIN_BPM, TEMPO_MAX_BPM = 70, 180
@@ -110,11 +122,14 @@ TEMPO_FIT_EVERY = 0.25  # seconds between estimates
 TEMPO_HARMONIC = 0.5    # weight of the repeat two beats on
 TEMPO_FAST_SHARE = 0.6  # ... see _estimate
 TEMPO_MIN_CONF = 0.15   # autocorrelation at the beat period needed to trust it
+TEMPO_COAST = 60.0      # seconds a tempo is held through a section with no clear beat, as a track keeps its tempo through a breakdown
+TEMPO_COAST_AGREE = 16  # estimates in a row (4 s) that must agree before a pulse heard in such a section replaces the held tempo
+TEMPO_RESNAP = 0.04     # seconds: two kicks this close to a whole number of beats apart end the hold and set where the beats fall
 ONSET_DELAY = 0.025     # seconds the detected attack lags the real one (measured on synthetic kicks)
 ROLL = (180, 1500)      # Hz: where snare rolls are looked for
 ROLL_WINDOW = 1.5       # seconds of that band each estimate looks at
 ROLL_HIT = (0.096, 0.18)  # seconds between hits that count as a roll, about 16ths at 85-155 BPM
-ROLL_START, ROLL_END = 0.5, 0.4  # how strongly the hits must repeat over ROLL_WINDOW to keep a roll (groove 16ths read under 0.4)
+ROLL_START, ROLL_END = 0.5, 0.28  # how strongly the hits must repeat over ROLL_WINDOW to keep a roll (a build's broken patterns read about 0.3 between their fills)
 ROLL_QUICK = 0.75       # seconds of that band the first look at a new roll takes, so it starts within about a beat and a half
 ROLL_QUICK_START = 0.8  # how alike hits must be in that shorter look to start a roll
 ROLL_QUICK_OVERLAP = 8  # analysis steps the shorter look must be able to compare at any hit spacing
@@ -125,22 +140,55 @@ ROLL_EVEN_SLACK = 0.022  # seconds the gaps between those hits may differ by
 ROLL_EVEN_HOLD = 1.0     # seconds a roll stays on after such hits, until the longer looks have caught up
 ROLL_KEEP_GAPS, ROLL_KEEP_DEPTH = 3, 3.0  # the looser test that keeps a roll going once it has started
 ROLL_MIN_DEPTH = 2.0    # dB the band must pulse by
+ROLL_BASS_ROOM = 9.0    # dB the band may sit under the bass during a roll: builds often keep the kick going under it, running grooves sit 17 dB or more under
+ROLL_DROP_ROOM = 13.0   # dB under the bass that means the drop has landed
+ROLL_UNDER_BASS_EVEN = 1.5  # seconds of unbroken even hits that start a roll under the bass, as a groove's 16ths are also even for a moment
 ROLL_FIT_EVERY = 0.125  # seconds between estimates
 ROLL_FLASH_SHARE = 0.6  # share of the time between hits each flash takes to fade out
-ROLL_ACCENT_FLOOR = 0.3  # with the flash limit on: share of the Min to Max bright range each accent fades down to
 ROLL_ACCENT_SHARE = 0.8  # share of the time between accents each one takes to fade
-FLASH_MIN_GAP = 0.35     # seconds: with the flash limit on, roll accents come at least this far apart
 FLASH_SWING = 9          # brightness points: a swing this big counts as half a flash (the guideline says 10; rounding and skipped small sends take up the difference) ...
 FLASH_BRIGHT = 80        # ... unless its darker end is at this brightness or above
-FLASH_MAX_SWINGS = 5     # swings a light may make within FLASH_WINDOW: one under the 6 of 3 flashes, as a swing that was held back lands just after the last
+# Per level: (swings a light may make within FLASH_WINDOW, seconds roll accents must be apart). Swings are one under
+# twice the flashes, as a swing that was held back lands just after the last; any closer and the limit cuts accents unevenly.
+FLASH_LEVELS = {"Standard": (7, 0.30), "Show": (19, 0.105), "Off": (None, 0.0)}  # 4 and 10 flashes a second, and no limit
 FLASH_WINDOW = 1.0       # seconds
+FLASH_BURST = 4.0        # seconds a light may flash above the Standard rate, added up over dips, before it falls back to that rate
+FLASH_BURST_REST = 8.0   # seconds it must then stay at or under the Standard rate before it may go above it again
 BEAT_SETTLE = 0.15       # seconds after a beat its kick may still be rising, as a predicted beat can land just before it
 FLASH_BEAT_RESERVE = 4  # swings a rise that isn't a beat must leave free while kicks play: its own fall and the next kick's rise and fall, so bass between kicks can't use them up
+ROLL_BUILD_STEP = 2.0    # seconds of a roll at the Show level between halvings of the gap between its deep flashes
 ROLL_SWING_MAX = 8       # brightness points the ripple between accents may move, too little to count as a flash
 ROLL_SWING_RED = 6       # ... or in saturated red
 ROLL_SWELL_TIME = 8.0    # seconds a Swell takes to climb to Max bright
 ROLL_SWELL_FROM = 0.25   # highest point of the Min to Max bright range a Swell starts from
 ROLL_RELEASE = 1.0       # seconds the lights take to ease down from a roll's top level when it ends
+ROLL_GONE_LOOK = 0.2     # seconds with no hit left in the band, just longer than the slowest hit gap, before a roll can count as stopped
+ROLL_GONE_DROP = 9.0     # dB the band's loudest point in that time must be under the roll's hits
+HARMONY_FFT = 4096       # samples: enough to tell a semitone apart in the band below
+HARMONY_EVERY = 4        # analysis steps between looks at the notes, about 23 a second
+HARMONY_BAND = (130, 4200)  # Hz: where synths' notes are looked for, above the kick's body and under the hats
+HARMONY_PEAK = 2.5       # a spectrum peak counts as a note when this many times the bins around it
+HARMONY_NOW, HARMONY_GAP, HARMONY_PAST = 2, 1, 4  # looks making up the current sound, those skipped, and those it is compared to
+HARMONY_CHANGE = 0.3     # how different (0..1) the notes must become to count as a note or chord change
+HARMONY_REARM = 0.6      # ... and the share of that they must settle under before another can count
+HARMONY_TONAL = 0.35     # share of the band's power that must sit in notes for it to count as a synth rather than drums or noise
+HARMONY_MIN_GAP = 0.18   # seconds: changes closer than this count once
+DROP_QUIET_BEATS = 8     # beats without a kick before the next kick counts as a drop
+DROP_LOUDNESS = 0.8      # ... if the sound is this share of its loudness with kicks, so a stray bass note in a breakdown doesn't count
+DROP_FADE = 1.6          # share of full brightness per second a drop's flash fades, so it lands with more weight than a kick
+KICK_BASS_SHARE = 0.45   # share of the bass that reaches the brightness in the beat modes while kicks play, so a sub under the kicks leaves them room to punch
+KICK_BASS_FLOOR = 0.25   # a kick's bass must reach this share (fourth-root scale, about -24 dB) of the kicks so far, unless the rises keep regular time: a thump under a vocal isn't a kick
+GAP_WINDOW = 1.5         # seconds of sound a stop is measured against: long enough to span kicks, so the space between kicks isn't a stop
+GAP_DEPTH = 14.0         # dB under the median of that time that makes a stop: the lights go dark at once
+GAP_EXIT = 7.0           # dB under it that ends one, close to the old level, so noise tails inside the stop don't
+GAP_LONGEST = 2.0        # seconds a stop lasts at most: quieter sound after that is just the new level
+GAP_RECENT = 0.3         # seconds after a stop that the next kick counts as the music coming back in
+GAP_BEAT_AGE = 0.12      # seconds into a stop before predicted beats are held back: a brief dip just before a kick still fires
+GAP_DROP = 0.25          # seconds a stop must have lasted for the kick after it to count as a drop
+HIT_RISE = 10.0          # dB the sound must jump within a few frames to count as a hit when no kicks are playing
+HIT_LOUD = 0.75          # ... and the share of the loudness with kicks it must reach (fourth-root scale)
+HIT_MIN_GAP = 0.25       # seconds: hits closer than this count once
+HARMONY_COLOUR_BEATS = 2  # beats' worth of time each colour glide takes over when the notes set the colour
 ROLL_MODES = ("Beat colour jump", "Bass pulse", "Rainbow drift")  # the modes drum rolls take over
 
 
@@ -431,13 +479,20 @@ class _Rise:
         self.prev.clear()
 
 
+def _wrapPhase(x, period):
+    """x seconds, brought to within half a beat either side of zero."""
+    return (x + period / 2.0) % period - period / 2.0
+
+
 class _KickPicker:
     """Finds kicks as bass rises well above the typical rise of the last second and a half: the
     bar adapts to the music, so a long 808 or a busy bassline (steady, small rises) doesn't hide
     the kicks and soft kicks in a quiet section still count, and it sits near the strongest recent
-    rises, so smaller rises between the kicks don't count. Sensitivity lowers the bar. A bass note
+    rises, so smaller rises between the kicks don't count. Kick sensitivity lowers the bar. A bass note
     as loud and sudden as a kick counts too: on real recordings neither its pitch nor a click tells
-    them apart, so with a MIDI clock _LightShow keeps only the rises that land on a beat."""
+    them apart, so with a MIDI clock _LightShow keeps only the rises that land on a beat. Where
+    the beat grid expects a kick the bar is lower: soft kicks and off-beat bass rise about as much
+    as each other, and only their timing tells them apart."""
 
     def __init__(self, hopRate):
         self.rises = deque(maxlen=max(16, int(1.5 * hopRate)))
@@ -445,13 +500,15 @@ class _KickPicker:
         self.lastBeat = -10.0
         self.firstUntil = -10.0  # rises before this time belong to a first kick
         self.gaps = deque(maxlen=4)  # the latest gaps between kicks
+        self.guided = False  # the latest kick only cleared the lower bar for an expected beat
+        self.firmBeat = -10.0  # the latest guided kick that went on to clear the usual bar
 
-    def step(self, rise, t, sens):
-        """True on the hop of a rise that counts as a kick."""
+    def step(self, rise, t, sens, expected=None):
+        """True on the hop of a rise that counts as a kick. expected(t) says if the beat grid puts a kick at t."""
         if len(self.rises) < 16:  # too early to fire, so too early to set the bar
             self.rises.append(min(rise, KICK_ABS_RISE))
             return False
-        if rise < KICK_ABS_RISE / sens:  # under the lowest the bar can be: no need to work it out
+        if rise < (KICK_ABS_RISE if expected is None else min(KICK_ABS_RISE, KICK_GUIDED_RISE)) / sens:  # under the lowest the bar can be: no need to work it out
             self._remember(rise, t)
             self.armed = True
             return False
@@ -461,6 +518,10 @@ class _KickPicker:
         # Also near the strongest recent rises, so a bass note between the kicks doesn't count as one.
         bar = max(med + (3.0 * spread + KICK_MIN_RISE) / sens, float(hist.max()) * KICK_SHARE / sens,
                   KICK_ABS_RISE / sens)  # and a real jump, so noise under quiet pads never counts
+        guided = rise < bar and expected is not None and expected(t)
+        if guided:
+            bar = max(med + (KICK_GUIDED_SPREAD * spread + KICK_MIN_RISE) / sens, float(hist.max()) * KICK_GUIDED_SHARE / sens,
+                      KICK_GUIDED_RISE / sens)
         if rise < bar:
             self._remember(rise, t)
             self.armed = True
@@ -473,6 +534,10 @@ class _KickPicker:
                 self.firstUntil = t + 0.06  # about as long as one rise lasts
             self.gaps.append(gap)
             self.lastBeat = t
+            self.guided = guided
+        elif self.guided and not guided and t - self.lastBeat <= KICK_GUIDED_FIRM:
+            self.guided = False  # the lower bar only caught it early
+            self.firmBeat = self.lastBeat
         self._remember(rise, t)
         return fire
 
@@ -504,8 +569,10 @@ class _TempoTracker:
     early to make up for Bluetooth delay, instead of after each kick is heard. Every quarter
     second it autocorrelates the last 8 s of attacks to find the beat period (favouring tempos
     near 120 BPM and periods that also repeat at two beats), then lines a comb of beats up with
-    the attacks to find where the beats fall. It locks after a few estimates agree and drops
-    the lock when the music stops having a clear beat. Same interface as MidiClock."""
+    the attacks to find where the beats fall. It locks after a few estimates agree. When the music
+    stops having a clear beat it holds the tempo and carries on counting, since a breakdown keeps
+    the track's tempo, and the first two kicks back set where the beats fall, so the drop lands on
+    the grid at once. Same interface as MidiClock."""
 
     def __init__(self, hopRate):
         self.hopRate = hopRate
@@ -523,6 +590,9 @@ class _TempoTracker:
         self.candidate = 0.0
         self.agree = self.doubt = 0
         self.nextFit = 0.0
+        self.coast = None   # when the hold began, while the tempo is held with no clear beat
+        self.lastKick = None
+        self.gaps = deque(maxlen=3)  # gaps between kicks that didn't fit the held tempo
 
     def add(self, t, onset):
         self.env.append(onset)
@@ -553,13 +623,16 @@ class _TempoTracker:
             self.agree += 1
         else:
             self.candidate, self.agree = period, 0
-        if self.agree < 2:  # not yet confirmed: keep the current lock, if any, for now
+        if self.coast is not None and abs(period / self.period - 1.0) <= 0.04:
+            return  # the attacks of a breakdown (hats, pads) say nothing about where the beats fall
+        if self.agree < (TEMPO_COAST_AGREE if self.coast is not None else 2):  # not yet confirmed: keep the current lock, if any, for now
             if self.locked and abs(period / self.period - 1.0) > 0.04:
                 self._unsure()
             return
         if not self.locked or abs(period / self.period - 1.0) > 0.04:  # lock on, or a new tempo
             self.locked, self.period, self.refT, self.refPos = True, period, beatT, 0.0
             self.doubt = 0
+            self.coast = None
             return
         # Same tempo: follow small drifts gently, keeping the position continuous so no beat is skipped or doubled.
         self.refPos, self.refT = self.position(now), now
@@ -571,8 +644,33 @@ class _TempoTracker:
     def _unsure(self):
         self.doubt += 1
         if self.doubt >= 8:  # about 2 s without a clear beat
-            self.locked = False
             self.candidate, self.agree, self.doubt = 0.0, 0, 0
+            if self.locked and self.coast is None:
+                self.coast = self.times[-1]
+
+    def checkCoast(self, now, lastKick, rolling):
+        """Start holding the tempo when the kicks have stopped (a breakdown), and let go after too long."""
+        if self.locked and self.coast is None and self.lastKick is not None and not rolling \
+                and now - lastKick > max(2.0, 4.0 * self.period):  # music with no kicks at all has no breakdown to hold through
+            self.coast = now
+        if self.coast is not None and now - self.coast > TEMPO_COAST:
+            self.reset()
+
+    def kick(self, t):
+        """A kick was heard at time t. While holding, two in a row that fit the tempo set where the beats fall."""
+        if self.coast is not None and self.locked and self.lastKick is not None:
+            beats = (t - self.lastKick) / self.period
+            if 1 <= round(beats) <= 4 and abs(beats - round(beats)) * self.period < TEMPO_RESNAP:
+                p = self.position(t - ONSET_DELAY)
+                self.refPos -= p - round(p)
+                self.coast = None
+                self.doubt = 0
+                self.gaps.clear()
+            else:
+                self.gaps.append(t - self.lastKick)
+                if len(self.gaps) == self.gaps.maxlen and max(self.gaps) - min(self.gaps) < 2.0 * TEMPO_RESNAP:
+                    self.coast = None  # steady kicks that don't fit: the next track has come in, so listen for its tempo as usual
+        self.lastKick = t
 
     def _estimate(self):
         """(period in seconds, time of a recent beat), or None when there is no clear beat."""
@@ -627,6 +725,7 @@ class _RollFinder:
         self.slow = np.ones(int(0.5 * hopRate) | 1)  # odd length: half a second, longer than any hit gap
         self.slow /= len(self.slow)
         self.recent = max(1, int(0.25 * hopRate))
+        self.gone = max(1, int(ROLL_GONE_LOOK * hopRate))
         self.quick = int(ROLL_QUICK * hopRate)
         self.evenSize = int(ROLL_EVEN_LOOK * hopRate)
         self.evenSlack = max(1, int(round(ROLL_EVEN_SLACK * hopRate)))
@@ -641,6 +740,13 @@ class _RollFinder:
         self.period = 0.0
         self.streak = 0
         self.holdUntil = 0.0
+        self.evenSince = None  # when even hits under the bass began
+
+    def _stop(self):
+        self.active = False
+        self.streak = 0
+        self.holdUntil = 0.0
+        self.evenSince = None
 
     def add(self, snare, bass):
         self.snare.append(snare)
@@ -653,10 +759,12 @@ class _RollFinder:
         snare = np.fromiter(self.snare, float, len(self.snare))
         bass = np.fromiter(self.bass, float, len(self.bass))
         # The drop has landed: stop at once. Medians, so a single kick under the roll doesn't count.
-        if np.median(snare[-self.recent:]) < np.median(bass[-self.recent:]):
-            self.active = False
-            self.streak = 0
-            self.holdUntil = 0.0
+        if not self._overBass(snare[-self.recent:], bass[-self.recent:], ROLL_DROP_ROOM):
+            self._stop()
+            return
+        # The hits have stopped, as in the gap before a drop: end it now, not when the repeat fades from the window.
+        if snare[-self.gone:].max() * 10.0 ** (ROLL_GONE_DROP / 10.0) < np.percentile(snare[:-self.gone], 90):
+            self._stop()
             return
         quick, quickLag = self._quickRepeat(snare[-self.quick:], bass[-self.quick:])
         steady, steadyLag = self._steadyRepeat(snare, bass)
@@ -669,7 +777,13 @@ class _RollFinder:
             self.period = quickLag / self.hopRate
         elif evenGap:
             self.period = evenGap / self.hopRate
-        if evenGap:
+        startsRoll = bool(evenGap)
+        if evenGap and not self.active and not self._overBass(snare[-self.evenSize:], bass[-self.evenSize:], 0.0):
+            self.evenSince = now if self.evenSince is None else self.evenSince
+            startsRoll = now - self.evenSince >= ROLL_UNDER_BASS_EVEN
+        else:
+            self.evenSince = None
+        if startsRoll:
             self.active = True
         if quick >= ROLL_QUICK_START or (self.active and steady >= ROLL_START):
             self.streak += 1
@@ -678,9 +792,12 @@ class _RollFinder:
             self.active = False
             self.streak = 0
 
+    def _overBass(self, snare, bass, room=ROLL_BASS_ROOM):
+        return np.median(snare) * 10.0 ** (room / 10.0) >= np.median(bass)
+
     def _pulse(self, snare, bass):
         """The band's beating with its slow build taken out, or None if it is under the bass or too shallow."""
-        if np.median(snare) < np.median(bass):
+        if not self._overBass(snare, bass, ROLL_BASS_ROOM if self.active else 0.0):
             return None
         trim = len(self.slow) // 2
         level = 10.0 * np.log10(snare + 1e-12)
@@ -715,7 +832,7 @@ class _RollFinder:
     def _evenGap(self, snare, bass, count, depth):
         """The steps between the newest hits if the last count gaps are even and at a roll's speed, else 0.
         Goes by the hits themselves, which show within a few hits, before a repeat measure can be sure."""
-        if np.median(snare) < np.median(bass):
+        if not self._overBass(snare, bass):
             return 0
         level = 10.0 * np.log10(snare + 1e-12)
         pulse = level - np.convolve(level, self.near, "same") / np.convolve(np.ones(len(level)), self.near, "same")
@@ -728,6 +845,61 @@ class _RollFinder:
         if gaps.min() < self.minLag or gaps.max() > self.maxLag or gaps.max() - gaps.min() > self.evenSlack:
             return 0
         return float(np.median(gaps))
+
+
+class _Harmony:
+    """Follows the notes of whatever is tonal, synths above all, however loud they are: how much of the
+    sound is notes rather than drums or noise, and each moment the notes change. Works on the shape of
+    the spectrum, so it behaves the same at any input level."""
+
+    def __init__(self, rate):
+        self.window = np.hanning(HARMONY_FFT).astype(np.float32)
+        freqs = np.fft.rfftfreq(HARMONY_FFT, 1.0 / rate)
+        self.lo, self.hi = (int(np.searchsorted(freqs, f)) for f in HARMONY_BAND)
+        self.pitchClass = (np.round(12.0 * np.log2(freqs[self.lo:self.hi] / 440.0) + 69).astype(int)) % 12
+        self.around = np.ones(9) / 9.0
+        self.looks = deque(maxlen=HARMONY_NOW + HARMONY_GAP + HARMONY_PAST)
+        self.reset()
+
+    def reset(self):
+        self.looks.clear()
+        self.tonal = 0.0       # share of the band's power in notes, smoothed
+        self.armed = True
+        self.lastChange = -10.0
+        self.pitch = None      # pitch class (0 = C) of the strongest note at the latest change
+        self.changed = False   # a change happened since the last light frame
+
+    def step(self, samples, t):
+        mag = np.abs(np.fft.rfft(samples * self.window))[self.lo:self.hi]
+        power = mag * mag
+        total = float(power.sum())
+        if total <= 0:
+            return
+        peaks = (mag > np.roll(mag, 1)) & (mag > np.roll(mag, -1)) & (mag > HARMONY_PEAK * np.convolve(mag, self.around, "same"))
+        peaks[0] = peaks[-1] = False
+        spread = peaks | np.roll(peaks, 1) | np.roll(peaks, -1)  # a note's power also fills the bins beside its peak
+        self.tonal += (float(power[spread].sum()) / total - self.tonal) * 0.25
+        chroma = np.bincount(self.pitchClass[peaks], weights=mag[peaks], minlength=12)
+        self.looks.append(chroma)
+        if len(self.looks) < self.looks.maxlen or self.tonal < HARMONY_TONAL:
+            return
+        looks = list(self.looks)
+        now = np.sum(looks[-HARMONY_NOW:], axis=0)
+        past = np.sum(looks[:HARMONY_PAST], axis=0)
+        size = math.sqrt(float(now.dot(now)) * float(past.dot(past)))
+        change = 1.0 - float(now.dot(past)) / size if size > 0 else 0.0
+        if change < HARMONY_CHANGE * HARMONY_REARM:
+            self.armed = True
+        elif change >= HARMONY_CHANGE and self.armed and t - self.lastChange >= HARMONY_MIN_GAP:
+            self.armed = False
+            self.lastChange = t
+            self.pitch = int(np.argmax(now))
+            self.changed = True
+
+    def take(self):
+        """The pitch class of the note change since the last call, or None."""
+        changed, self.changed = self.changed, False
+        return self.pitch if changed else None
 
 
 class _Decimator:
@@ -796,8 +968,12 @@ class _Analyser:
 
         self._kickRise, self._restRise = _Rise(), _Rise()
         self.kicks = _KickPicker(self.hopRate)
+        self.kickExpected = None  # set by the light show: does the beat grid put a kick at this time?
         self.tempo = _TempoTracker(self.hopRate)
         self.roll = _RollFinder(self.hopRate)
+        self.harmony = _Harmony(self.rate)
+        self._longHist = np.zeros(HARMONY_FFT, dtype=np.float32)  # the last HARMONY_FFT samples
+        self._hopCount = 0
         self.heard = False  # set by the light show: kicks and tempo only count while music is heard
 
         self._hist = np.zeros(FFT_SIZE, dtype=np.float32)  # the last FFT_SIZE samples
@@ -818,6 +994,9 @@ class _Analyser:
     def _hop(self, block, t, sens):
         self._hist[:-HOP] = self._hist[HOP:]
         self._hist[-HOP:] = block
+        self._longHist[:-HOP] = self._longHist[HOP:]
+        self._longHist[-HOP:] = block
+        self._hopCount += 1
         power = np.abs(np.fft.rfft(self._hist * self._window)) ** 2
         audible = power[self._audible]
         bands = np.add.reduceat(audible, self._bandStart) / self._bandWidth
@@ -840,10 +1019,13 @@ class _Analyser:
         kr = self._kickRise.step(kickPower, dt)
         rr = self._restRise.step(bands[self._restBands], dt)
         if self.heard and lv["power"] >= SILENCE:
-            if self.kicks.step(kr, t, sens) and lv["bass"] > 1e-6:
+            if self.kicks.step(kr, t, sens, self.kickExpected) and lv["bass"] > 1e-6:
                 self.kickSeen = True
+                self.tempo.kick(t)
             self.tempo.add(t, kr + 0.5 * rr)
             self.roll.add(float(power[self._snare].mean()), float(kickPower.mean()))
+            if self._hopCount % HARMONY_EVERY == 0:
+                self.harmony.step(self._longHist, t)
 
     def hasLevels(self):
         return self._peak is not None
@@ -861,13 +1043,13 @@ class _Analyser:
     def updateTempo(self, now):
         self.tempo.update(now)
         self.roll.update(now)
-        if self.tempo.locked and not self.roll.active and now - self.kicks.lastBeat > max(2.0, 4.0 * self.tempo.period):
-            self.tempo.reset()  # the kicks stopped (a breakdown): follow the sound until they come back
+        self.tempo.checkCoast(now, self.kicks.lastBeat, self.roll.active)
 
     def pause(self):
         """No music: start the kick and tempo search afresh when it comes back."""
         self.tempo.reset()
         self.roll.reset()
+        self.harmony.reset()
         self.kicks.reset()
         self._kickRise.reset()
         self._restRise.reset()
@@ -886,7 +1068,7 @@ def rollRipple(hue, sat):
 
 
 class _FlashLimiter:
-    """Keeps one light to the WCAG general flash limit: no more than 3 flashes in a second, a flash being a
+    """Keeps one light to a limit of flashes in a second, counted the WCAG way, a flash being a
     pair of opposite swings of 10% of full output or more, with the darker end below 80%. It works on the
     final brightness, so it holds whatever caused the flashing. A swing over the limit is cut short until one is free."""
 
@@ -894,21 +1076,42 @@ class _FlashLimiter:
         self.extreme = self.extremeAt = None  # the top or bottom of the current swing, and when it was reached
         self.direction = 0   # +1 rising, -1 falling, 0 not known yet
         self.swings = deque()
+        self.burstUsed = 0.0   # seconds spent above the Standard rate since the last full rest
+        self.burstSeen = self.aboveAt = None  # the last step, and the last time the rate was above Standard
+        self.resting = False   # the burst is used up: held to the Standard rate until the rest has passed
 
-    def step(self, bri, now, reserve=0):
+    def _burstCap(self, now, maxSwings):
+        """The swings allowed now: a level above Standard only gets its own limit for a short burst."""
+        standard = FLASH_LEVELS["Standard"][0]
+        if maxSwings <= standard:
+            return maxSwings
+        elapsed = now - self.burstSeen if self.burstSeen is not None else 0.0
+        self.burstSeen = now
+        if sum(now - t < FLASH_WINDOW for t in self.swings) > standard:
+            self.burstUsed += elapsed
+            self.aboveAt = now
+        elif self.aboveAt is not None and now - self.aboveAt >= FLASH_BURST_REST:
+            self.burstUsed, self.aboveAt = 0.0, None
+        self.resting = self.burstUsed >= FLASH_BURST
+        return standard if self.resting else maxSwings
+
+    def step(self, bri, now, maxSwings, reserve=0):
         """The brightness to send. A rise is refused while fewer than reserve swings would be left afterwards, which keeps them for the beats."""
         bri = round(bri)
+        maxSwings = self._burstCap(now, maxSwings)
         if self.extreme is None:
             self.extreme, self.extremeAt = bri, now
             return bri
         moved = bri - self.extreme
         if moved * self.direction > 0:  # further the same way
             self.extreme, self.extremeAt = bri, now
+        elif abs(moved) <= 1:  # resting here: the next swing starts when the light moves off, not when it arrived
+            self.extremeAt = now
         elif abs(moved) >= FLASH_SWING and min(bri, self.extreme) < FLASH_BRIGHT:
             # Swings are dated by the turning point they start from, as a slow fade can hide how close together those are.
             while self.swings and self.extremeAt - self.swings[0] >= FLASH_WINDOW:
                 self.swings.popleft()
-            if len(self.swings) >= FLASH_MAX_SWINGS - (reserve if moved > 0 else 0):
+            if len(self.swings) >= maxSwings - (reserve if moved > 0 else 0):
                 self.extremeAt = now  # held at the turning point, which so moves along with the time
                 return self.extreme + math.copysign(FLASH_SWING - 1, moved)
             self.swings.append(self.extremeAt)
@@ -930,12 +1133,18 @@ class _LightShow:
         self.cenRange = _Range()
         self.tracker = BeatTracker()
         self.rollTracker = BeatTracker()
+        self.kickCentre = 0.0  # seconds the MIDI clock sits from the sound, as learned from kicks
+        self.kickCentreKnown = False  # kicks have agreed on where they land against the MIDI clock
+        self.kickPhase = deque(maxlen=KICK_PHASE_KEEP)  # seconds each recent kick landed from the MIDI clock's nearest beat
+        self.heldPhase = None  # (time, phase) of a guided kick, kept back until its rise shows if it was a full kick
         self.rollPos = self.rollHit = None  # while a roll plays: position in hits, seconds per hit
         self.swellAt = self.swellFrom = None  # when this roll's Swell began, and the level it began at
+        self.rollBegan = None  # when this roll began, which a brief dropout doesn't reset
         self.rollFlash = 0.0
         self.rollAccent = 0.0  # with the flash limit on, the deep flash on the beat within a roll, 1 down to 0
         self.rollTop = {}      # each light's top level on a roll's latest frame, which the fade after the roll starts from
         self.rollEnd = None    # when the roll being faded out ended
+        self.rollKicked = False  # the first kick since has landed: the fade goes down with that kick's flash
         self.gainsBeforeKick = False  # a roll played, and no kick has landed since: the auto-gain still remembers its thin bass
         self.srcName = None
         self.heard = False
@@ -944,10 +1153,23 @@ class _LightShow:
         self.lastBeat = 0.0
         self.beatFlash = 0.0
         self.sustainFlash = False  # the latest flash came from sustained sound, not a kick
+        self.dropFlash = False  # a kick that counts as a drop has just landed
+        self.dropping = False   # the flash now fading is a drop's
+        self.kickAfterRoll = False  # this frame's kick is the first since a roll
+        self.gapLevels = deque()  # (time, dB) of the recent sound a stop is measured against
+        self.lastDb = deque(maxlen=3)  # dB of the last few frames, for hits
+        self.gapRef = self.gapSince = None  # while the music has stopped: the dB it stopped from, and when
+        self.gapEnded = -10.0
+        self.gapLength = 0.0   # how long the latest stop lasted
+        self.lastHit = -10.0
+        self.hitRise = 0.0  # dB the sound just jumped by
+        self.kickBass = 0.0  # how hard kicks hit the bass (fourth-root scale), slowly forgotten
         self.limiters = {}     # each light's _FlashLimiter
         self.beatHit = 1.0     # how hard the bass hit around the last beat, 0..1
         self.beatPeriod = 0.5  # seconds between beats, measured from the kicks when nothing predicts them
         self.beatCount = 0
+        self.notePitch = None  # pitch class waiting to set the next colour, while a synth plays with no kicks
+        self.lastNote = -10.0  # when the notes last set the colour
         self.colourKick = 0.0  # "Bass pulse": the beat's push on the colour, fading slower than the flash
         self.lastKick = -10.0  # when a kick last reached a frame
         self.kickLevel = 0.0   # how loud the music is with kicks playing (fourth-root scale), slowly forgotten
@@ -959,6 +1181,7 @@ class _LightShow:
 
         self.lastSent = {}
         self.lastFull = self.lastFrame = self.lastT = time.perf_counter()
+        analyser.kickExpected = self._kickExpected
 
     def _beatSource(self, now):
         """Where beats come from: MIDI clock while it runs, else the tempo found in the sound, else each kick as it is heard."""
@@ -983,15 +1206,58 @@ class _LightShow:
         hitsPerBeat = max(2, round(src.beatPeriod() / roll.period))
         return srcPos * hitsPerBeat, src.beatPeriod() / hitsPerBeat
 
-    def _kickOnBeat(self, now, src):
+    def _kickPhaseCentre(self, period):
+        """Where kicks have been landing against the MIDI clock, in seconds. Keeps the last answer until kicks agree on
+        a new one, so a messy patch doesn't send it back to zero. A phase within reach needs less agreement than one far off."""
+        seen = self.kickPhase
+        if len(seen) < KICK_PHASE_MIN:
+            return self.kickCentre
+        width = KICK_ON_BEAT / 2.0
+        reach = min(KICK_PHASE_MAX, 0.3 * period)
+        together = lambda c: [_wrapPhase(x - c, period) for x in seen if abs(_wrapPhase(x - c, period)) <= width]
+        best = max(seen, key=lambda c: (len(together(c)), -abs(c)))
+        if abs(best) > reach and len(together(best)) < KICK_PHASE_FAR_SHARE * max(len(seen), KICK_PHASE_FAR_KICKS):
+            best = max((c for c in seen if abs(c) <= reach), key=lambda c: (len(together(c)), -abs(c)), default=None)
+        if best is not None and len(together(best)) >= KICK_PHASE_SHARE * len(seen):
+            self.kickCentre = _wrapPhase(best + float(np.median(together(best))), period)
+            self.kickCentreKnown = True
+        return self.kickCentre
+
+    def _kickExpected(self, t):
+        """Does the beat grid put a kick at hop time t? Allows for where kicks have been landing against a MIDI clock."""
+        src, name = self._beatSource(t)
+        pos = src.position(t) if src is not None else None
+        if pos is None or (name == "clock" and not self.kickCentreKnown):  # a clock's grid means nothing until its offset is known
+            return False
+        period = src.beatPeriod()
+        if name == "clock" and sum(abs(_wrapPhase(x - self.kickCentre, period)) <= KICK_ON_BEAT / 2.0 for x in self.kickPhase) < KICK_GUIDED_AGREE * len(self.kickPhase):
+            return False
+        pos -= ONSET_DELAY / period
+        off = (pos - round(pos)) * period
+        return abs(_wrapPhase(off - (self.kickCentre if name == "clock" else 0.0), period)) <= KICK_GUIDED_WINDOW
+
+    def _kickOnBeat(self, now, src, name):
         """Did the last kick land on a whole beat of its source? Reads the source without the beat lead,
-        since a kick is heard on the beat itself, not when the lights fire ahead of it."""
+        since a kick is heard on the beat itself, not when the lights fire ahead of it. Against a MIDI
+        clock it goes by where kicks have been landing, as the clock and the sound arrive with different delays."""
         pos = src.position(now)
         if pos is None:
             return True
         period = src.beatPeriod()
         pos -= (now - (self.analyser.kicks.lastBeat - ONSET_DELAY)) / period
-        return abs(pos - round(pos)) * period <= KICK_ON_BEAT
+        off = (pos - round(pos)) * period
+        centre = 0.0
+        if name == "clock":
+            kicks = self.analyser.kicks
+            if self.heldPhase is not None and kicks.firmBeat == self.heldPhase[0]:  # by now its rise has shown it was a full kick
+                self.kickPhase.append(self.heldPhase[1])
+            self.heldPhase = None
+            if kicks.guided:  # a kick let in by the learned offset would only confirm it, unless its rise goes on to clear the usual bar
+                self.heldPhase = (kicks.lastBeat, off)
+            else:
+                self.kickPhase.append(off)
+            centre = self._kickPhaseCentre(period)
+        return abs(_wrapPhase(off - centre, period)) <= KICK_ON_BEAT
 
     def step(self, now):
         """One pass of the loop. Sends a frame if one is due. Returns the seconds to wait, or 0 to go straight on."""
@@ -1003,6 +1269,10 @@ class _LightShow:
         if name != self.srcName:  # positions of different sources don't line up
             self.tracker.step(None)
             self.srcName = name
+            self.kickPhase.clear()
+            self.heldPhase = None
+            self.kickCentre = 0.0
+            self.kickCentreKnown = False
         lead = max(0, self.engine.clockLeadMs) / 1000.0
         srcPos = src.position(now + lead) if src is not None else None
         self.rollPos, self.rollHit = self._rollGrid(src, srcPos)
@@ -1030,15 +1300,25 @@ class _LightShow:
         # A rise off the beat is a bassline or a synth, and must not keep the beats going. The detected tempo
         # is only trusted for this during sustained sound and on irregular rises: after a break it may be stale, and the drop must count.
         if kick and (name == "clock" or (name == "tempo" and self.envs["sustain"].value > SUSTAIN_CHECK and not a.kicks.keepsTime())) \
-                and not self._kickOnBeat(now, src):
+                and not self._kickOnBeat(now, src, name):
             kick = False
+        # A rise far under the kicks so far is a thump in a break, unless it keeps time like a quieter kick would.
+        self.kickBass *= 1.0 - SUSTAIN_DECAY * dt
+        if kick:
+            kickBass = math.sqrt(math.sqrt(raw["bass"]))
+            if kickBass < KICK_BASS_FLOOR * self.kickBass and not a.kicks.keepsTime():
+                kick = False
+            else:
+                self.kickBass = max(self.kickBass, kickBass)
 
         if a.roll.active:
             self.gainsBeforeKick = True
-        elif kick and self.gainsBeforeKick:  # the drop has landed: measure the levels against it alone
+        self.kickAfterRoll = bool(kick and self.gainsBeforeKick and not a.roll.active)
+        if self.kickAfterRoll:  # the drop has landed: measure the levels against it alone
             self.gainsBeforeKick = False
             for gain in self.gains.values():
                 gain.forget()
+            self.rollKicked = bool(self.rollTop)
 
         # Silence gate: below this the stream is effectively silent.
         silent = raw["power"] < SILENCE
@@ -1046,11 +1326,14 @@ class _LightShow:
         self.heard = a.heard = heard
         if not heard:
             a.pause()
+            self.rollPos = self.rollHit = None  # the pause has just cleared the beat these were worked out from
 
-        # Perceptual-ish scaling (compress), normalise, apply sensitivity. The level is
+        stopped = self._updateGap(now, raw, heard, kick)
+
+        # Perceptual-ish scaling (compress), normalise, apply brightness sensitivity. The level is
         # already normalised to its recent range, so a plain multiplier would only clip at 1.
-        # Sensitivity bends the curve instead: >100% lifts quiet parts, <100% leaves only peaks.
-        curve = 1.0 / max(0.05, float(e.sensitivity))
+        # Brightness sensitivity bends the curve instead: >100% lifts quiet parts, <100% leaves only peaks.
+        curve = 1.0 / max(0.05, float(e.brightSensitivity))
         # While no music is heard (a pause, room noise on a mic) the lights rest at minimum
         # and the auto-gain holds, so it never turns noise up to full brightness.
         norm = {}
@@ -1067,23 +1350,25 @@ class _LightShow:
                 self.beatPeriod += (now - self.lastBeat - self.beatPeriod) * 0.3
             self.lastBeat = now
             self.sustainFlash = False
+            self.dropping, self.dropFlash = self.dropFlash, False
             self.beatFlash = 1.0
             self.beatHit = norm["bass"]
         elif now - self.lastBeat < BEAT_SETTLE:
             # A predicted beat can land just before the kick it marks (lead time, timing drift), so keep
             # taking the hardest bass for a moment after the beat.
             self.beatHit = max(self.beatHit, norm["bass"])
-        self.beatFlash = max(0.0, self.beatFlash - dt * (SUSTAIN_FADE if self.sustainFlash else 4.0))
+        if not freshFlash:  # a new flash shows at full height on its own frame
+            self.beatFlash = max(0.0, self.beatFlash - dt * (DROP_FADE if self.dropping else SUSTAIN_FADE if self.sustainFlash else 4.0))
         rollHit, hitIdx = self.rollTracker.step(self.rollPos)
         if rollHit:
             self.rollFlash = 1.0
-            if hitIdx % self._hitsPerAccent(src) == 0:
+            if hitIdx % self._hitsPerAccent(src, now) == 0:
                 self.rollAccent = 1.0
         elif self.rollPos is None:
             self.rollFlash = self.rollAccent = 0.0
         else:
             self.rollFlash = max(0.0, self.rollFlash - dt / (ROLL_FLASH_SHARE * self.rollHit))
-            self.rollAccent = max(0.0, self.rollAccent - dt / (ROLL_ACCENT_SHARE * self._hitsPerAccent(src) * self.rollHit))
+            self.rollAccent = max(0.0, self.rollAccent - dt / (ROLL_ACCENT_SHARE * self._hitsPerAccent(src, now) * self.rollHit))
         rollFade = self._rollFade(now)
 
         release = 1.0 - min(0.95, max(0.0, e.smoothing))
@@ -1091,15 +1376,15 @@ class _LightShow:
         cen = self.envs["centroid"].step(centroid, release * 0.5, release * 0.5, dt)
         # Each beat flashes as hard as its kick: a soft kick a little, a hard one fully. With nothing
         # heard (a clock running without sound), every beat flashes fully.
-        hit = 0.3 + 0.7 * self.beatHit if heard else 1.0
+        hit = 0.3 + 0.7 * self.beatHit if heard and not self.dropping else 1.0
         # "Bass pulse" colour glides instead of following the flash frame by frame: the flash jumps to
         # full in one frame and is gone in a quarter second, which shows as colour jumps.
         self.colourKick = max(self.colourKick - dt * 1.2, self.beatFlash * 0.8 * hit)
         colourFade = min(0.95, max(0.0, float(e.colourFade)))
         # Bass with no kicks (a held sub, a bassline on its own) shouldn't hold the beat modes up.
-        share = 1.0 if self._kicksPlaying(now, src) else KICKLESS_BASS
+        share = KICK_BASS_SHARE if self._kicksPlaying(now, src) else KICKLESS_BASS
         self.bassShare = share if share > self.bassShare else self.bassShare + (share - self.bassShare) * min(1.0, dt * 4.0)
-        bass = max(sm["bass"] * self.bassShare, self._sustain(now, src, raw, kick, heard, release, dt) * (1.0 - self.bassShare) / (1.0 - KICKLESS_BASS))
+        bass = max(sm["bass"] * self.bassShare, self._sustain(now, src, raw, kick, heard, release, dt) * (KICK_BASS_SHARE - self.bassShare) / (KICK_BASS_SHARE - KICKLESS_BASS))
         colourPos = self.envs["colour"].step(max(bass, self.colourKick), 0.75, 0.7 * (1.0 - colourFade), dt)
 
         mode = e.mode
@@ -1121,7 +1406,10 @@ class _LightShow:
         frame = {}
         targets = list(e.targets)
         reserve = FLASH_BEAT_RESERVE if mode in ROLL_MODES and self.rollPos is None and not freshFlash \
-            and now - self.lastBeat >= BEAT_SETTLE and self._kicksPlaying(now, src) else 0
+            and now - self.lastBeat >= BEAT_SETTLE and (self._kicksPlaying(now, src) or (src is not None and self.envs["sustain"].value > SUSTAIN_FLASH)) else 0
+        maxSwings = FLASH_LEVELS[e.flashLevel][0]
+        if maxSwings is None:  # with the limit off nothing is counted, so turning it back on starts afresh
+            self.limiters.clear()
         for pos, idx in enumerate(targets):
             h, sat, amt = self._lightColour(mode, pos, targets, pal, sm, bass, cen, colourPos, hit, jumpCol)
             lo, hiB = sorted((int(e.minBri), int(e.maxBri)))
@@ -1132,13 +1420,19 @@ class _LightShow:
                 bri = lo + (hiB - lo) * max(0.0, min(1.0, amt))
                 if rollFade and mode in ROLL_MODES and idx in self.rollTop:
                     bri = max(bri, lo + (self.rollTop[idx] - lo) * rollFade)  # a kick still shows through the fade
-            if e.flashLimit:
-                bri = self.limiters.setdefault(idx, _FlashLimiter()).step(bri, now, reserve)
+            if stopped and (name != "clock" or e.clockNeedsSound):
+                bri = lo
+            if maxSwings is not None:
+                bri = self.limiters.setdefault(idx, _FlashLimiter()).step(bri, now, maxSwings, reserve)
             cmd = (int(round(h)) % 361, int(round(sat)), int(round(bri)))
             # Only send when something visibly changed.
             prev = self.lastSent.get(idx)
             if prev is None or abs(prev[0] - cmd[0]) >= 3 or abs(prev[2] - cmd[2]) >= 2 or abs(prev[1] - cmd[1]) >= 3:
                 frame[idx] = cmd
+
+        if stopped or not heard:  # the sound has gone: nothing from a roll comes back afterwards
+            self.rollTop.clear()
+            self.rollEnd = None
 
         e.state.update(level=sm["level"], bass=sm["bass"], mid=sm["mid"], high=sm["high"],
                        beat=self.beatFlash > 0.5, heard=heard)
@@ -1154,10 +1448,22 @@ class _LightShow:
             except Exception as ex:
                 e.state["error"] = str(ex)
 
-    def _hitsPerAccent(self, src):
-        """Roll hits from one deep flash to the next: whole beats, as few as keep within the flash limit."""
+    def _hitsPerAccent(self, src, now):
+        """Roll hits from one deep flash to the next, always landing on the beat: as few as keep within the flash limit,
+        except that above Standard a roll starts at one per beat and halves the gap every ROLL_BUILD_STEP seconds."""
+        e = self.engine
         period = src.beatPeriod()
-        return max(1, round(period / self.rollHit)) * math.ceil(FLASH_MIN_GAP / period)
+        perBeat = max(1, round(period / self.rollHit))
+        building = e.flashLevel != "Standard" and not any(self.limiters[i].resting for i in e.targets if i in self.limiters)
+        gap = FLASH_LEVELS[e.flashLevel if building else "Standard"][1]
+        divisors = [hits for hits in range(1, perBeat + 1) if perBeat % hits == 0]
+        fewest = next((hits for hits in divisors if hits * self.rollHit >= gap), perBeat * math.ceil(gap / period))
+        if not building:
+            return fewest
+        hits = perBeat
+        for _ in range(int((now - self.rollBegan) / ROLL_BUILD_STEP) if self.rollBegan is not None else 0):
+            hits = max((d for d in divisors if d * 2 <= hits), default=1)
+        return max(hits, fewest)
 
     def _sustain(self, now, src, raw, kick, heard, release, dt):
         """0..1, how far a sound with no kicks should hold the beat modes up: a synth as loud as the music
@@ -1168,7 +1474,31 @@ class _LightShow:
             self.kickLevel = max(self.kickLevel, loudness)
         share = loudness / self.kickLevel if self.kickLevel > 0 else 0.0
         target = max(0.0, min(1.0, (share - SUSTAIN_FROM) / (SUSTAIN_FULL - SUSTAIN_FROM)))
-        return self.envs["sustain"].step(target, 0.6, release * 0.6, dt) * (SUSTAIN_TOP if src is None else SUSTAIN_BEAT_TOP)
+        return self.envs["sustain"].step(target, 0.85, max(0.5, release * 0.6), dt) * (SUSTAIN_TOP if src is None else SUSTAIN_BEAT_TOP)
+
+    def _updateGap(self, now, raw, heard, kick):
+        """Is the music stopped right now? Measured against the sound of the last moments, a median, so it
+        catches a cut before a drop and not the space between kicks, where the median is already low."""
+        db = 10.0 * math.log10(max(raw["power"], 1e-12))
+        self.hitRise = db - min(self.lastDb) if self.lastDb else 0.0
+        self.lastDb.append(db)
+        if self.gapSince is not None:
+            if kick or not heard or db >= self.gapRef - GAP_EXIT or now - self.gapSince > GAP_LONGEST:
+                self.gapLength = now - self.gapSince
+                self.gapSince = None
+                self.gapEnded = now
+                self.gapLevels.clear()
+            return self.gapSince is not None
+        while self.gapLevels and now - self.gapLevels[0][0] > GAP_WINDOW:
+            self.gapLevels.popleft()
+        if heard and len(self.gapLevels) >= 5:
+            ref = float(np.median([d for _, d in self.gapLevels]))
+            if db < ref - GAP_DEPTH:
+                self.gapRef, self.gapSince = ref, now
+                return True
+        if heard:
+            self.gapLevels.append((now, db))
+        return False
 
     def _centroid(self, silent, dt):
         """Where the sound sits on a log-frequency scale, 0 = deep bass, 1 = bright highs."""
@@ -1185,7 +1515,13 @@ class _LightShow:
         beatIdx = None
         gridBeat = False
         kicksPlaying = self._kicksPlaying(now, src)
+        pitch = self.analyser.harmony.take()
+        stopped = self.gapSince is not None and now - self.gapSince >= GAP_BEAT_AGE
         if kick:
+            quietBeats = (now - self.lastKick) / max(0.05, src.beatPeriod() if src is not None else self.beatPeriod)
+            # A kick is seen as its rise begins, so the sound around it may not have reached full level on this frame.
+            loud = self.kickLevel > 0 and max(math.sqrt(math.sqrt(self.raw["level"])), math.sqrt(math.sqrt(self.raw["bass"]))) >= DROP_LOUDNESS * self.kickLevel
+            self.dropFlash = self.lastKick > 0 and (((quietBeats >= DROP_QUIET_BEATS or self.kickAfterRoll) and loud) or (now - self.gapEnded < GAP_RECENT and self.gapLength >= GAP_DROP))
             self.lastKick = now
         if src is not None:
             # The position already runs ahead by the lead, so the first beat after a clock Start reads that far past it.
@@ -1194,11 +1530,14 @@ class _LightShow:
             gridBeat = beat
             if name == "tempo" or e.clockNeedsSound:
                 # Keep counting the bar, but only flash to kicks. The beat fires ahead of its kick, so it
-                # goes by whether kicks have been playing, and the first kick back fires as it is heard.
-                if not self.heard:
+                # goes by whether kicks have been playing, and the first kick back fires as it is heard,
+                # unless it is the kick a flash already led.
+                if not self.heard or stopped:
                     beat = False
                 elif not kicksPlaying:
-                    beat = kick
+                    beat = kick and now - self.lastBeat > lead + KICK_ON_BEAT
+                elif kick and now - self.gapEnded < GAP_RECENT and now - self.lastBeat > 0.25 * src.beatPeriod():
+                    beat = True  # the kick the stop held back
                 elif beat and now - self.lastBeat < 0.5 * src.beatPeriod():
                     beat = False  # a phase correction stepped back over a beat: don't fire it twice
             e.state.update(beatSource=name, bpm=src.bpm(), kicks=kicksPlaying or kick,
@@ -1210,12 +1549,27 @@ class _LightShow:
         if beat:
             self.beatCount += 1
         # A loud sound with no kicks flashes on the beats it's missing, without changing colour on each one.
-        if gridBeat and not beat and not kicksPlaying and self.heard and self.envs["sustain"].value > SUSTAIN_FLASH:
+        if gridBeat and not beat and not kicksPlaying and self.heard and not stopped and self.envs["sustain"].value > SUSTAIN_FLASH:
             self.beatFlash = self.beatHit = 1.0
             self.sustainFlash = True
-        # A sound with no kicks has no beats to change colour on, so change on the bar instead.
-        if gridBeat and not beat and not kicksPlaying and beatIdx is not None and beatIdx % SUSTAIN_COLOUR_BEATS == 0 \
-                and self.envs["sustain"].value > SUSTAIN_CHECK:
+        # A sudden loud hit with no kicks playing (a stab, a pickup into the next section) lands at once.
+        if not beat and not kick and not kicksPlaying and self.heard and not stopped and self.hitRise >= HIT_RISE and self.kickLevel > 0 \
+                and math.sqrt(math.sqrt(self.raw["level"])) >= HIT_LOUD * self.kickLevel and now - self.lastHit >= HIT_MIN_GAP and now - self.lastBeat >= HIT_MIN_GAP:
+            self.lastHit = now
+            self.beatFlash = self.beatHit = 1.0
+            self.sustainFlash = True
+        # A synth with no kicks: its notes choose the colour, so the same chord comes back in the same colour.
+        period = src.beatPeriod() if src is not None else self.beatPeriod
+        sustained = not kicksPlaying and self.heard and self.envs["sustain"].value > SUSTAIN_CHECK
+        if pitch is not None and sustained and not beat and now - self.lastNote >= 0.9 * period:
+            self.notePitch, self.lastNote = pitch, now
+            if src is None and self.envs["sustain"].value > SUSTAIN_FLASH:  # no beats known: the notes are the only timing there is
+                self.beatFlash = self.beatHit = 1.0
+                self.sustainFlash = True
+            return False, True, HARMONY_COLOUR_BEATS
+        # No notes to go by (a noise sweep, one held chord): change on the bar instead.
+        if gridBeat and not beat and sustained and beatIdx is not None and beatIdx % SUSTAIN_COLOUR_BEATS == 0 \
+                and now - self.lastNote >= SUSTAIN_COLOUR_BEATS * period:
             return False, True, SUSTAIN_COLOUR_BEATS
         if name == "clock" and beatIdx is not None:  # count from the clock's downbeat, so changes land on bar lines
             return beat, beat and beatIdx % every == 0, every
@@ -1229,7 +1583,13 @@ class _LightShow:
         fade = max(0.1, period) * every * colourFade
         shown = self.jumpTo if self.jumpFrom is None or fade <= 0 else \
             _blend(self.jumpFrom, self.jumpTo, _ease(min(1.0, (now - self.jumpAt) / fade)))
-        if colourBeat:
+        if colourBeat and self.notePitch is not None:  # round the circle of fifths, so related chords get neighbouring colours
+            fifths = self.notePitch * 7 % 12
+            self.notePitch = None
+            self.hue = fifths * 30.0
+            if pal:
+                self.palIdx = fifths % len(pal)
+        elif colourBeat:
             self.hue = (self.hue + 137.5) % 360
             if pal:
                 self.palIdx = (self.palIdx + _beatStep(len(pal))) % len(pal)
@@ -1271,12 +1631,16 @@ class _LightShow:
         back before the fade is over keeps its Swell, so a brief dropout doesn't restart the climb."""
         if self.rollPos is not None:
             self.rollEnd = None
+            self.rollKicked = False
             return 0.0
         if self.rollEnd is None and self.rollTop:
             self.rollEnd = now
         fade = 1.0 - (now - self.rollEnd) / ROLL_RELEASE if self.rollEnd is not None else 0.0
+        if self.rollKicked:
+            fade = min(fade, self.beatFlash)
         if fade <= 0.0:
-            self.rollEnd = self.swellAt = None
+            self.rollEnd = self.swellAt = self.rollBegan = None
+            self.rollKicked = False
             self.rollTop.clear()
             return 0.0
         return fade
@@ -1285,6 +1649,8 @@ class _LightShow:
         """(brightness, top level) 0..100 while a drum roll plays: a smooth climb in Swell, one pulse per
         hit in Strobe (deep on the beat under the flash limit), and in Strobe + Swell those pulses under a ceiling that climbs like the Swell."""
         style = self.engine.rollStyle
+        if self.rollBegan is None:
+            self.rollBegan = now
         if style != "Strobe":
             if self.swellAt is None:
                 self.swellAt, self.swellFrom = now, max(0.0, min(amt, ROLL_SWELL_FROM))
@@ -1292,11 +1658,8 @@ class _LightShow:
             hi = lo + (hi - lo) * (self.swellFrom + (1.0 - self.swellFrom) * done * done)
             if style == "Swell":
                 return hi, hi
-        if not self.engine.flashLimit:
-            return lo + (hi - lo) * self.rollFlash, hi
-        rest = lo + (hi - lo) * ROLL_ACCENT_FLOOR
-        ripple = min(rollRipple(h, sat), hi - rest)
-        return rest + (hi - ripple - rest) * self.rollAccent + ripple * self.rollFlash, hi
+        ripple = min(rollRipple(h, sat), hi - lo)  # the limit counts flashes, not their depth, so accents can use the whole range
+        return lo + (hi - ripple - lo) * self.rollAccent + ripple * self.rollFlash, hi
 
 
 class SoundEngine:
@@ -1308,7 +1671,8 @@ class SoundEngine:
 
         # Settings, safe to change while running.
         self.mode = MODES[0]
-        self.sensitivity = 1.0     # response curve: >1 lifts quiet parts and finds more beats, <1 only peaks
+        self.brightSensitivity = 1.0  # response curve: >1 lifts quiet parts, <1 leaves only peaks
+        self.kickSensitivity = 1.0    # kick bar: >1 counts softer kicks, <1 only the strongest
         self.minBri = 5            # %
         self.maxBri = 100          # %
         self.saturation = 100      # %
@@ -1317,7 +1681,7 @@ class SoundEngine:
         self.smoothing = 0.5       # 0 = twitchy, 0.95 = very smooth (brightness and levels)
         self.colourFade = 0.75     # how long colour changes glide in Bass pulse and Beat colour jump, 0..0.95
         self.rollStyle = "Strobe"  # drum rolls: "Strobe" pulses on each hit, "Swell" climbs smoothly to Max bright, "Strobe + Swell" does both
-        self.flashLimit = True     # hold each light to the flash limit, see _FlashLimiter
+        self.flashLevel = "Standard"  # how many flashes a second each light is held to: a key of FLASH_LEVELS
         self.fps = 15
         self.targets = []          # light indexes to drive
         self.clock = None          # a neewerlux_midi.MidiClock: beats come from it while it has ticks
@@ -1438,7 +1802,7 @@ class SoundEngine:
                 break
             new, endT = self._takeAudio()
             if new is not None:
-                analyser.feed(decimator.process(new), endT, max(0.05, float(self.sensitivity)))
+                analyser.feed(decimator.process(new), endT, max(0.05, float(self.kickSensitivity)))
             wait = show.step(time.perf_counter())
             if wait:
                 stopEvent.wait(wait)
