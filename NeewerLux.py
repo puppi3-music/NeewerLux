@@ -8,6 +8,11 @@
 ##
 ## Which is based on the NeewerLite project by Xu Lian (@keefo)
 ## > https://github.com/keefo/NeewerLite <
+##
+## This fork with sound reactive mode: Copyright (c) 2026 Puppi3
+## > https://github.com/puppi3-music/NeewerLux/ <
+## Licensed under AGPL-3.0-only, see LICENSE. Includes MIT-licensed
+## code by Zach Glenwright and PoizenJam, see LICENSE-MIT.
 ############################################################
 ## A cross-platform Python script using the bleak and
 ## PySide6 (or PySide2) libraries to control Neewer brand lights via
@@ -401,6 +406,11 @@ try: # try to load the GUI
         _updateResultSignal = QtSignal(str, str, str, str)
         # Thread-safe signal for appending log messages from any thread
         _logSignal = QtSignal(str)
+        # Thread-safe signals for the worker thread's scan results and status text
+        _lightsChangedSignal = QtSignal()
+        _statusMessageSignal = QtSignal(str)
+        # Runs a function on the GUI thread, see runOnGui()
+        _runOnGuiSignal = QtSignal(object)
 
         def __init__(self):
             QMainWindow.__init__(self)
@@ -412,6 +422,9 @@ try: # try to load the GUI
 
             # Connect the thread-safe table update signal
             self._tableUpdateSignal.connect(self.setTheTable)
+            self._lightsChangedSignal.connect(self._onLightsChanged)
+            self._statusMessageSignal.connect(self._onStatusMessage)
+            self._runOnGuiSignal.connect(self._onRunOnGui)
 
             # Connect the log signal and log tab buttons
             self._logSignal.connect(self._appendLog)
@@ -444,8 +457,8 @@ try: # try to load the GUI
                 self.ColorModeTabWidget.setTabEnabled(1, False) # disable the HSI tab on launch
                 self.ColorModeTabWidget.setTabEnabled(2, False) # disable the SCENE tab on launch
                 # Animations tab (index 3) is always enabled, no light selection needed
-                self.ColorModeTabWidget.setTabEnabled(4, False) # disable the LIGHT PREFS tab on launch
-                self.ColorModeTabWidget.setCurrentIndex(6)  # default to Info tab
+                self.ColorModeTabWidget.setTabEnabled(5, False) # disable the LIGHT PREFS tab on launch
+                self.ColorModeTabWidget.setCurrentIndex(7)  # default to Info tab
 
             if findLightsOnStartup == True: # if we're set up to find lights on startup, then indicate that
                 self.statusBar.showMessage("Please wait - searching for Neewer lights...")
@@ -1719,7 +1732,7 @@ try: # try to load the GUI
             self.SC_Tab_CCT.activated.connect(lambda: self.switchToTab(0))
             self.SC_Tab_HSI.activated.connect(lambda: self.switchToTab(1))
             self.SC_Tab_SCENE.activated.connect(lambda: self.switchToTab(2))
-            self.SC_Tab_PREFS.activated.connect(lambda: self.switchToTab(4))
+            self.SC_Tab_PREFS.activated.connect(lambda: self.switchToTab(5))
 
             # DECREASE/INCREASE BRIGHTNESS REGARDLESS OF WHICH TAB WE'RE ON
             self.SC_Dec_Bri_Small.activated.connect(lambda: self.adjustLightParameter(0, -1))
@@ -2025,7 +2038,7 @@ try: # try to load the GUI
                     minK, maxK = getEffectiveCCTRange(selectedLight)
                     self.setupCCTBounds(minK, maxK)
 
-            elif self.ColorModeTabWidget.currentIndex() == 4: # if we're on the Light Preferences tab
+            elif self.ColorModeTabWidget.currentIndex() == 5: # if we're on the Light Preferences tab
                 if selectedLight != -1: # if there is a specific selected light
                     self.setupLightPrefsTab(selectedLight) # update the Prefs tab with the information for that selected light
 
@@ -2613,7 +2626,7 @@ try: # try to load the GUI
                 self.tryConnectButton.setEnabled(True) # if we have light(s) selected in the table, then enable the "Connect" button
 
                 if len(selectedRows) == 1: # we have exactly one light selected
-                    self.ColorModeTabWidget.setTabEnabled(4, True) # enable the "Preferences" tab for this light
+                    self.ColorModeTabWidget.setTabEnabled(5, True) # enable the "Preferences" tab for this light
 
                     # SWITCH THE TURN ON/OFF BUTTONS ON, AND CHANGE TEXT TO SINGLE BUTTON TEXT
                     self.turnOffButton.setText("Turn Light Off")
@@ -2665,7 +2678,7 @@ try: # try to load the GUI
                     self.ColorModeTabWidget.setTabEnabled(0, True)
                     self.ColorModeTabWidget.setTabEnabled(1, True) # enable the "HSI" mode tab
                     self.ColorModeTabWidget.setTabEnabled(2, True) # enable the "ANM/SCENE" mode tab
-                    self.ColorModeTabWidget.setTabEnabled(4, False) # disable the "Preferences" tab, as we have multiple lights selected
+                    self.ColorModeTabWidget.setTabEnabled(5, False) # disable the "Preferences" tab, as we have multiple lights selected
             else: # the selection has been cleared or there are no lights to select
                 currentTab = self.ColorModeTabWidget.currentIndex() # get the currently selected tab (so when we disable the tabs, we stick on the current one)
                 self.tryConnectButton.setEnabled(False) # if we have no lights selected, disable the Connect button
@@ -2680,12 +2693,12 @@ try: # try to load the GUI
                 self.ColorModeTabWidget.setTabEnabled(1, False) # disable the "HSI" mode tab
                 self.ColorModeTabWidget.setTabEnabled(2, False) # disable the "ANM/SCENE" mode tab
                 # Animations tab (3) stays enabled
-                self.ColorModeTabWidget.setTabEnabled(4, False) # disable the "Preferences" tab, as we have no lights selected
+                self.ColorModeTabWidget.setTabEnabled(5, False) # disable the "Preferences" tab, as we have no lights selected
 
-                if currentTab not in (3, 5): # if user is on Animations or Global Prefs, keep them there
+                if currentTab != 5: # Animations, Sound and the tabs after Light Preferences need no light selected
                     self.ColorModeTabWidget.setCurrentIndex(currentTab) # disable the tabs, but don't switch the current one shown
                 else:
-                    self.ColorModeTabWidget.setCurrentIndex(0) # if we're on Prefs, then switch to the CCT tab
+                    self.ColorModeTabWidget.setCurrentIndex(0) # if we're on Light Preferences, then switch to the CCT tab
 
                 self.checkLightTab() # check to see if we're on the CCT tab - if we are, then restore order
 
@@ -2869,14 +2882,14 @@ try: # try to load the GUI
                 pass # skip this, we don't want the animation automatically triggering when we go to this page
             elif i == 3: # we clicked on the ANIMATIONS tab
                 pass # no automatic action needed
-            elif i == 4: # we clicked on the LIGHT PREFS tab
+            elif i == 5: # we clicked on the LIGHT PREFS tab
                 if len(currentSelection) == 1:
                     self.setupLightPrefsTab(currentSelection[0])
-            elif i == 5: # we clicked on the Global PREFS tab
+            elif i == 6: # we clicked on the Global PREFS tab
                 self.setupGlobalLightPrefsTab()
-            elif i == 6: # Info tab
+            elif i == 7: # Info tab
                 pass
-            elif i == 7: # Log tab
+            elif i == 8: # Log tab
                 pass
 
         # COMPUTE A BYTESTRING FOR THE CCT SECTION
@@ -2994,6 +3007,16 @@ try: # try to load the GUI
 
             return selectionList # return the row IDs that are currently selected, or an empty array ([]) otherwise
 
+        def _onLightsChanged(self):
+            # The worker already reordered availableLights, so rows stay stable while it links
+            self.updateLights(True, False)
+
+        def _onStatusMessage(self, message):
+            self.statusBar.showMessage(message)
+
+        def _onRunOnGui(self, function):
+            function()
+
         # UPDATE THE TABLE WITH THE CURRENT INFORMATION FROM availableLights
         def updateLights(self, updateTaskbar = True, applyPreferredOrder = True):
             # Reorder availableLights so preferred-ID lights come first in ID order
@@ -3102,6 +3125,7 @@ try: # try to load the GUI
                                               "run 'uv sync' (or pip install sounddevice numpy). " + AUDIO_IMPORT_ERROR)
             else:
                 self.soundRefreshDevices()
+            self.soundPresetUpdateButton.clicked.connect(self._soundPresetUpdate)
             self.soundPresetSaveButton.clicked.connect(self._soundPresetSave)
             self.soundPresetDeleteButton.clicked.connect(self._soundPresetDelete)
             self.soundPresetCombo.activated.connect(self._soundPresetLoad)
@@ -3203,13 +3227,24 @@ try: # try to load the GUI
                 combo.setCurrentIndex(names.index(select) if select in names else -1)
             combo.blockSignals(False)
             self.soundPresetDeleteButton.setEnabled(bool(names))
+            self.soundPresetUpdateButton.setEnabled(bool(names) and combo.currentIndex() >= 0)
 
         def _soundPresetLoad(self, *args):
             name = self.soundPresetCombo.currentText()
             snd = self._soundPresetsRead().get(name)
             if snd:
                 self._soundApply(snd)
+                self.soundPresetUpdateButton.setEnabled(True)
                 self.statusBar.showMessage("Loaded sound preset \"" + name + "\"", 3000)
+
+        def _soundPresetUpdate(self):
+            name = self.soundPresetCombo.currentText()
+            presets = self._soundPresetsRead()
+            if name not in presets:
+                return
+            presets[name] = self._soundCollect()
+            if self._soundPresetsWrite(presets):
+                self.statusBar.showMessage("Updated sound preset \"" + name + "\"", 3000)
 
         def _soundPresetSave(self):
             presets = self._soundPresetsRead()
@@ -3636,7 +3671,8 @@ try: # try to load the GUI
                     # Restore last active tab (default to Info tab on first launch)
                     if "lastTab" in geo:
                         tabIdx = geo["lastTab"]
-                        if 0 <= tabIdx < self.ColorModeTabWidget.count():
+                        lightPrefsLocked = tabIdx == 5 and not self.ColorModeTabWidget.isTabEnabled(5) # needs a selected light, and Qt would show it disabled
+                        if 0 <= tabIdx < self.ColorModeTabWidget.count() and not lightPrefsLocked:
                             self.ColorModeTabWidget.setCurrentIndex(tabIdx)
             except Exception:
                 pass
@@ -4141,6 +4177,22 @@ def customPresetInfoBuilder(numOfPreset, formatForHTTP = False):
     else:
         return "<BR>".join(toolTipBuilder)
 
+def runOnGui(function):
+    """Run function on the GUI thread, whichever thread this is called from. Qt widgets must only be touched there."""
+    try:
+        if mainWindow is not None:
+            mainWindow._runOnGuiSignal.emit(function)
+    except Exception: # the window is already gone at shutdown
+        pass
+
+def showAnimationStopped():
+    def show():
+        if not animationRunning: # a new animation may have started by the time this runs
+            mainWindow.animPlayButton.setEnabled(True)
+            mainWindow.animStopButton.setEnabled(False)
+            mainWindow.animStatusLabel.setText("Stopped")
+    runOnGui(show)
+
 def recallCustomPreset(numOfPreset, updateGUI=True, loop=None):
     global availableLights
     global lastSelection
@@ -4149,13 +4201,7 @@ def recallCustomPreset(numOfPreset, updateGUI=True, loop=None):
     # If an animation is playing, stop it, user is recalling a preset
     if animationRunning:
         stopAnimation()
-        try:
-            if mainWindow is not None:
-                mainWindow.animPlayButton.setEnabled(True)
-                mainWindow.animStopButton.setEnabled(False)
-                mainWindow.animStatusLabel.setText("Stopped")
-        except Exception:
-            pass
+        showAnimationStopped()
 
     changedLights = [] # if a snapshot preset exists in this setting, log the lights that are to be changed here
 
@@ -5242,9 +5288,11 @@ def workerThread(_loop):
                         allDisconnectedSince += 1
                         if allDisconnectedSince >= 2:  # after 2 consecutive all-disconnected cycles, rescan
                             printDebugString("Auto-reconnect: all lights disconnected (likely wake from sleep) - rescanning...")
-                            if hasGUI: mainWindow.statusBar.showMessage("Woke from sleep - rescanning for lights...")
+                            if hasGUI: mainWindow._statusMessageSignal.emit("Woke from sleep - rescanning for lights...")
                             _loop.run_until_complete(findDevices())
-                            if hasGUI: mainWindow.updateLights()
+                            if hasGUI:
+                                reorderByPreferredID()
+                                mainWindow._lightsChangedSignal.emit()
                             allDisconnectedSince = 0
                     else:
                         allDisconnectedSince = 0
@@ -5278,7 +5326,9 @@ def workerThread(_loop):
             threadAction = _loop.run_until_complete(findDevices()) # add new lights to the main array
 
             if threadAction != "quit":
-                if hasGUI: mainWindow.updateLights() # tell the GUI to update its list of available lights
+                if hasGUI: # tell the GUI to update its list of available lights
+                    reorderByPreferredID()
+                    mainWindow._lightsChangedSignal.emit() # never rebuild Qt widgets from this thread
 
                 if autoConnectToLights == True: # if we're set to automatically link to the lights on startup, then do it here
                     #for a in range(len(availableLights)):
@@ -5585,13 +5635,7 @@ def processHTMLCommands(paramsList, loop):
     # Stop any running animation for non-animation HTTP commands
     if paramsList[3] not in ("animate", "stop_animate", "list_animations") and animationRunning:
         stopAnimation()
-        try:
-            if mainWindow is not None:
-                mainWindow.animPlayButton.setEnabled(True)
-                mainWindow.animStopButton.setEnabled(False)
-                mainWindow.animStatusLabel.setText("Stopped")
-        except Exception:
-            pass
+        showAnimationStopped()
 
     if paramsList[3] == "discover":
         # Queue discovery, worker thread handles "discover" natively (including auto-connect)
@@ -5610,21 +5654,14 @@ def processHTMLCommands(paramsList, loop):
         presetIdx = paramsList[2] - 1
         if 0 <= presetIdx < numOfPresets:
             saveCustomPreset("snapshot", presetIdx)
-            try:
-                if mainWindow is not None: mainWindow._savePresetsQuick()
-            except Exception:
-                pass
+            runOnGui(lambda: mainWindow._savePresetsQuick())
             printDebugString("HTTP: Saved snapshot preset " + str(presetIdx + 1))
 
     elif paramsList[3] == "add_preset":
         numOfPresets += 1
         defaultLightPresets.append(getDefaultPreset(numOfPresets - 1))
         customLightPresets.append(getDefaultPreset(numOfPresets - 1))
-        try:
-            if mainWindow is not None: mainWindow.createPresetButtons()
-            if mainWindow is not None: mainWindow._savePresetsQuick()
-        except Exception:
-            pass
+        runOnGui(lambda: (mainWindow.createPresetButtons(), mainWindow._savePresetsQuick()))
         printDebugString("HTTP: Added preset #" + str(numOfPresets))
 
     elif paramsList[3] == "delete_preset":
@@ -5639,11 +5676,7 @@ def processHTMLCommands(paramsList, loop):
             presetNames.clear()
             presetNames.update(newNames)
             numOfPresets -= 1
-            try:
-                if mainWindow is not None: mainWindow.createPresetButtons()
-                if mainWindow is not None: mainWindow._savePresetsQuick()
-            except Exception:
-                pass
+            runOnGui(lambda: (mainWindow.createPresetButtons(), mainWindow._savePresetsQuick()))
             printDebugString("HTTP: Deleted preset " + str(presetIdx + 1))
 
     elif paramsList[3] == "batch":
@@ -6272,11 +6305,8 @@ def animationEngineThread(animation, loop, speedMultiplier=1.0, loopOverride=Non
             now = time.time()
             if now - lastGUIUpdate >= 1.0:
                 lastGUIUpdate = now
-                try:
-                    if mainWindow is not None:
-                        mainWindow.animStatusLabel.setText("Playing: " + animName + "\nFrame " + str(frameIndex + 1) + "/" + str(totalFrames))
-                except Exception:
-                    pass
+                playingText = "Playing: " + animName + "\nFrame " + str(frameIndex + 1) + "/" + str(totalFrames)
+                runOnGui(lambda text=playingText: mainWindow.animStatusLabel.setText(text) if animationRunning else None)
 
             # === FADE TRANSITION (if fade_ms > 0 and we have a previous frame) ===
             if fade_ms > 0 and prevFrameIndex >= 0:
@@ -6374,13 +6404,8 @@ def animationEngineThread(animation, loop, speedMultiplier=1.0, loopOverride=Non
             threadAction = "psend|" + "|".join(map(str, changedLights))
         preAnimationStates = {}
 
-    try:
-        if mainWindow is not None:
-            mainWindow.animStatusLabel.setText("Stopped")
-            mainWindow.animPlayButton.setEnabled(True)
-            mainWindow.animStopButton.setEnabled(False)
-    except Exception:
-        pass
+    if not isChaining: # the incoming animation owns the status label and buttons now
+        showAnimationStopped()
 
 
 def startAnimation(animName, loop, speedMultiplier=1.0, loopOverride=None, fps=5, briScale=1.0, maxLoops=0):
@@ -7187,11 +7212,7 @@ class NLPythonServer(BaseHTTPRequestHandler):
                     saveAnimationToFile(animData)
                     resultData = {"success": True, "action": "create", "animation": animData["name"]}
                     # Refresh GUI list if available
-                    try:
-                        if mainWindow is not None:
-                            mainWindow.animRefreshList()
-                    except Exception:
-                        pass
+                    runOnGui(lambda: mainWindow.animRefreshList())
             elif action == "status":
                 resultData = {"success": True, "running": animationRunning,
                               "animation": currentAnimationName if animationRunning else None}
@@ -7301,7 +7322,7 @@ def writeHTMLSections(self, theSection, errorMsg = ""):
         if theSection == "quicklinks-timer": # write the "This page will refresh..." timer
             self.wfile.write(bytes("<CENTER><strong><em><span id='refreshDisplay'><BR></span></em></strong></CENTER><HR>\n", "utf-8"))
     elif theSection == "htmlendheaders":
-        self.wfile.write(bytes("<CENTER><A HREF='https://github.com/poizenjam/NeewerLux/'>NeewerLux " + NEEWERLUX_VERSION + "</A><BR>based on <A HREF='https://github.com/taburineagle/NeewerLite-Python/'>NeewerLite-Python</A> (v0.12d) by Zach Glenwright / originally from <A HREF='https://github.com/keefo/NeewerLite'>NeewerLite</A> by Xu Lian<BR></CENTER>\n", "utf-8"))
+        self.wfile.write(bytes("<CENTER><A HREF='https://github.com/puppi3-music/NeewerLux/'>NeewerLux " + NEEWERLUX_VERSION + "</A> (source, AGPL-3.0) by Puppi3<BR>fork of <A HREF='https://github.com/poizenjam/NeewerLux/'>NeewerLux</A> by PoizenJam, based on <A HREF='https://github.com/taburineagle/NeewerLite-Python/'>NeewerLite-Python</A> (v0.12d) by Zach Glenwright / originally from <A HREF='https://github.com/keefo/NeewerLite'>NeewerLite</A> by Xu Lian<BR></CENTER>\n", "utf-8"))
         self.wfile.write(bytes("</BODY>\n</HTML>", "utf-8"))
 
 def formatStringForConsole(theString, maxLength):
@@ -7524,8 +7545,10 @@ if __name__ == '__main__':
     print("---------------------------------------------------------")
     print("               NeewerLux ver. " + NEEWERLUX_VERSION)
     print("  Cross-platform Neewer LED light control")
-    print("  https://github.com/poizenjam/NeewerLux/")
+    print("  https://github.com/puppi3-music/NeewerLux/")
+    print("  Fork by Puppi3, licensed under AGPL-3.0")
     print("")
+    print("  NeewerLux by PoizenJam")
     print("  Based on NeewerLite-Python (v0.12d)")
     print("    by Zach Glenwright (@taburineagle)")
     print("  Originally from NeewerLite by Xu Lian (@keefo)")

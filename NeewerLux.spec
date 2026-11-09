@@ -18,6 +18,8 @@ a = Analysis(
     datas=[
         ('com.github.poizenjam.NeewerLux.ico', '.'),
         ('com.github.poizenjam.NeewerLux.png', '.'),
+        ('LICENSE', '.'),
+        ('LICENSE-MIT', '.'),
     ] + bleak_datas,
     hiddenimports=[
         'bleak',

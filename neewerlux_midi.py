@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Puppi3
 """MIDI clock input for NeewerLux's Sound tab.
 
 DJ software and drum machines can send MIDI clock: 24 ticks per beat plus Start,
@@ -168,18 +170,19 @@ class MidiClock:
         self._period = max(self._period + beta * error, 1e-4)
 
     def active(self, now=None):
-        """True while ticks are arriving and the tempo is known."""
+        """True while ticks are arriving and the tempo is known. Stays True from a Start to its first tick,
+        when position() is None: the clock hasn't gone away, so what was learned about it still holds."""
         now = time.perf_counter() if now is None else now
         with self._lock:
-            return self._period > 0 and self._ticks >= 0 and now - self._lastTick < STALE_AFTER
+            return self._period > 0 and now - self._lastTick < STALE_AFTER
 
     def bpm(self):
         with self._lock:
             return 60.0 / (self._period * TICKS_PER_BEAT) if self._period > 0 else 0.0
 
     def beatPeriod(self):
-        with self._lock:
-            return self._period * TICKS_PER_BEAT
+        with self._lock:  # never 0: callers divide by it, and opening a port can clear the tempo just after they read position()
+            return self._period * TICKS_PER_BEAT if self._period > 0 else 0.5
 
     def position(self, at):
         """Beats since Start at monotonic time at (may be a little in the future),

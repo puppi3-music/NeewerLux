@@ -4,6 +4,9 @@ Changes relative to upstream [NeewerLite-Python v0.12d](https://github.com/tabur
 
 ## Unreleased
 
+### Licence
+- **This fork is now AGPL-3.0-only**, maintained by Puppi3. Code inherited from NeewerLite-Python and NeewerLux keeps its MIT notice in `LICENSE-MIT`. Puppi3 is credited in the About text, and source links point to this fork.
+
 ### Added
 - **Sound reactive mode.** A new Sound tab colours the lights from an audio input in five modes: spectrum colour, beat colour jump, bass pulse, frequency bands, and rainbow drift. It has bass/mid/high meters, beat detection and automatic gain. With a loopback device (BlackHole, Stereo Mix, a PulseAudio monitor) it follows whatever the computer is playing. Needs `sounddevice` and `numpy`, which `uv sync` now installs.
 - **Colour palettes for sound mode.** The Sound tab's Colours row sets which colours every sound mode uses: Auto (the built-in colours), nine presets, or your own palette of up to 8 colours chosen with a colour wheel, swatches or the system picker. This replaces the Bass pulse hue setting.
@@ -24,6 +27,13 @@ Changes relative to upstream [NeewerLite-Python v0.12d](https://github.com/tabur
 - **More soft kicks picked up.** Where the MIDI clock or detected tempo expects a kick, a smaller rise in the bass now counts, as soft kicks and off-beat bass rise about as much as each other and only their timing tells them apart. With a clock this applies only while recent kicks agree on where the clock sits against the sound. On 13 tracks, about 15 more kicks in every 100 were caught (63% to 78% with no clock, 64% to 79% with one), with no track losing kicks; off-grid kicks rose 7-12% with no clock or a clock on time, and up to about 22% with a clock that is off or shifts. Not yet tried with live MIDI.
 - **Easier colour picking in HSI mode.** A colour wheel, 15 one-click swatches and a button for the system colour picker sit under the HSI sliders.
 - **Adjustable text size.** A− / A+ toolbar buttons and Ctrl/Cmd +, − and 0 scale all interface text from 80% to 250%. The setting is remembered, and the default on macOS is 130%.
+
+### Fixed
+- A crash on macOS after scanning for or linking to lights. The background thread was rebuilding the light table itself; the main window now does that.
+- Possible crashes while an animation plays or the web interface changes presets or animations. Those background threads were changing the window directly; the main window now does that.
+- Clearing the light selection no longer throws you off the Animations or Global Preferences tab, and it now leaves Light Preferences, which needs a selected light.
+- A MIDI Start no longer makes Sound mode forget where the clock sits against the music, which left flashes off the kicks until enough kicks had been heard again.
+- Launching no longer opens a greyed-out Light Preferences tab when the app was last closed on it.
 
 ## v1.3.0 - 2026-10-02
 

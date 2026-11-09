@@ -4,8 +4,8 @@ version = "1.3.0"
 description = "Cross-platform Neewer LED light control with a keyframe animation engine, preset system, and HTTP/web dashboard"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
-authors = [{ name = "poizenjam" }]
+license = { text = "AGPL-3.0-only" }
+authors = [{ name = "poizenjam" }, { name = "Puppi3" }]
 keywords = ["neewer", "bluetooth", "ble", "lighting", "streaming"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -26,8 +26,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/poizenjam/NeewerLux"
-Changelog = "https://github.com/poizenjam/NeewerLux/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/puppi3-music/NeewerLux"
+Changelog = "https://github.com/puppi3-music/NeewerLux/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 # The desktop application. Installed by default, see tool.uv.default-groups.

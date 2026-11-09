@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Puppi3
 """Sound-reactive lighting for NeewerLux.
 
 Listens to an audio input device, analyses it a number of times per second and
@@ -143,6 +145,8 @@ ROLL_MIN_DEPTH = 2.0    # dB the band must pulse by
 ROLL_BASS_ROOM = 9.0    # dB the band may sit under the bass during a roll: builds often keep the kick going under it, running grooves sit 17 dB or more under
 ROLL_DROP_ROOM = 13.0   # dB under the bass that means the drop has landed
 ROLL_UNDER_BASS_EVEN = 1.5  # seconds of unbroken even hits that start a roll under the bass, as a groove's 16ths are also even for a moment
+ROLL_NEAR_BASS = 6.0    # dB under the bass that counts as a roll rising through it, as a groove's hits sit far lower
+ROLL_NEAR_BASS_EVEN = 0.5  # seconds of even hits that start a roll this close to the bass
 ROLL_FIT_EVERY = 0.125  # seconds between estimates
 ROLL_FLASH_SHARE = 0.6  # share of the time between hits each flash takes to fade out
 ROLL_ACCENT_SHARE = 0.8  # share of the time between accents each one takes to fade
@@ -653,6 +657,8 @@ class _TempoTracker:
         if self.locked and self.coast is None and self.lastKick is not None and not rolling \
                 and now - lastKick > max(2.0, 4.0 * self.period):  # music with no kicks at all has no breakdown to hold through
             self.coast = now
+        if self.coast is not None and rolling:  # a roll keeps the track's tempo: the hold's time starts again when it ends
+            self.coast = now
         if self.coast is not None and now - self.coast > TEMPO_COAST:
             self.reset()
 
@@ -780,7 +786,8 @@ class _RollFinder:
         startsRoll = bool(evenGap)
         if evenGap and not self.active and not self._overBass(snare[-self.evenSize:], bass[-self.evenSize:], 0.0):
             self.evenSince = now if self.evenSince is None else self.evenSince
-            startsRoll = now - self.evenSince >= ROLL_UNDER_BASS_EVEN
+            near = self._overBass(snare[-self.recent:], bass[-self.recent:], ROLL_NEAR_BASS)
+            startsRoll = now - self.evenSince >= (ROLL_NEAR_BASS_EVEN if near else ROLL_UNDER_BASS_EVEN)
         else:
             self.evenSince = None
         if startsRoll:
@@ -1268,6 +1275,7 @@ class _LightShow:
         src, name = self._beatSource(now)
         if name != self.srcName:  # positions of different sources don't line up
             self.tracker.step(None)
+            self.rollTracker.step(None)
             self.srcName = name
             self.kickPhase.clear()
             self.heldPhase = None
@@ -1275,6 +1283,10 @@ class _LightShow:
             self.kickCentreKnown = False
         lead = max(0, self.engine.clockLeadMs) / 1000.0
         srcPos = src.position(now + lead) if src is not None else None
+        if srcPos is not None and name == "clock" and self.kickCentreKnown:
+            # Fire on the kicks, not the raw clock: DJ software sends its clock ahead of the audio it plays.
+            # Taken off the position, as the clock only reads a tick into its past.
+            srcPos -= self.kickCentre / src.beatPeriod()
         self.rollPos, self.rollHit = self._rollGrid(src, srcPos)
         # With beats predicted, a kick only needs its own frame if it is the first one back.
         beatDue = (a.kickSeen and (src is None or not self._kicksPlaying(now, src))) or self.tracker.due(srcPos) or self.rollTracker.due(self.rollPos)

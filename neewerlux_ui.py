@@ -1477,8 +1477,10 @@ copied between installations.</p>
 <hr>
 
 <p style="color:#888; font-size:0.9em;">
-<b>Repository:</b> <a href="https://github.com/poizenjam/NeewerLux/">github.com/poizenjam/NeewerLux</a><br>
+<b>Repository:</b> <a href="https://github.com/puppi3-music/NeewerLux/">github.com/puppi3-music/NeewerLux</a><br>
 <b>Releases:</b> <a href="https://github.com/poizenjam/NeewerLux/releases">github.com/poizenjam/NeewerLux/releases</a><br><br>
+Fork with sound reactive mode by Puppi3. Licensed under AGPL-3.0.<br>
+NeewerLux by <a href="https://github.com/poizenjam/NeewerLux/">PoizenJam</a>.
 Based on <a href="https://github.com/taburineagle/NeewerLite-Python/">NeewerLite-Python</a> (v0.12d) by Zach Glenwright.
 Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by Xu Lian.
 </p>
@@ -1522,6 +1524,9 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         self.soundPresetCombo.setToolTip("Saved Sound settings. Pick one to load it.\n"
             "The input device and beat source are not part of a preset.")
         presetRow.addWidget(self.soundPresetCombo, 1)
+        self.soundPresetUpdateButton = QPushButton("Update")
+        self.soundPresetUpdateButton.setToolTip("Update the selected preset with the current Sound settings")
+        presetRow.addWidget(self.soundPresetUpdateButton)
         self.soundPresetSaveButton = QPushButton("Save...")
         self.soundPresetSaveButton.setToolTip("Save the current Sound settings as a preset\n(use an existing name to overwrite it)")
         presetRow.addWidget(self.soundPresetSaveButton)
@@ -1536,7 +1541,7 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         self.soundDeviceCombo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.soundDeviceCombo.setToolTip("Audio input to analyse. To react to what your computer plays,\n"
             "pick a loopback device (BlackHole on macOS, Stereo Mix / VB-Cable on Windows,\n"
-            "'Monitor of ...' on Linux). See the note below.")
+            "'Monitor of ...' on Linux). The README has the setup steps.")
         devRow.addWidget(self.soundDeviceCombo, 1)
         self.soundRefreshButton = QPushButton("Refresh")
         devRow.addWidget(self.soundRefreshButton)
@@ -1674,25 +1679,13 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         sndLay.addLayout(btnRow)
         self.soundStatusLabel = QLabel("Stopped"); self.soundStatusLabel.setWordWrap(True)
         sndLay.addWidget(self.soundStatusLabel)
-        self.soundSetupNote = QLabel(
-            "To follow what your computer is playing: macOS needs a loopback device such as BlackHole. "
-            "In Audio MIDI Setup create a Multi-Output Device with your speakers and BlackHole, make it the "
-            "sound output, then listen to BlackHole here. Windows: enable Stereo Mix or install VB-Cable. "
-            "Linux: pick a 'Monitor of ...' source.\n\n"
-            "Beats from Traktor: Preferences > MIDI Clock > tick Send MIDI Clock; in Controller Manager add a "
-            "Generic MIDI device with Out-Port 'Traktor Virtual Output'; press the clock-send button in the Master "
-            "Clock panel. Then pick 'Traktor Virtual Output' under Beats from. Press Sync in Traktor's Master "
-            "Clock panel if the bar count drifts off the downbeat.")
-        self.soundSetupNote.setWordWrap(True)
-        self.soundSetupNote.setProperty("dim", True)
-        sndLay.addWidget(self.soundSetupNote)
         sndLay.addStretch(1)
 
         soundScroll = QScrollArea()
         soundScroll.setWidgetResizable(True)
         soundScroll.setFrameShape(QFrame.NoFrame)
         soundScroll.setWidget(self.soundTab)
-        self.ColorModeTabWidget.addTab(soundScroll, "Sound")
+        self.ColorModeTabWidget.insertTab(4, soundScroll, "Sound") # after Animations, before Light Preferences
 
         # === ASSEMBLE ===
         bottomLay.addWidget(self.ColorModeTabWidget, 1)
