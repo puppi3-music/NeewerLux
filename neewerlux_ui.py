@@ -1633,10 +1633,10 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
             "Strobe + Swell: the same pulses, on a brightness that climbs to Max bright over about 8 s.")
         rollL.setToolTip(self.soundRollStyleCombo.toolTip())
         sg.addWidget(self.soundRollStyleCombo, 11, 1)
-        self.soundRollLimitCheck = QCheckBox("Limit strobe depth (photosensitivity)")
+        self.soundRollLimitCheck = QCheckBox("Limit flashing (photosensitivity)")
         self.soundRollLimitCheck.setChecked(True)
-        self.soundRollLimitCheck.setToolTip("Keeps roll pulses shallow, to lower the risk for people with photosensitive epilepsy.\n"
-            "Off: pulses go all the way between Min and Max bright. Turns back on each time NeewerLux starts.")
+        self.soundRollLimitCheck.setToolTip("Holds each light to at most 3 flashes a second in every Sound mode, to lower the risk for people with photosensitive epilepsy.\n"
+            "Off: no cap, and drum roll hits go all the way between Min and Max bright. Turns back on each time NeewerLux starts.")
         sg.addWidget(self.soundRollLimitCheck, 11, 2, 1, 2)
         sndLay.addLayout(sg)
 

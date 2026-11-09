@@ -66,7 +66,7 @@ MODE_HELP = {
 # Frequency band edges in Hz.
 BASS = (20, 160)
 MID = (160, 2000)
-HIGH = (2000, 12000)
+HIGH = (2000, 15000)
 
 FFT_SIZE = 2048
 QUIET_RATIO = 0.18  # level (fourth root of power) below this share of the music level counts as quiet, about -30 dB
@@ -96,6 +96,10 @@ TEMPO_MIN_BPM, TEMPO_MAX_BPM = 70, 180
 SUSTAIN_FROM = 0.65    # share of the loudness with kicks at which a sound with no kicks starts to hold the lights up
 SUSTAIN_FULL = 0.82    # ... and the share at which it holds them fully
 SUSTAIN_TOP = 0.75     # how high a sound with no kicks holds the lights, leaving room for flashes above it
+SUSTAIN_BEAT_TOP = 0.45  # ... or this high when beats are known, so the flash on each beat has room to show
+SUSTAIN_FLASH = 0.5    # sustained sound above this flashes on each beat of the clock or detected tempo
+SUSTAIN_FADE = 2.5     # share of full brightness per second those flashes fade, slower than a kick's since no kick adds body
+SUSTAIN_KICK_HOLD = 1.25  # beats after a kick that kicks still count as playing during sustained sound, so a stray rise can't hold the flashes off
 SUSTAIN_DECAY = 0.005  # share per second the loudness with kicks is forgotten, so a quieter next track still counts
 SUSTAIN_COLOUR_BEATS = 4  # beats per colour change while a sound with no kicks holds the lights up
 SUSTAIN_CHECK = 0.3    # sustained sound above this: rises off the detected tempo's beats aren't kicks
@@ -123,10 +127,17 @@ ROLL_KEEP_GAPS, ROLL_KEEP_DEPTH = 3, 3.0  # the looser test that keeps a roll go
 ROLL_MIN_DEPTH = 2.0    # dB the band must pulse by
 ROLL_FIT_EVERY = 0.125  # seconds between estimates
 ROLL_FLASH_SHARE = 0.6  # share of the time between hits each flash takes to fade out
-ROLL_FLASH_FLOOR = 0.55  # share of the Min to Max bright range the lights stay above between roll hits
-ROLL_SWING_MAX = 9       # brightness points a roll pulse may move, under the 10% of full output that counts as a flash
-ROLL_SWING_BRIGHT = 80   # a pulse that never dims below this much brightness doesn't count as a flash
-ROLL_SWING_RED = 6       # brightness points a roll pulse may move in saturated red, at any brightness
+ROLL_ACCENT_FLOOR = 0.3  # with the flash limit on: share of the Min to Max bright range each accent fades down to
+ROLL_ACCENT_SHARE = 0.8  # share of the time between accents each one takes to fade
+FLASH_MIN_GAP = 0.35     # seconds: with the flash limit on, roll accents come at least this far apart
+FLASH_SWING = 9          # brightness points: a swing this big counts as half a flash (the guideline says 10; rounding and skipped small sends take up the difference) ...
+FLASH_BRIGHT = 80        # ... unless its darker end is at this brightness or above
+FLASH_MAX_SWINGS = 5     # swings a light may make within FLASH_WINDOW: one under the 6 of 3 flashes, as a swing that was held back lands just after the last
+FLASH_WINDOW = 1.0       # seconds
+BEAT_SETTLE = 0.15       # seconds after a beat its kick may still be rising, as a predicted beat can land just before it
+FLASH_BEAT_RESERVE = 4  # swings a rise that isn't a beat must leave free while kicks play: its own fall and the next kick's rise and fall, so bass between kicks can't use them up
+ROLL_SWING_MAX = 8       # brightness points the ripple between accents may move, too little to count as a flash
+ROLL_SWING_RED = 6       # ... or in saturated red
 ROLL_SWELL_TIME = 8.0    # seconds a Swell takes to climb to Max bright
 ROLL_SWELL_FROM = 0.25   # highest point of the Min to Max bright range a Swell starts from
 ROLL_RELEASE = 1.0       # seconds the lights take to ease down from a roll's top level when it ends
@@ -868,14 +879,42 @@ def _isSaturatedRed(hue, sat):
     return r >= 0.8 * (r + g + b)
 
 
-def rollFloor(lo, hi, hue, sat):
-    """The brightness roll pulses dip to between hits, with Min and Max bright lo and hi (0..100).
+def rollRipple(hue, sat):
+    """Brightness points roll hits may ripple between accents. Hits come several times a second, the
+    rate most likely to affect people with photosensitive epilepsy, so each moves too little to count as a flash."""
+    return ROLL_SWING_RED if _isSaturatedRed(hue, sat) else ROLL_SWING_MAX
 
-    Rolls pulse several times a second, which is the kind of flashing most likely to affect people
-    with photosensitive epilepsy, so the depth follows the WCAG flash limits whatever the settings:
-    a pulse moves less than 10% of full output or stays at 80% and above, and saturated red moves less still."""
-    safe = hi - ROLL_SWING_RED if _isSaturatedRed(hue, sat) else min(ROLL_SWING_BRIGHT, hi - ROLL_SWING_MAX)
-    return max(lo + (hi - lo) * ROLL_FLASH_FLOOR, safe)
+
+class _FlashLimiter:
+    """Keeps one light to the WCAG general flash limit: no more than 3 flashes in a second, a flash being a
+    pair of opposite swings of 10% of full output or more, with the darker end below 80%. It works on the
+    final brightness, so it holds whatever caused the flashing. A swing over the limit is cut short until one is free."""
+
+    def __init__(self):
+        self.extreme = self.extremeAt = None  # the top or bottom of the current swing, and when it was reached
+        self.direction = 0   # +1 rising, -1 falling, 0 not known yet
+        self.swings = deque()
+
+    def step(self, bri, now, reserve=0):
+        """The brightness to send. A rise is refused while fewer than reserve swings would be left afterwards, which keeps them for the beats."""
+        bri = round(bri)
+        if self.extreme is None:
+            self.extreme, self.extremeAt = bri, now
+            return bri
+        moved = bri - self.extreme
+        if moved * self.direction > 0:  # further the same way
+            self.extreme, self.extremeAt = bri, now
+        elif abs(moved) >= FLASH_SWING and min(bri, self.extreme) < FLASH_BRIGHT:
+            # Swings are dated by the turning point they start from, as a slow fade can hide how close together those are.
+            while self.swings and self.extremeAt - self.swings[0] >= FLASH_WINDOW:
+                self.swings.popleft()
+            if len(self.swings) >= FLASH_MAX_SWINGS - (reserve if moved > 0 else 0):
+                self.extremeAt = now  # held at the turning point, which so moves along with the time
+                return self.extreme + math.copysign(FLASH_SWING - 1, moved)
+            self.swings.append(self.extremeAt)
+            self.direction = 1 if moved > 0 else -1
+            self.extreme, self.extremeAt = bri, now
+        return bri
 
 
 class _LightShow:
@@ -894,6 +933,7 @@ class _LightShow:
         self.rollPos = self.rollHit = None  # while a roll plays: position in hits, seconds per hit
         self.swellAt = self.swellFrom = None  # when this roll's Swell began, and the level it began at
         self.rollFlash = 0.0
+        self.rollAccent = 0.0  # with the flash limit on, the deep flash on the beat within a roll, 1 down to 0
         self.rollTop = {}      # each light's top level on a roll's latest frame, which the fade after the roll starts from
         self.rollEnd = None    # when the roll being faded out ended
         self.gainsBeforeKick = False  # a roll played, and no kick has landed since: the auto-gain still remembers its thin bass
@@ -903,6 +943,8 @@ class _LightShow:
 
         self.lastBeat = 0.0
         self.beatFlash = 0.0
+        self.sustainFlash = False  # the latest flash came from sustained sound, not a kick
+        self.limiters = {}     # each light's _FlashLimiter
         self.beatHit = 1.0     # how hard the bass hit around the last beat, 0..1
         self.beatPeriod = 0.5  # seconds between beats, measured from the kicks when nothing predicts them
         self.beatCount = 0
@@ -929,7 +971,8 @@ class _LightShow:
 
     def _kicksPlaying(self, now, src):
         period = src.beatPeriod() if src is not None else self.beatPeriod
-        return now - self.lastKick < KICK_HOLD_BEATS * period
+        hold = SUSTAIN_KICK_HOLD if self.envs["sustain"].value > SUSTAIN_CHECK else KICK_HOLD_BEATS
+        return now - self.lastKick < hold * period
 
     def _rollGrid(self, src, srcPos):
         """(position in roll hits, seconds per hit) while a roll plays over a known beat, else (None, None).
@@ -1016,24 +1059,31 @@ class _LightShow:
             norm[k] = min(1.0, n ** curve) if n > 0 else 0.0
 
         centroid = self._centroid(silent, dt)
+        flashBefore = self.beatFlash
         beat, colourBeat, every = self._readBeat(now, src, name, srcPos, lead, kick, silent)
+        freshFlash = beat or self.beatFlash > flashBefore
         if beat:
             if src is None and 0.25 < now - self.lastBeat < 2.0:
                 self.beatPeriod += (now - self.lastBeat - self.beatPeriod) * 0.3
             self.lastBeat = now
+            self.sustainFlash = False
             self.beatFlash = 1.0
             self.beatHit = norm["bass"]
-        elif now - self.lastBeat < 0.15:
+        elif now - self.lastBeat < BEAT_SETTLE:
             # A predicted beat can land just before the kick it marks (lead time, timing drift), so keep
             # taking the hardest bass for a moment after the beat.
             self.beatHit = max(self.beatHit, norm["bass"])
-        self.beatFlash = max(0.0, self.beatFlash - dt * 4.0)
-        if self.rollTracker.step(self.rollPos)[0]:
+        self.beatFlash = max(0.0, self.beatFlash - dt * (SUSTAIN_FADE if self.sustainFlash else 4.0))
+        rollHit, hitIdx = self.rollTracker.step(self.rollPos)
+        if rollHit:
             self.rollFlash = 1.0
+            if hitIdx % self._hitsPerAccent(src) == 0:
+                self.rollAccent = 1.0
         elif self.rollPos is None:
-            self.rollFlash = 0.0
+            self.rollFlash = self.rollAccent = 0.0
         else:
             self.rollFlash = max(0.0, self.rollFlash - dt / (ROLL_FLASH_SHARE * self.rollHit))
+            self.rollAccent = max(0.0, self.rollAccent - dt / (ROLL_ACCENT_SHARE * self._hitsPerAccent(src) * self.rollHit))
         rollFade = self._rollFade(now)
 
         release = 1.0 - min(0.95, max(0.0, e.smoothing))
@@ -1070,6 +1120,8 @@ class _LightShow:
             self.lastFull = now
         frame = {}
         targets = list(e.targets)
+        reserve = FLASH_BEAT_RESERVE if mode in ROLL_MODES and self.rollPos is None and not freshFlash \
+            and now - self.lastBeat >= BEAT_SETTLE and self._kicksPlaying(now, src) else 0
         for pos, idx in enumerate(targets):
             h, sat, amt = self._lightColour(mode, pos, targets, pal, sm, bass, cen, colourPos, hit, jumpCol)
             lo, hiB = sorted((int(e.minBri), int(e.maxBri)))
@@ -1080,6 +1132,8 @@ class _LightShow:
                 bri = lo + (hiB - lo) * max(0.0, min(1.0, amt))
                 if rollFade and mode in ROLL_MODES and idx in self.rollTop:
                     bri = max(bri, lo + (self.rollTop[idx] - lo) * rollFade)  # a kick still shows through the fade
+            if e.flashLimit:
+                bri = self.limiters.setdefault(idx, _FlashLimiter()).step(bri, now, reserve)
             cmd = (int(round(h)) % 361, int(round(sat)), int(round(bri)))
             # Only send when something visibly changed.
             prev = self.lastSent.get(idx)
@@ -1100,6 +1154,11 @@ class _LightShow:
             except Exception as ex:
                 e.state["error"] = str(ex)
 
+    def _hitsPerAccent(self, src):
+        """Roll hits from one deep flash to the next: whole beats, as few as keep within the flash limit."""
+        period = src.beatPeriod()
+        return max(1, round(period / self.rollHit)) * math.ceil(FLASH_MIN_GAP / period)
+
     def _sustain(self, now, src, raw, kick, heard, release, dt):
         """0..1, how far a sound with no kicks should hold the beat modes up: a synth as loud as the music
         was with kicks holds them, while a quieter pad or bassline doesn't. Before any kick nothing does."""
@@ -1109,7 +1168,7 @@ class _LightShow:
             self.kickLevel = max(self.kickLevel, loudness)
         share = loudness / self.kickLevel if self.kickLevel > 0 else 0.0
         target = max(0.0, min(1.0, (share - SUSTAIN_FROM) / (SUSTAIN_FULL - SUSTAIN_FROM)))
-        return self.envs["sustain"].step(target, 0.6, release * 0.6, dt) * SUSTAIN_TOP
+        return self.envs["sustain"].step(target, 0.6, release * 0.6, dt) * (SUSTAIN_TOP if src is None else SUSTAIN_BEAT_TOP)
 
     def _centroid(self, silent, dt):
         """Where the sound sits on a log-frequency scale, 0 = deep bass, 1 = bright highs."""
@@ -1150,6 +1209,10 @@ class _LightShow:
         every = max(1, int(e.beatsPerColour))
         if beat:
             self.beatCount += 1
+        # A loud sound with no kicks flashes on the beats it's missing, without changing colour on each one.
+        if gridBeat and not beat and not kicksPlaying and self.heard and self.envs["sustain"].value > SUSTAIN_FLASH:
+            self.beatFlash = self.beatHit = 1.0
+            self.sustainFlash = True
         # A sound with no kicks has no beats to change colour on, so change on the bar instead.
         if gridBeat and not beat and not kicksPlaying and beatIdx is not None and beatIdx % SUSTAIN_COLOUR_BEATS == 0 \
                 and self.envs["sustain"].value > SUSTAIN_CHECK:
@@ -1220,7 +1283,7 @@ class _LightShow:
 
     def _rollBrightness(self, now, lo, hi, h, sat, amt):
         """(brightness, top level) 0..100 while a drum roll plays: a smooth climb in Swell, one pulse per
-        hit in Strobe, and in Strobe + Swell those pulses under a ceiling that climbs like the Swell."""
+        hit in Strobe (deep on the beat under the flash limit), and in Strobe + Swell those pulses under a ceiling that climbs like the Swell."""
         style = self.engine.rollStyle
         if style != "Strobe":
             if self.swellAt is None:
@@ -1229,8 +1292,11 @@ class _LightShow:
             hi = lo + (hi - lo) * (self.swellFrom + (1.0 - self.swellFrom) * done * done)
             if style == "Swell":
                 return hi, hi
-        floor = rollFloor(lo, hi, h, sat) if self.engine.rollLimit else lo
-        return floor + (hi - floor) * self.rollFlash, hi
+        if not self.engine.flashLimit:
+            return lo + (hi - lo) * self.rollFlash, hi
+        rest = lo + (hi - lo) * ROLL_ACCENT_FLOOR
+        ripple = min(rollRipple(h, sat), hi - rest)
+        return rest + (hi - ripple - rest) * self.rollAccent + ripple * self.rollFlash, hi
 
 
 class SoundEngine:
@@ -1251,7 +1317,7 @@ class SoundEngine:
         self.smoothing = 0.5       # 0 = twitchy, 0.95 = very smooth (brightness and levels)
         self.colourFade = 0.75     # how long colour changes glide in Bass pulse and Beat colour jump, 0..0.95
         self.rollStyle = "Strobe"  # drum rolls: "Strobe" pulses on each hit, "Swell" climbs smoothly to Max bright, "Strobe + Swell" does both
-        self.rollLimit = True      # keep roll pulses within the flash limits in rollFloor
+        self.flashLimit = True     # hold each light to the flash limit, see _FlashLimiter
         self.fps = 15
         self.targets = []          # light indexes to drive
         self.clock = None          # a neewerlux_midi.MidiClock: beats come from it while it has ticks

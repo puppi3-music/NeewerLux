@@ -3111,8 +3111,8 @@ try: # try to load the GUI
         def _soundRollLimitToggled(self, on):
             """Turning the strobe limit off has to be confirmed, because of who it can harm."""
             if not on:
-                answer = QMessageBox.warning(self, "Turn off the strobe limit?",
-                    "Drum rolls will flash between Min and Max bright several times a second.\n\n"
+                answer = QMessageBox.warning(self, "Turn off the flash limit?",
+                    "Lights will no longer be held to 3 flashes a second, and drum rolls will flash between Min and Max bright several times a second.\n\n"
                     "Flashing like this can trigger seizures in people with photosensitive epilepsy "
                     "and can affect others too. Only turn this off if everyone who can see the lights "
                     "knows and has agreed.\n\nTurn the limit off?",
@@ -3329,7 +3329,6 @@ try: # try to load the GUI
             return sorted(self.selectedLights())
 
         def _soundSettingsChanged(self, *args):
-            self.soundRollLimitCheck.setEnabled(self.soundRollStyleCombo.currentText() != "Swell")
             mode = self.soundModeCombo.currentText()
             self.soundModeHelp.setText(getattr(self, "_soundModeHelp", {}).get(mode, ""))
             if soundEngine is None:
@@ -3340,7 +3339,7 @@ try: # try to load the GUI
             e.smoothing = self.soundSmoothSpin.value() / 100.0
             e.colourFade = self.soundColourFadeSpin.value() / 100.0
             e.rollStyle = self.soundRollStyleCombo.currentText()
-            e.rollLimit = self.soundRollLimitCheck.isChecked()
+            e.flashLimit = self.soundRollLimitCheck.isChecked()
             e.minBri = self.soundMinBriSpin.value()
             e.maxBri = self.soundMaxBriSpin.value()
             e.saturation = self.soundSatSpin.value()
