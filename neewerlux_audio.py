@@ -57,7 +57,7 @@ MODES = [
 
 MODE_HELP = {
     "Spectrum colour": "Low sounds take the first palette colour, high sounds the last (Auto: bass red/orange, vocals green, hats blue/violet). Brightness follows loudness.",
-    "Beat colour jump": "Each detected beat moves to another palette colour (Auto: any colour), gliding there over part of the time until the next change: Colour fade 75% fills three quarters of it, 95% fades continuously, 0 cuts hard. Brightness follows the bass while kicks play and flashes on the beat.",
+    "Beat colour jump": "Each detected beat moves to another palette colour (Auto: any colour), gliding there over part of the time until the next change: Colour fade 75% fills three quarters of it, 95% fades continuously, 0 cuts hard. Brightness follows the bass while kicks play and flashes on the beat. A loud sound with no kicks holds it up and changes colour each bar.",
     "Bass pulse": "Brightness pumps with the kicks and the bass under them, and the colour follows how hard it hits: soft bass on the first palette colour, hard kicks and each beat toward the last (stays blue on Auto).",
     "Frequency bands": "Light 1 = bass, light 2 = mids, light 3 = highs, repeating, in palette colours 1-3 (Auto: red, green, blue). One light blends all three.",
     "Rainbow drift": "Slides through the palette colours (Auto: the whole colour wheel), faster when it is louder. Beats give it a push.",
@@ -93,6 +93,13 @@ KICK_ON_BEAT = 0.06   # seconds: with a MIDI clock, a kick must land this close 
 KICK_HOLD_BEATS = 2.25  # beats after a kick that kicks still count as playing (so a kick every 2 beats keeps them on)
 KICKLESS_BASS = 0.2   # share of the bass that still reaches the brightness in the beat modes while no kicks play
 TEMPO_MIN_BPM, TEMPO_MAX_BPM = 70, 180
+SUSTAIN_FROM = 0.65    # share of the loudness with kicks at which a sound with no kicks starts to hold the lights up
+SUSTAIN_FULL = 0.82    # ... and the share at which it holds them fully
+SUSTAIN_TOP = 0.75     # how high a sound with no kicks holds the lights, leaving room for flashes above it
+SUSTAIN_DECAY = 0.005  # share per second the loudness with kicks is forgotten, so a quieter next track still counts
+SUSTAIN_COLOUR_BEATS = 4  # beats per colour change while a sound with no kicks holds the lights up
+SUSTAIN_CHECK = 0.3    # sustained sound above this: rises off the detected tempo's beats aren't kicks
+
 TEMPO_WINDOW = 8.0      # seconds of attacks the tempo is found from
 TEMPO_MIN_SECONDS = 4.0  # ... and the least it needs
 TEMPO_FIT_EVERY = 0.25  # seconds between estimates
@@ -464,6 +471,13 @@ class _KickPicker:
         if len(self.gaps) < self.gaps.maxlen:
             return FIRST_KICK_GAP
         return min(FIRST_KICK_GAP, max(FIRST_KICK_SHORTEST, FIRST_KICK_BEATS * float(np.median(self.gaps))))
+
+    def keepsTime(self):
+        """Did the latest kick come at the usual spacing? Regular kicks are kicks even if the tempo found is off."""
+        if len(self.gaps) < self.gaps.maxlen:
+            return False
+        gaps = list(self.gaps)
+        return abs(gaps[-1] - float(np.median(gaps[:-1]))) <= KICK_ON_BEAT
 
     def _remember(self, rise, t):
         self.rises.append(rise * FIRST_KICK_WEIGHT if t < self.firstUntil else rise)
@@ -872,7 +886,7 @@ class _LightShow:
         self.engine = engine
         self.analyser = analyser
         self.gains = {k: _AutoGain() for k in LEVELS}
-        self.envs = {k: _Envelope() for k in LEVELS + ("centroid", "colour")}
+        self.envs = {k: _Envelope() for k in LEVELS + ("centroid", "colour", "sustain")}
         self.gate = _SoundGate()
         self.cenRange = _Range()
         self.tracker = BeatTracker()
@@ -894,6 +908,7 @@ class _LightShow:
         self.beatCount = 0
         self.colourKick = 0.0  # "Bass pulse": the beat's push on the colour, fading slower than the flash
         self.lastKick = -10.0  # when a kick last reached a frame
+        self.kickLevel = 0.0   # how loud the music is with kicks playing (fourth-root scale), slowly forgotten
         self.bassShare = 1.0   # how much of the bass reaches the brightness in the beat modes
         self.jumpFrom = self.jumpTo = None  # "Beat colour jump": glide from this colour to that one
         self.jumpAt = 0.0
@@ -925,9 +940,9 @@ class _LightShow:
         hitsPerBeat = max(2, round(src.beatPeriod() / roll.period))
         return srcPos * hitsPerBeat, src.beatPeriod() / hitsPerBeat
 
-    def _kickOnClockBeat(self, now, src):
-        """Did the last kick land on a whole beat of the clock? Reads the clock without the beat lead,
-        since a kick is heard on the clock's own beat, not when the lights fire ahead of it."""
+    def _kickOnBeat(self, now, src):
+        """Did the last kick land on a whole beat of its source? Reads the source without the beat lead,
+        since a kick is heard on the beat itself, not when the lights fire ahead of it."""
         pos = src.position(now)
         if pos is None:
             return True
@@ -969,8 +984,11 @@ class _LightShow:
             self.raw, self.colour = a.takeLevels()
         raw = self.raw
         kick = a.takeKick()
-        if kick and name == "clock" and not self._kickOnClockBeat(now, src):
-            kick = False  # a rise off the beat is a bassline, and must not keep the clock beats going
+        # A rise off the beat is a bassline or a synth, and must not keep the beats going. The detected tempo
+        # is only trusted for this during sustained sound and on irregular rises: after a break it may be stale, and the drop must count.
+        if kick and (name == "clock" or (name == "tempo" and self.envs["sustain"].value > SUSTAIN_CHECK and not a.kicks.keepsTime())) \
+                and not self._kickOnBeat(now, src):
+            kick = False
 
         if a.roll.active:
             self.gainsBeforeKick = True
@@ -1031,7 +1049,7 @@ class _LightShow:
         # Bass with no kicks (a held sub, a bassline on its own) shouldn't hold the beat modes up.
         share = 1.0 if self._kicksPlaying(now, src) else KICKLESS_BASS
         self.bassShare = share if share > self.bassShare else self.bassShare + (share - self.bassShare) * min(1.0, dt * 4.0)
-        bass = sm["bass"] * self.bassShare
+        bass = max(sm["bass"] * self.bassShare, self._sustain(now, src, raw, kick, heard, release, dt) * (1.0 - self.bassShare) / (1.0 - KICKLESS_BASS))
         colourPos = self.envs["colour"].step(max(bass, self.colourKick), 0.75, 0.7 * (1.0 - colourFade), dt)
 
         mode = e.mode
@@ -1082,6 +1100,17 @@ class _LightShow:
             except Exception as ex:
                 e.state["error"] = str(ex)
 
+    def _sustain(self, now, src, raw, kick, heard, release, dt):
+        """0..1, how far a sound with no kicks should hold the beat modes up: a synth as loud as the music
+        was with kicks holds them, while a quieter pad or bassline doesn't. Before any kick nothing does."""
+        loudness = math.sqrt(math.sqrt(raw["level"])) if heard else 0.0
+        self.kickLevel *= 1.0 - SUSTAIN_DECAY * dt
+        if kick or self._kicksPlaying(now, src):
+            self.kickLevel = max(self.kickLevel, loudness)
+        share = loudness / self.kickLevel if self.kickLevel > 0 else 0.0
+        target = max(0.0, min(1.0, (share - SUSTAIN_FROM) / (SUSTAIN_FULL - SUSTAIN_FROM)))
+        return self.envs["sustain"].step(target, 0.6, release * 0.6, dt) * SUSTAIN_TOP
+
     def _centroid(self, silent, dt):
         """Where the sound sits on a log-frequency scale, 0 = deep bass, 1 = bright highs."""
         total = float(self.colour.sum())
@@ -1095,6 +1124,7 @@ class _LightShow:
         """(is this frame a beat, does the colour change on it, beats per colour)."""
         e = self.engine
         beatIdx = None
+        gridBeat = False
         kicksPlaying = self._kicksPlaying(now, src)
         if kick:
             self.lastKick = now
@@ -1102,6 +1132,7 @@ class _LightShow:
             # The position already runs ahead by the lead, so the first beat after a clock Start reads that far past it.
             onBeat = min(0.95, 0.1 + lead / max(0.05, src.beatPeriod()))
             beat, beatIdx = self.tracker.step(srcPos, onBeat)
+            gridBeat = beat
             if name == "tempo" or e.clockNeedsSound:
                 # Keep counting the bar, but only flash to kicks. The beat fires ahead of its kick, so it
                 # goes by whether kicks have been playing, and the first kick back fires as it is heard.
@@ -1119,6 +1150,10 @@ class _LightShow:
         every = max(1, int(e.beatsPerColour))
         if beat:
             self.beatCount += 1
+        # A sound with no kicks has no beats to change colour on, so change on the bar instead.
+        if gridBeat and not beat and not kicksPlaying and beatIdx is not None and beatIdx % SUSTAIN_COLOUR_BEATS == 0 \
+                and self.envs["sustain"].value > SUSTAIN_CHECK:
+            return False, True, SUSTAIN_COLOUR_BEATS
         if name == "clock" and beatIdx is not None:  # count from the clock's downbeat, so changes land on bar lines
             return beat, beat and beatIdx % every == 0, every
         return beat, beat and (self.beatCount - 1) % every == 0, every
