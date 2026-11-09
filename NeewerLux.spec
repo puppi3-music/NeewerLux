@@ -18,6 +18,8 @@ a = Analysis(
     datas=[
         ('com.github.poizenjam.NeewerLux.ico', '.'),
         ('com.github.poizenjam.NeewerLux.png', '.'),
+        ('LICENSE', '.'),
+        ('LICENSE-MIT', '.'),
     ] + bleak_datas,
     hiddenimports=[
         'bleak',
@@ -26,6 +28,11 @@ a = Analysis(
         'neewerlux_theme',
         'neewerlux_webui',
         'neewerlux_anim_editor',
+        'neewerlux_audio',
+        'sounddevice',
+        'neewerlux_midi',
+        'rtmidi',
+        'numpy',
         'PySide6',
         'PySide6.QtWidgets',
         'PySide6.QtCore',

@@ -517,8 +517,10 @@ select:focus, input:focus { border-color: var(--accent); outline: none; }
             </div>
             <hr style="border-color:var(--border)">
             <p style="color:var(--muted);font-size:0.9em;">
-                <b>Repository:</b> <a href="https://github.com/poizenjam/NeewerLux/" style="color:var(--accent)">github.com/poizenjam/NeewerLux</a><br>
+                <b>Repository:</b> <a href="https://github.com/puppi3-music/NeewerLux/" style="color:var(--accent)">github.com/puppi3-music/NeewerLux</a><br>
                 <b>Releases:</b> <a href="https://github.com/poizenjam/NeewerLux/releases" style="color:var(--accent)">github.com/poizenjam/NeewerLux/releases</a><br><br>
+                Fork with sound reactive mode by Puppi3. Licensed under AGPL-3.0.<br>
+                NeewerLux by <a href="https://github.com/poizenjam/NeewerLux/" style="color:var(--accent)">PoizenJam</a>.
                 Based on <a href="https://github.com/taburineagle/NeewerLite-Python/" style="color:var(--accent)">NeewerLite-Python</a> (v0.12d) by Zach Glenwright.
                 Originally from <a href="https://github.com/keefo/NeewerLite" style="color:var(--accent)">NeewerLite</a> by Xu Lian
             </p>
@@ -913,7 +915,9 @@ window.addEventListener('load', () => {
 </script>
 <div style="text-align:center;padding:16px 0 8px;font-size:11px;color:var(--muted);">
     NeewerLux {NLVERSION}<br>
-    <a href="https://github.com/poizenjam/NeewerLux/" style="color:var(--accent)">github.com/poizenjam/NeewerLux</a><br>
+    <a href="https://github.com/puppi3-music/NeewerLux/" style="color:var(--accent)">github.com/puppi3-music/NeewerLux</a><br>
+    Fork with sound reactive mode by Puppi3. Licensed under AGPL-3.0.<br>
+    NeewerLux by <a href="https://github.com/poizenjam/NeewerLux/" style="color:var(--accent)">PoizenJam</a>.
     Based on <a href="https://github.com/taburineagle/NeewerLite-Python/" style="color:var(--accent)">NeewerLite-Python</a> (v0.12d) by Zach Glenwright.
     Originally from <a href="https://github.com/keefo/NeewerLite" style="color:var(--accent)">NeewerLite</a> by Xu Lian
 </div>
