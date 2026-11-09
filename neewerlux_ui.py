@@ -1438,6 +1438,10 @@ hue to the nearest temperature, so mixed setups stay in step.</p>
 <p>Animations target lights by name, by number, by MAC address, or with <code>*</code>
 for all of them.</p>
 
+<h3>Sound reactive</h3>
+<p>The Sound tab drives the lights from an audio input or a MIDI clock, in five modes. Its
+own notes cover setting up a loopback device and Traktor. The README has the full details.</p>
+
 <h3>Remote control</h3>
 <p>Turn on the HTTP server to drive everything from a browser or from hardware such as a
 Stream Deck. The dashboard lives at <code>http://localhost:8080/</code>, and every action
@@ -1585,24 +1589,34 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         self.soundBeatSourceCombo.setToolTip("Where beats come from. A MIDI clock input (Traktor Virtual Output, say)\n"
             "gives the exact tempo and beat, so beat effects never miss. If the clock stops,\n"
             "beats are detected from the sound again until it comes back.")
-        sg.addWidget(self.soundBeatSourceCombo, 7, 1, 1, 2)
+        self.soundMidiRefreshButton = QPushButton("Refresh")
+        self.soundMidiRefreshButton.setToolTip("Look for MIDI inputs again and reconnect the chosen one if its clock has stopped.\n"
+            "Use it after opening Traktor or plugging in a device.")
+        beatRow = QHBoxLayout()
+        beatRow.addWidget(self.soundBeatSourceCombo, 1)
+        beatRow.addWidget(self.soundMidiRefreshButton)
+        sg.addLayout(beatRow, 7, 1, 1, 2)
         self.soundClockBadge = QLabel("")
         self.soundClockBadge.setToolTip("MIDI clock link: green when beats come from the clock")
         sg.addWidget(self.soundClockBadge, 7, 3)
         leadL = QLabel("Beat lead:"); leadL.setFont(mainFont); sg.addWidget(leadL, 8, 0)
         self.soundClockLeadSpin = _spin(0, 300, 50, " ms")
         self.soundClockLeadSpin.setToolTip("Fire MIDI clock beats, and beats predicted from the tempo, this much early,\nto make up for the time "
-            "Bluetooth takes to reach the lights. Raise it if the lights land after the kick.")
+            "Bluetooth takes to reach the lights.\n\nStart around 50 ms.\n"
+            "Then adjust in 10 ms steps: raise it if the lights land after the kick, lower it if they land before.\n"
+            "Has no effect on beats taken straight from detected kicks.")
+        leadL.setToolTip(self.soundClockLeadSpin.toolTip())
         sg.addWidget(self.soundClockLeadSpin, 8, 1)
         everyL = QLabel("Colour every:"); everyL.setFont(mainFont); sg.addWidget(everyL, 8, 2)
         self.soundBeatsPerColourSpin = _spin(1, 16, 1, " beats")
         self.soundBeatsPerColourSpin.setToolTip("Beat colour jump: change colour every this many beats (4 = once a bar).\n"
             "Brightness still flashes on every beat. With a MIDI clock, changes land on bar lines.")
         sg.addWidget(self.soundBeatsPerColourSpin, 8, 3)
-        self.soundClockNeedsSoundCheck = QCheckBox("Clock beats only while music plays")
+        self.soundClockNeedsSoundCheck = QCheckBox("Clock beats only while kicks play")
         self.soundClockNeedsSoundCheck.setChecked(True)
         self.soundClockNeedsSoundCheck.setToolTip("Traktor keeps sending MIDI clock after the decks stop. With this on,\n"
-            "clock beats pause after 1.5 s of quiet and come back with the sound.")
+            "clock beats pause when no kicks are heard, for example after the decks\n"
+            "stop or in an off-beat bassline, and come back with the first kick on a beat.")
         sg.addWidget(self.soundClockNeedsSoundCheck, 9, 1, 1, 3)
         self.soundPredictBeatsCheck = QCheckBox("Predict beats from the tempo")
         self.soundPredictBeatsCheck.setChecked(True)
@@ -1610,6 +1624,20 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
             "and fire each beat on time, early by the beat lead, instead of after each kick is heard.\n"
             "Off: every kick flashes as it is heard, about 30 ms late plus the Bluetooth delay.")
         sg.addWidget(self.soundPredictBeatsCheck, 10, 1, 1, 3)
+        rollL = QLabel("Drum rolls:"); rollL.setFont(mainFont); sg.addWidget(rollL, 11, 0)
+        self.soundRollStyleCombo = QComboBox()
+        self.soundRollStyleCombo.addItems(["Strobe", "Swell", "Strobe + Swell"])
+        self.soundRollStyleCombo.setToolTip("How drum rolls show in Beat colour jump, Bass pulse and Rainbow drift.\n"
+            "Strobe: a shallow pulse on each hit, kept shallow whatever Min and Max bright are set to.\n"
+            "Swell: brightness climbs smoothly to Max bright over about 8 s, with no pulsing.\n"
+            "Strobe + Swell: the same pulses, on a brightness that climbs to Max bright over about 8 s.")
+        rollL.setToolTip(self.soundRollStyleCombo.toolTip())
+        sg.addWidget(self.soundRollStyleCombo, 11, 1)
+        self.soundRollLimitCheck = QCheckBox("Limit strobe depth (photosensitivity)")
+        self.soundRollLimitCheck.setChecked(True)
+        self.soundRollLimitCheck.setToolTip("Keeps roll pulses shallow, to lower the risk for people with photosensitive epilepsy.\n"
+            "Off: pulses go all the way between Min and Max bright. Turns back on each time NeewerLux starts.")
+        sg.addWidget(self.soundRollLimitCheck, 11, 2, 1, 2)
         sndLay.addLayout(sg)
 
         meterRow = QHBoxLayout()

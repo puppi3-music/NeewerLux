@@ -238,6 +238,8 @@ savedAnimations = {}           # dict of {name: animation_dict} loaded from disk
 animationsDir = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "animations"
 lightAliases = {}  # {MAC: {"id": int, "name": str}}, built from per-light prefs sidecar files
 workerWakeEvent = threading.Event()  # signaled by animation thread to wake the worker immediately
+soundLatestLights = set()  # lights holding a sound colour the worker hasn't written yet
+soundLatestLock = threading.Lock()
 animParallelWrites = True  # send BLE commands to all lights simultaneously during animations
 animRevertOnFinish = True  # revert lights to pre-animation state when a non-looping animation finishes
 preAnimationStates = {}    # {light_index: byte_list} saved before animation starts
@@ -3074,12 +3076,15 @@ try: # try to load the GUI
             self._soundModeHelp = MODE_HELP
             self.soundModeCombo.addItems(MODES)
             self.soundModeCombo.currentTextChanged.connect(self._soundSettingsChanged)
+            self.soundRollStyleCombo.currentTextChanged.connect(self._soundSettingsChanged)
             for sp in (self.soundSensSpin, self.soundSmoothSpin, self.soundMinBriSpin, self.soundMaxBriSpin,
                        self.soundSatSpin, self.soundRateSpin, self.soundColourFadeSpin):
                 sp.valueChanged.connect(self._soundSettingsChanged)
             self.soundAllLightsCheck.toggled.connect(self._soundSettingsChanged)
+            self.soundRollLimitCheck.toggled.connect(self._soundRollLimitToggled)
             self.soundPalette.changed.connect(self._soundSettingsChanged)
             self.soundRefreshButton.clicked.connect(self.soundRefreshDevices)
+            self.soundMidiRefreshButton.clicked.connect(self._soundMidiRefreshClicked)
             self.soundBeatSourceCombo.currentIndexChanged.connect(self._soundApplyClock)
             self.soundClockLeadSpin.valueChanged.connect(self._soundSettingsChanged)
             self.soundBeatsPerColourSpin.valueChanged.connect(self._soundSettingsChanged)
@@ -3103,6 +3108,22 @@ try: # try to load the GUI
             self._soundPresetsRefresh()
             self._soundSettingsChanged()
 
+        def _soundRollLimitToggled(self, on):
+            """Turning the strobe limit off has to be confirmed, because of who it can harm."""
+            if not on:
+                answer = QMessageBox.warning(self, "Turn off the strobe limit?",
+                    "Drum rolls will flash between Min and Max bright several times a second.\n\n"
+                    "Flashing like this can trigger seizures in people with photosensitive epilepsy "
+                    "and can affect others too. Only turn this off if everyone who can see the lights "
+                    "knows and has agreed.\n\nTurn the limit off?",
+                    QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel)
+                if answer != QMessageBox.Yes:
+                    self.soundRollLimitCheck.blockSignals(True)
+                    self.soundRollLimitCheck.setChecked(True)
+                    self.soundRollLimitCheck.blockSignals(False)
+                    return
+            self._soundSettingsChanged()
+
         _SOUND_SPINS = (("sensitivity", "soundSensSpin"), ("smoothing", "soundSmoothSpin"),
                         ("minBri", "soundMinBriSpin"), ("maxBri", "soundMaxBriSpin"),
                         ("saturation", "soundSatSpin"), ("colourFade", "soundColourFadeSpin"),
@@ -3114,6 +3135,7 @@ try: # try to load the GUI
             d = {key: getattr(self, attr).value() for key, attr in self._SOUND_SPINS}
             d.update({
                 "mode": self.soundModeCombo.currentText(),
+                "rollStyle": self.soundRollStyleCombo.currentText(),
                 "palettePreset": self.soundPalette.presetName(),
                 "palette": self.soundPalette.palette() if self.soundPalette.presetName() == "Custom" else None,
                 "allLights": self.soundAllLightsCheck.isChecked(),
@@ -3126,6 +3148,7 @@ try: # try to load the GUI
             pos = self.soundModeCombo.findText(snd.get("mode", ""))
             if pos >= 0:
                 self.soundModeCombo.setCurrentIndex(pos)
+            self.soundRollStyleCombo.setCurrentText(snd.get("rollStyle", "Strobe"))
             for key, attr in self._SOUND_SPINS:
                 if key in snd:
                     getattr(self, attr).setValue(int(snd[key]))
@@ -3207,7 +3230,7 @@ try: # try to load the GUI
                 self._soundPresetsRefresh()
 
         def soundRefreshDevices(self):
-            from neewerlux_audio import listInputDevices, preferredDeviceIndex
+            from neewerlux_audio import listInputDevices, preferredDeviceIndex, AUDIO_AVAILABLE
             current = self.soundDeviceCombo.currentText()
             self.soundDeviceCombo.clear()
             devices = listInputDevices(rescan=soundEngine is None or not soundEngine.running)
@@ -3219,7 +3242,7 @@ try: # try to load the GUI
                 pos = self.soundDeviceCombo.findData(preferredDeviceIndex(devices))
             if pos >= 0:
                 self.soundDeviceCombo.setCurrentIndex(pos)
-            if not devices:
+            if not devices and AUDIO_AVAILABLE:  # without the packages, keep the install hint on show
                 self.soundStatusLabel.setText("No audio input devices found")
             self.soundRefreshMidi()
 
@@ -3232,7 +3255,8 @@ try: # try to load the GUI
             combo.blockSignals(True)
             combo.clear()
             combo.addItem("The sound (detect kicks)", "")
-            for p in listPorts():
+            ports = listPorts()
+            for p in ports:
                 combo.addItem("MIDI clock: " + p, p)
             if not MIDI_AVAILABLE:
                 combo.setToolTip("MIDI clock needs the python-rtmidi package: run 'uv sync'.")
@@ -3242,7 +3266,21 @@ try: # try to load the GUI
                 pos = combo.count() - 1
             combo.setCurrentIndex(max(0, pos))
             combo.blockSignals(False)
+            # A port that went away and came back under the same name (Traktor restarted) needs
+            # opening again. A clock that is still ticking is left alone so it keeps its beat position.
+            clock = self._midiClock
+            if clock is not None and clock.portName and not clock.active():
+                clock.close()
             self._soundApplyClock()
+            return ports
+
+        def _soundMidiRefreshClicked(self):
+            from neewerlux_midi import MIDI_AVAILABLE
+            n = len(self.soundRefreshMidi())
+            if MIDI_AVAILABLE:
+                self.statusBar.showMessage("Found " + str(n) + " MIDI input" + ("" if n == 1 else "s"), 3000)
+            else:
+                self.statusBar.showMessage("MIDI clock needs the python-rtmidi package: run 'uv sync'.", 5000)
 
         def _soundApplyClock(self, *args):
             """Open the chosen MIDI clock port (or none) and hand it to the engine."""
@@ -3258,6 +3296,8 @@ try: # try to load the GUI
                     clock = self._midiClock = MidiClock()
                 if clock.portName != port:
                     err = clock.open(port)
+                    if not err:  # a saved port that has been plugged in since is no longer "(not found)"
+                        self.soundBeatSourceCombo.setItemText(self.soundBeatSourceCombo.currentIndex(), "MIDI clock: " + port)
             if soundEngine is not None:
                 soundEngine.clock = clock if (port and clock is not None and clock.portName == port) else None
             self._soundClockError = err
@@ -3275,6 +3315,8 @@ try: # try to load the GUI
                 text, colour = "\u25CB Waiting for clock", "#d9a400"
             elif state == "quiet":
                 text, colour = "\u25CB Clock paused (quiet)", "#d9a400"
+            elif state == "nokicks":
+                text, colour = "\u25CB Clock paused (no kicks)", "#d9a400"
             else:
                 text, colour = "\u25CF MIDI linked " + state, "#2fbf4f"
             if text != self.soundClockBadge.text():
@@ -3287,6 +3329,7 @@ try: # try to load the GUI
             return sorted(self.selectedLights())
 
         def _soundSettingsChanged(self, *args):
+            self.soundRollLimitCheck.setEnabled(self.soundRollStyleCombo.currentText() != "Swell")
             mode = self.soundModeCombo.currentText()
             self.soundModeHelp.setText(getattr(self, "_soundModeHelp", {}).get(mode, ""))
             if soundEngine is None:
@@ -3296,6 +3339,8 @@ try: # try to load the GUI
             e.sensitivity = self.soundSensSpin.value() / 100.0
             e.smoothing = self.soundSmoothSpin.value() / 100.0
             e.colourFade = self.soundColourFadeSpin.value() / 100.0
+            e.rollStyle = self.soundRollStyleCombo.currentText()
+            e.rollLimit = self.soundRollLimitCheck.isChecked()
             e.minBri = self.soundMinBriSpin.value()
             e.maxBri = self.soundMaxBriSpin.value()
             e.saturation = self.soundSatSpin.value()
@@ -3311,8 +3356,6 @@ try: # try to load the GUI
             if self.soundDeviceCombo.count() == 0:
                 self.soundStatusLabel.setText("No audio input device selected")
                 return
-            if not availableLights:
-                self.soundStatusLabel.setText("No lights connected yet. Meters will still move; scan and connect to drive lights.")
             if animationRunning:
                 self.animStop()
             global animParallelWrites
@@ -3360,6 +3403,8 @@ try: # try to load the GUI
             n = len(e.targets)
             msg = ("Listening to " + self._soundDeviceName + ", driving " + str(n) + " light" +
                    ("" if n == 1 else "s") + (e.state.get("error") and (" (" + e.state["error"] + ")") or ""))
+            if not availableLights:
+                msg += ". No lights yet: scan and connect to drive them"
             if self.soundBeatSourceCombo.currentData():
                 if getattr(self, "_soundClockError", "") and time.monotonic() - getattr(self, "_soundClockRetryAt", 0) > 2:
                     self._soundClockRetryAt = time.monotonic()  # the port may have been plugged in since
@@ -3372,6 +3417,9 @@ try: # try to load the GUI
                     if e.clockNeedsSound and not e.state.get("heard"):
                         msg += ", paused: no music heard"
                         self._soundShowClockBadge("quiet")
+                    elif e.clockNeedsSound and not e.state.get("kicks"):
+                        msg += ", paused: no kicks heard"
+                        self._soundShowClockBadge("nokicks")
                     else:
                         self._soundShowClockBadge("%.0f BPM" % e.state.get("bpm", 0))
                 else:
@@ -4401,17 +4449,18 @@ _lastLogFlush = 0
 _bgThreadLogCounter = 0  # throttle "Background Thread Running" messages
 _lastSendTime = 0  # when the last write to a light happened
 _sendModeLogged = False  # whether the current burst of writes logged its send-mode messages
+SEND_LOG_QUIET_GAP = 5.0  # seconds; must stay above sound mode's 2 s keep-alive resend, or silence logs every resend
 
 def logSendMode(entering):
     """Log send-mode transitions once per burst of writes, not on every write.
 
     Animations, audio, MIDI and slider drags write many times a second; only the
-    first write after a quiet gap of 2 seconds gets logged.
+    first write after a quiet gap of SEND_LOG_QUIET_GAP seconds gets logged.
     """
     global _lastSendTime, _sendModeLogged
     now = time.time()
     if entering:
-        _sendModeLogged = (now - _lastSendTime) > 2
+        _sendModeLogged = (now - _lastSendTime) > SEND_LOG_QUIET_GAP
         if _sendModeLogged:
             printDebugString("Going into send mode")
     else:
@@ -5151,7 +5200,9 @@ def workerThread(_loop):
                             else:
                                 anyConnected = True
                                 reconnectCooldown.pop(a, None)  # light is connected, clear any cooldown
-                                if not availableLights[a][0].name in lightsToNotCheckPower: # if the name of the current light is not in the list to skip checking
+                                if soundEngine is not None and soundEngine.running:
+                                    pass # these reads take a second or two, and the sound frames would have to wait for them
+                                elif not availableLights[a][0].name in lightsToNotCheckPower: # if the name of the current light is not in the list to skip checking
                                     try:
                                         _loop.run_until_complete(getLightChannelandPower(a)) # then check the power and light status of that light
                                     except Exception as e:
@@ -5200,6 +5251,13 @@ def workerThread(_loop):
                             printDebugString("Auto-reconnect attempt complete")
                     except Exception as e:
                         printDebugString("Auto-reconnect error: " + str(e))
+
+        if threadAction == "":  # sound frames: however many arrived during the last write, only the newest colours go out
+            with soundLatestLock:
+                latest = sorted(soundLatestLights)
+                soundLatestLights.clear()
+            if latest:
+                threadAction = ("psend|" if animParallelWrites else "send|") + "|".join(map(str, latest))
 
         if threadAction == "quit":
             printDebugString("Stopping the background thread")
@@ -6084,7 +6142,7 @@ def animationSendFrame(frameCommands, loop):
     signalWorkerSend(changedLights)
 
 
-def signalWorkerSend(changedLights, waitSeconds=2.0, logDrop=True):
+def signalWorkerSend(changedLights, waitSeconds=2.0):
     """Hand a list of light indexes (whose availableLights[i][3] is already set) to the
     worker thread. Waits up to waitSeconds for the worker to be free, else drops the frame.
     Returns True if the frame was handed over."""
@@ -6096,8 +6154,7 @@ def signalWorkerSend(changedLights, waitSeconds=2.0, logDrop=True):
             break
         time.sleep(0.01)
     else:
-        if logDrop:
-            printDebugString("Animation frame dropped: worker busy")
+        printDebugString("Animation frame dropped: worker busy")
         return False  # worker is still busy, drop this frame
 
     # Signal the worker thread and return immediately, do NOT wait for completion.
@@ -6118,8 +6175,8 @@ soundEngine = None  # created on first use, see getSoundEngine()
 
 
 def soundSendFrame(frame):
-    """frame = {lightIndex: (hue, sat, bri)}. Called from the sound thread.
-    Never blocks for long: if the worker is still busy with the last frame, skip this one."""
+    """frame = {lightIndex: (hue, sat, bri)}. Called from the sound thread, and never waits: it
+    stores the colours and the worker writes whatever is newest as soon as it is free."""
     changed = []
     for lightIdx, (hue, sat, bri) in frame.items():
         if lightIdx >= len(availableLights):
@@ -6132,7 +6189,10 @@ def soundSendFrame(frame):
         changed.append(lightIdx)
     if not changed:
         return False
-    return signalWorkerSend(changed, waitSeconds=0.05, logDrop=False)
+    with soundLatestLock:
+        soundLatestLights.update(changed)
+    workerWakeEvent.set()
+    return True
 
 
 def getSoundEngine():
