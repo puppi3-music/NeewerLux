@@ -140,6 +140,9 @@ TEMPO_KICK_FREQ = 0.25   # ... and the share added to the beat period, so a new 
 TEMPO_KICK_SPAN = 0.035  # the most the kicks may move the period from the one locked on, under the 4% that locks again
 TEMPO_KICK_SOFT = 0.01   # seconds: errors smaller than this steer in proportion (jitter in when a kick is heard), larger ones fully
 TEMPO_KICK_OFFSET = 0.05  # how fast the usual offset of kicks from the grid is learned (a mic or the kick sound shifts it)
+TEMPO_ODD_RATIO = 0.005   # estimates this close to 3/4 or 4/3 of the period (now, or at the lock) are ignored, never relocked to
+TEMPO_EST_OFFSET = 0.1   # how fast, once clicks time the kicks, the window's beat's offset from them is learned
+TEMPO_EST_MAX = 0.035    # seconds: the most that offset may grow to (the bass's biggest rise comes 20-30 ms into a kick)
 TEMPO_KICK_LEARN = 8      # kicks after the first lock that only learn that offset (their mean) before any steering
 TEMPO_JUMP_KICKS = 4      # kicks in a row, evenly spaced at a new tempo past the 4% relock, that lock onto it at once
 TEMPO_JUMP_SPREAD = 0.025  # seconds: the most their gaps may differ (a hop is 11 ms)
@@ -150,7 +153,6 @@ TEMPO_FIT_RESID = 0.015   # seconds: the most a kick may sit off the fitted line
 ONSET_DELAY = 0.025     # seconds the detected attack lags the real one, until clicks have been heard (measured on a kick with no click)
 CLICK_LOOK = (0.005, 0.07)  # seconds before a detected kick that its click is looked for: mastered kicks click on the beat and their body builds 10-20 ms later
 CLICK_JUMP = 4.0        # how many times the high-band energy of the 5 ms before must jump to count as the click
-CLICK_REF = 0.02        # seconds from a kick's attack to its detection that ONSET_DELAY already covers (synthetic kicks: 14-20 ms, more under a busy bass); a later click adds the rest
 CLICK_KEEP = 16         # recent clicks whose median lag moves the onset delay
 CLICK_MIN = 6           # ... and the fewest that will do, all within
 CLICK_CLUSTER = 0.006   # ... this many seconds of each other
@@ -607,6 +609,8 @@ class _TempoTracker:
     def __init__(self, hopRate):
         self.hopRate = hopRate
         self.onsetDelay = ONSET_DELAY  # seconds a detected kick lags its click; the analyser learns it, kept across resets
+        self.clicked = False  # the onset delay was learned from clicks, so the kicks say where the beats are
+        self.estOffset = 0.0  # seconds the window's beat comes after the kicks' (it times the bass's biggest rise), once clicked
         n = int(TEMPO_WINDOW * hopRate)
         self.env = deque(maxlen=n)
         self.bass = deque(maxlen=n)  # the bass part of each attack, and the rest, for the phase comb
@@ -643,6 +647,7 @@ class _TempoTracker:
         self.gaps = deque(maxlen=3)  # gaps between kicks that didn't fit the held tempo
         self.recent = deque(maxlen=TEMPO_JUMP_KICKS)  # times of the last few kicks, for a jump in tempo
         self.onGrid = deque(maxlen=TEMPO_FIT_KICKS)  # times of recent kicks that steered the grid, to fit the period when a hold begins
+        self.flipped = None    # (when, by how much) the grid last moved to the off-beat
         self.jumped = None     # when the kicks last locked onto a new tempo: until the window has heard it, its estimates of the old one are ignored
 
     def add(self, t, bass, rest=0.0):
@@ -673,6 +678,13 @@ class _TempoTracker:
             self._unsure()
             return
         period, beatT = est
+        beatT -= self.estOffset
+        if self.locked and any(abs(period / q - r) < TEMPO_ODD_RATIO * r for r in (0.75, 4.0 / 3.0) for q in (self.period, self.basePeriod)):
+            # A dotted-eighth bass (three notes to two beats) repeats at 3/4 of the beat: not a new tempo.
+            if self.flipped is not None and now - self.flipped[0] < TEMPO_WINDOW:
+                self.refPos += self.flipped[1]  # the same bass, before it ruled the window, put the beat on the off-beat
+                self.flipped = None
+            return
         if self.candidate and abs(period / self.candidate - 1.0) < 0.04:
             self.agree += 1
         else:
@@ -696,6 +708,12 @@ class _TempoTracker:
         self.period += (period - self.period) * 0.3
         p = self.position(beatT)
         err = p - round(p)
+        if abs(err) <= 0.25 and self.clicked and self.offsetN >= TEMPO_KICK_LEARN and self.lastKick is not None \
+                and now - self.lastKick < 2.0 * self.period:
+            # Kicks are steering the grid and say where the beats are: learn how far the window's beat usually sits
+            # from them, so its nudges below stop pulling the grid off them. Bounded, so the window can still pull
+            # back kicks that drift off the beat.
+            self.estOffset = min(max(self.estOffset + TEMPO_EST_OFFSET * err * self.period, -TEMPO_EST_MAX), TEMPO_EST_MAX)
         if abs(err) <= 0.25:
             self.refPos -= err * 0.4
             self.flip = max(0, self.flip - 1)
@@ -707,6 +725,7 @@ class _TempoTracker:
             if self.flip >= TEMPO_FLIP:
                 self.refPos -= err
                 self.flip = 0
+                self.flipped = (now, err)
         self.doubt = 0
 
     def _unsure(self):
@@ -762,6 +781,11 @@ class _TempoTracker:
         else:
             self.recent.clear()
         if self.coast is None and self.locked and not rolling:
+            if self.clicked and self.offsetN >= TEMPO_KICK_LEARN and self.kickOffset:
+                # Clicks time the kicks: move the grid onto them, and count the old offset against the window's beat.
+                self.refPos -= self.kickOffset / self.period
+                self.estOffset -= self.kickOffset
+                self.kickOffset = 0.0
             at = t - self.onsetDelay
             p = self.position(at)
             e = (p - round(p)) * self.period - self.kickOffset  # seconds the kick came after its grid beat, as usual
@@ -770,7 +794,8 @@ class _TempoTracker:
                 self.kickOffset += e / self.offsetN
             elif abs(e) <= TEMPO_KICK_GATE:
                 self.onGrid.append(t)
-                self.kickOffset += TEMPO_KICK_OFFSET * weight * e
+                if not self.clicked:
+                    self.kickOffset += TEMPO_KICK_OFFSET * weight * e
                 weight *= min(1.0, abs(e) / TEMPO_KICK_SOFT) if TEMPO_KICK_SOFT > 0 else 1.0
                 self.refPos, self.refT = p, at
                 self.refPos -= TEMPO_KICK_PHASE * weight * e / self.period
@@ -1228,7 +1253,8 @@ class _Analyser:
             ends = np.searchsorted(lags, lags + CLICK_CLUSTER, side="right")
             i = int(np.argmax(ends - np.arange(len(lags))))
             if ends[i] - i >= CLICK_MIN:
-                self.tempo.onsetDelay = ONSET_DELAY + max(0.0, float(np.median(lags[i:ends[i]])) - CLICK_REF)
+                self.tempo.onsetDelay = float(np.median(lags[i:ends[i]]))
+                self.tempo.clicked = True
 
     def hasLevels(self):
         return self._peak is not None
