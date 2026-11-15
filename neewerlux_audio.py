@@ -131,6 +131,13 @@ TEMPO_FLIP = 8          # net estimates that must put the beat half a beat away 
 TEMPO_COAST = 60.0      # seconds a tempo is held through a section with no clear beat, as a track keeps its tempo through a breakdown
 TEMPO_COAST_AGREE = 16  # estimates in a row (4 s) that must agree before a pulse heard in such a section replaces the held tempo
 TEMPO_RESNAP = 0.04     # seconds: two kicks this close to a whole number of beats apart end the hold and set where the beats fall
+TEMPO_KICK_GATE = 0.045  # seconds: only kicks this close to a grid beat steer the grid (16ths at 160 BPM are 94 ms apart)
+TEMPO_KICK_PHASE = 0.5  # share of a kick's error the grid moves by
+TEMPO_KICK_FREQ = 0.25   # ... and the share added to the beat period, so a new tempo is followed within a few beats
+TEMPO_KICK_SPAN = 0.035  # the most the kicks may move the period from the one locked on, under the 4% that locks again
+TEMPO_KICK_SOFT = 0.01   # seconds: errors smaller than this steer in proportion (jitter in when a kick is heard), larger ones fully
+TEMPO_KICK_OFFSET = 0.05  # how fast the usual offset of kicks from the grid is learned (a mic or the kick sound shifts it)
+TEMPO_KICK_LEARN = 8      # kicks after the first lock that only learn that offset (their mean) before any steering
 ONSET_DELAY = 0.025     # seconds the detected attack lags the real one (measured on synthetic kicks)
 ROLL = (180, 1500)      # Hz: where snare rolls are looked for
 ROLL_WINDOW = 1.5       # seconds of that band each estimate looks at
@@ -610,6 +617,9 @@ class _TempoTracker:
         self.nextFit = 0.0
         self.coast = None   # when the hold began, while the tempo is held with no clear beat
         self.lastKick = None
+        self.basePeriod = 0.0  # the period at the lock, which the kicks may move it from by TEMPO_KICK_SPAN at most
+        self.kickOffset = 0.0  # seconds kicks usually come after the grid beat they fit, learned while locked
+        self.offsetN = 0       # kicks the offset has been learned from
         self.gaps = deque(maxlen=3)  # gaps between kicks that didn't fit the held tempo
 
     def add(self, t, onset):
@@ -649,6 +659,7 @@ class _TempoTracker:
             return
         if not self.locked or abs(period / self.period - 1.0) > 0.04:  # lock on, or a new tempo
             self.locked, self.period, self.refT, self.refPos = True, period, beatT, 0.0
+            self.basePeriod = period
             self.doubt = self.flip = 0
             self.coast = None
             return
@@ -687,8 +698,27 @@ class _TempoTracker:
         if self.coast is not None and now - self.coast > TEMPO_COAST:
             self.reset()
 
-    def kick(self, t):
-        """A kick was heard at time t. While holding, two in a row that fit the tempo set where the beats fall."""
+    def kick(self, t, weight=1.0, rolling=False):
+        """A kick was heard at time t. While holding, two in a row that fit the tempo set where the beats fall.
+        Otherwise a kick close to a grid beat moves the grid and the period a little towards it, so a change
+        of tempo is followed within a few beats instead of waiting for the 8 s window to fill with it.
+        weight is less than 1 for a kick that only cleared the lower bar for an expected beat."""
+        if self.coast is None and self.locked and not rolling:
+            at = t - ONSET_DELAY
+            p = self.position(at)
+            e = (p - round(p)) * self.period - self.kickOffset  # seconds the kick came after its grid beat, as usual
+            if abs(e) <= TEMPO_KICK_GATE and self.offsetN < TEMPO_KICK_LEARN:
+                self.offsetN += 1
+                self.kickOffset += e / self.offsetN
+            elif abs(e) <= TEMPO_KICK_GATE:
+                self.kickOffset += TEMPO_KICK_OFFSET * weight * e
+                weight *= min(1.0, abs(e) / TEMPO_KICK_SOFT) if TEMPO_KICK_SOFT > 0 else 1.0
+                self.refPos, self.refT = p, at
+                self.refPos -= TEMPO_KICK_PHASE * weight * e / self.period
+                lo, hi = self.basePeriod * (1 - TEMPO_KICK_SPAN), self.basePeriod * (1 + TEMPO_KICK_SPAN)
+                new = self.period + TEMPO_KICK_FREQ * weight * e
+                # Never past the span (so the 4% relock can't fire on our own correction), but don't pull back into it either.
+                self.period = min(max(new, min(lo, self.period)), max(hi, self.period))
         if self.coast is not None and self.locked and self.lastKick is not None:
             beats = (t - self.lastKick) / self.period
             if 1 <= round(beats) <= 4 and abs(beats - round(beats)) * self.period < TEMPO_RESNAP:
@@ -1069,7 +1099,7 @@ class _Analyser:
         elif self.heard:
             if self.kicks.step(kr, t, sens, self.kickExpected) and lv["bass"] > 1e-6:
                 self.kickSeen = True
-                self.tempo.kick(t)
+                self.tempo.kick(t, 0.5 if self.kicks.guided else 1.0, self.roll.active)
             self.tempo.add(t, kr + 0.5 * rr)
             self.roll.add(float(power[self._snare].mean()), float(kickPower.mean()))
             if self._hopCount % HARMONY_EVERY == 0:

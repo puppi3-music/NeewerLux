@@ -23,6 +23,7 @@ Columns:
   fire50   median error of fired beats in ms (+ late)
   extra    fired beats more than 30 ms from any true beat
   kick%    share of true kicks detected; kfalse = detections with no kick near
+  settle   drift cases: seconds from the tempo change until the grid is on (1/8 beat) for 8 beats in a row
 
 --flash adds a table for "Flash on: Kicks" (each detected kick flashes as heard) against "Beats" (the fired
 grid beats), run through the app's flash limiter on a model of the light (full flash fading in 0.25 s):
@@ -114,6 +115,7 @@ class Song:
         self.kicks = []       # true kick times
         self.drumBeats = []   # beats where flashes are expected (drums playing)
         self.length = float(self.beats[-1] + 1.0)
+        self.change = None    # time the tempo starts to change, for cases that change it
 
     def at(self, pos):
         i = int(math.floor(pos))
@@ -264,6 +266,7 @@ def fast200():
 
 def driftRamp():
     s = Song(_ramp(120, 126, 15, 45, 60))
+    s.change = 15.0
     for b in range(len(s.beats) // 4 - 1):
         s.bar(b, **HOUSE)
     return s
@@ -271,6 +274,16 @@ def driftRamp():
 
 def driftJump():
     s = Song(_ramp(120, 124, 30, 30, 60))
+    s.change = 30.0
+    for b in range(len(s.beats) // 4 - 1):
+        s.bar(b, **HOUSE)
+    return s
+
+
+def driftJump6():
+    """120 -> 127 at once: over the 4% relock, so the tracker locks again instead of following."""
+    s = Song(_ramp(120, 127, 30, 30, 60))
+    s.change = 30.0
     for b in range(len(s.beats) // 4 - 1):
         s.bar(b, **HOUSE)
     return s
@@ -291,7 +304,7 @@ CASES = {"house126": house126, "houseBuild": houseBuild, "houseFillBreak": house
          "silenceGap": silenceGap,
          "garage132": garage132, "footwork160": footwork160, "fast200": fast200,
          "dubstep140": dubstep140,
-         "driftRamp": driftRamp, "driftJump": driftJump, "strayKick": strayKick}
+         "driftRamp": driftRamp, "driftJump": driftJump, "driftJump6": driftJump6, "strayKick": strayKick}
 
 
 # --- input variants ---------------------------------------------------------------
@@ -348,9 +361,9 @@ def run(samples, window=None, tempoRange=None, flashOn="Beats", colours=None):
     kicks = []
     origKick = analyser.tempo.kick
 
-    def kick(t):
+    def kick(t, *a):
         kicks.append(t)
-        origKick(t)
+        origKick(t, *a)
     analyser.tempo.kick = kick
 
     log = []   # (time, locked, bpm) sampled every block
@@ -391,15 +404,27 @@ def score(song, log, fired, kicks):
     row = {"lock": lockT}
     # The grid at each true beat, read from the tracker state at that moment.
     ratios, offs = [], []
+    onAfter = []  # (beat time, grid within 1/8 beat) for beats after a tempo change
     for k, b in enumerate(beats[:-1]):
         j = int(np.searchsorted(times, b)) - 1
         if j < 0 or not log[j][1]:
+            if song.change is not None and b >= song.change:
+                onAfter.append((b, False))
             continue
         _, _, period, refT, refPos = log[j]
         trueP = beats[k + 1] - b
         ratios.append(trueP / period)
         pos = refPos + (b - refT) / period
         offs.append((pos - round(pos), period))
+        if song.change is not None and b >= song.change:
+            onAfter.append((b, abs(pos - round(pos)) <= 0.125))
+    if onAfter:
+        run_ = 0
+        for i, (b, ok) in enumerate(onAfter):
+            run_ = run_ + 1 if ok else 0
+            if run_ == 8:
+                row["settle"] = float(onAfter[i - 7][0] - song.change)
+                break
     if ratios:
         r = float(np.median(ratios))
         row["ratio"] = _ratioName(r)
@@ -433,7 +458,7 @@ def score(song, log, fired, kicks):
     return row
 
 
-COLS = ("lock", "ratio", "on%", "sits", "grid50", "grid90", "fire%", "fire50", "extra", "kick%", "kfalse")
+COLS = ("lock", "ratio", "on%", "sits", "grid50", "grid90", "fire%", "fire50", "extra", "kick%", "kfalse", "settle")
 
 
 def throughLimit(times, level, fps=30.0):
