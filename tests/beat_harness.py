@@ -560,19 +560,103 @@ def printTable(rows, title, cols=COLS):
         print("%-30s" % name + "".join(cells))
 
 
+def nmlGrid(nml, path):
+    """Traktor's beat grid for this file from a collection .nml, matched by file name: (BPM, anchor
+    in seconds) from the AutoGrid cue, or (BPM, None) when the entry has only a tempo."""
+    import xml.etree.ElementTree as ET
+    name = os.path.basename(path)
+    for e in ET.parse(nml).getroot().iter("ENTRY"):
+        loc = e.find("LOCATION")
+        if loc is None or loc.get("FILE") != name:
+            continue
+        for cue in e.iter("CUE_V2"):
+            grid = cue.find("GRID")
+            if cue.get("TYPE") == "4" and grid is not None:
+                return float(grid.get("BPM")), float(cue.get("START")) / 1000.0
+        tempo = e.find("TEMPO")
+        if tempo is not None:
+            return float(tempo.get("BPM")), None
+    sys.exit("%s: no BPM for %s" % (nml, name))
+
+
+def kickOnsets(x):
+    """Offline kick onsets from the whole track: the rise of the 40-160 Hz envelope at 1 ms steps.
+    Returns (times, strengths) of the local peaks of that rise."""
+    spec = np.fft.rfft(x)
+    f = np.fft.rfftfreq(len(x), 1.0 / RATE)
+    spec[(f < 40) | (f > 160)] = 0
+    low = np.fft.irfft(spec, len(x))
+    hop = RATE // 1000
+    env = np.sqrt(np.add.reduceat(low * low, np.arange(0, len(low), hop)) / hop)
+    env = np.convolve(env, np.ones(5) / 5, "same")
+    rise = np.maximum(np.diff(env, prepend=env[0]), 0)
+    rise = np.convolve(rise, np.ones(3) / 3, "same")
+    # Peaks: the biggest rise within 60 ms either side, above a floor.
+    from numpy.lib.stride_tricks import sliding_window_view
+    pad = np.pad(rise, 60)
+    peak = (rise == sliding_window_view(pad, 121).max(axis=1)) & (rise > 0.1 * np.percentile(rise, 99.5))
+    idx = np.nonzero(peak)[0]
+    return idx / 1000.0, rise[idx]
+
+
+def fitGrid(times, w, bpm):
+    """Fixed tempo near bpm (within 0.2%) and its phase, fitted over the whole track: the tempo whose
+    grid gathers the kick onsets tightest. Returns (bpm, first beat, concentration 0-1)."""
+    best = None
+    for b in np.linspace(bpm * 0.998, bpm * 1.002, 161):
+        p = 60.0 / b
+        z = np.sum(w * np.exp(2j * np.pi * times / p))
+        r = abs(z) / w.sum()
+        if best is None or r > best[2]:
+            best = (b, (np.angle(z) / (2 * np.pi) * p) % p, r)
+    b, t0, r = best
+    p = 60.0 / b
+    # Refine the phase: weighted median offset of the strong onsets near the grid.
+    off = (times - t0 + p / 2) % p - p / 2
+    near = np.abs(off) < 0.04
+    if near.any():
+        o, ww = off[near], w[near]
+        k = np.argsort(o)
+        t0 += o[k][np.searchsorted(np.cumsum(ww[k]), ww.sum() / 2)]
+    return b, t0 % p, r
+
+
 def songFromFile(path, bpm, firstBeat, beatsFile):
     import soundfile  # uv run --with soundfile
-    x, rate = soundfile.read(path, always_2d=True)
-    x = x.mean(axis=1)
+    try:
+        x, rate = soundfile.read(path, always_2d=True)
+        x = x.mean(axis=1)
+    except soundfile.LibsndfileError:  # m4a and the like: decode with ffmpeg
+        import subprocess
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-ac", "1", "-ar", str(RATE), "-f", "f32le", "-"],
+                             check=True, capture_output=True).stdout
+        x, rate = np.frombuffer(raw, np.float32).astype(float), RATE
     if rate != RATE:  # plain linear resample is enough for beat tracking
         x = np.interp(np.arange(int(len(x) * RATE / rate)) * rate / RATE, np.arange(len(x)), x)
+    onsets = None
     if beatsFile:
         beats = np.loadtxt(beatsFile)
     else:
-        beats = np.arange(firstBeat, len(x) / RATE, 60.0 / bpm)
+        if firstBeat == "auto":
+            onsets = kickOnsets(x)
+            fit, firstBeat, r = fitGrid(onsets[0], onsets[1], bpm)
+            print("auto grid: %.3f BPM (given %.3f), first beat %.3f s, onset concentration %.2f" % (fit, bpm, firstBeat, r))
+            bpm = fit
+        beats = np.arange(float(firstBeat), len(x) / RATE, 60.0 / bpm)
     s = Song(beats)
-    s.drumBeats = list(beats)  # unknown sections: every beat counts, so fire% reads low through breakdowns
     s.length = len(x) / RATE
+    if onsets is None:
+        s.drumBeats = list(beats)  # unknown sections: every beat counts, so fire% reads low through breakdowns
+    else:
+        # Beats with a clear kick onset within 25 ms count as kicks and drum beats; the rest
+        # (breakdowns, intros without a kick) are left out of fire% and kick%.
+        t, w = onsets
+        j = np.clip(np.searchsorted(t, beats), 1, len(t) - 1)
+        j = np.where(np.abs(t[j - 1] - beats) < np.abs(t[j] - beats), j - 1, j)
+        hasKick = (np.abs(t[j] - beats) <= 0.025) & (w[j] > 0.25 * np.median(w[j]))
+        s.kicks = list(beats[hasKick])
+        s.drumBeats = list(beats[hasKick])
+        print("kicks on %d of %d beats" % (hasKick.sum(), len(beats)))
     return s, x
 
 
@@ -586,7 +670,9 @@ def main():
                     help="tempo range in BPM for every input (default: the app's, plus a genre-range table)")
     ap.add_argument("--file", help="score a real track instead (needs --bpm and --first-beat, or --beats)")
     ap.add_argument("--bpm", type=float)
-    ap.add_argument("--first-beat", type=float, default=0.0)
+    ap.add_argument("--first-beat", default="0", help='seconds, or "auto" to fit it (and the BPM within 0.2%%) from the kicks')
+    ap.add_argument("--nml", help="take the BPM and beat grid from this Traktor collection (.nml), by file name; "
+                    "without a grid anchor the first beat is fitted as with --first-beat auto")
     ap.add_argument("--beats", help="text file with one true beat time per line")
     ap.add_argument("--flash", action="store_true", help='also a "Flash on: Kicks" against "Beats" table')
     args = ap.parse_args()
@@ -594,7 +680,17 @@ def main():
     default = na.TEMPO_WINDOW
     windows = [args.window or default] + ([w for w in (4.0, 6.0, 12.0, 16.0) if w != default] if args.sweep else [])
     if args.file:
-        song, x = songFromFile(args.file, args.bpm, args.first_beat, args.beats)
+        bpm, fb = args.bpm, args.first_beat
+        if args.nml:
+            gridBpm, anchor = nmlGrid(args.nml, args.file)
+            bpm = bpm or gridBpm
+            if anchor is not None and fb in ("0", "auto"):
+                fb = anchor % (60.0 / bpm)
+                print("nml grid: %.4f BPM, first beat %.3f s" % (bpm, fb))
+            elif fb == "0":
+                fb = "auto"  # no anchor in the collection: fit it
+        fb = fb if fb == "auto" else float(fb)
+        song, x = songFromFile(args.file, bpm, fb, args.beats)
         inputs = [(os.path.basename(args.file), song, x)]
     else:
         names = [args.case] if args.case else list(CASES)
