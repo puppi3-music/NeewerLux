@@ -147,6 +147,8 @@ TEMPO_KICK_LEARN = 8      # kicks after the first lock that only learn that offs
 TEMPO_JUMP_KICKS = 4      # kicks in a row, evenly spaced at a new tempo past the 4% relock, that lock onto it at once
 TEMPO_JUMP_SPREAD = 0.025  # seconds: the most their gaps may differ (a hop is 11 ms)
 TEMPO_JUMP_MAX = 0.15     # the furthest from the locked tempo such a jump may go
+TEMPO_TRUST_KICKS = 8     # kicks on the grid within TEMPO_TRUST_BEATS beats since the lock before the 3/4-4/3 guard holds it
+TEMPO_TRUST_BEATS = 12    # (a lock at 4/3 of the kicks' tempo gets one on every 4th beat at most; extra off-beat kicks don't count against it)
 TEMPO_FIT_KICKS = 32      # kicks on the grid remembered to fit the period from when a hold begins
 TEMPO_FIT_MIN = 8         # ... and the least that will do
 TEMPO_FIT_RESID = 0.015   # seconds: the most a kick may sit off the fitted line to be counted
@@ -649,6 +651,8 @@ class _TempoTracker:
         self.onGrid = deque(maxlen=TEMPO_FIT_KICKS)  # times of recent kicks that steered the grid, to fit the period when a hold begins
         self.flipped = None    # (when, by how much) the grid last moved to the off-beat
         self.jumped = None     # when the kicks last locked onto a new tempo: until the window has heard it, its estimates of the old one are ignored
+        self.hits = deque(maxlen=TEMPO_TRUST_KICKS)  # grid beats the last kicks on the grid landed on, since the lock
+        self.trusted = False   # enough kicks have landed on the grid that the lock is the beat, not a weak intro's guess
 
     def add(self, t, bass, rest=0.0):
         """The attack heard in the hop ending at t: the rise of the bass and of the bands above it."""
@@ -679,8 +683,9 @@ class _TempoTracker:
             return
         period, beatT = est
         beatT -= self.estOffset
-        if self.locked and any(abs(period / q - r) < TEMPO_ODD_RATIO * r for r in (0.75, 4.0 / 3.0) for q in (self.period, self.basePeriod)):
+        if self.locked and self.trusted and any(abs(period / q - r) < TEMPO_ODD_RATIO * r for r in (0.75, 4.0 / 3.0) for q in (self.period, self.basePeriod)):
             # A dotted-eighth bass (three notes to two beats) repeats at 3/4 of the beat: not a new tempo.
+            # Only once the kicks have shown the lock is right: a first lock on a weak intro can itself be the 4/3.
             if self.flipped is not None and now - self.flipped[0] < TEMPO_WINDOW:
                 self.refPos += self.flipped[1]  # the same bass, before it ruled the window, put the beat on the off-beat
                 self.flipped = None
@@ -701,6 +706,8 @@ class _TempoTracker:
             self.locked, self.period, self.refT, self.refPos = True, period, beatT, 0.0
             self.basePeriod = period
             self.doubt = self.flip = 0
+            self.hits.clear()
+            self.trusted = False
             self.coast = None
             return
         # Same tempo: follow small drifts gently, keeping the position continuous so no beat is skipped or doubled.
@@ -789,6 +796,10 @@ class _TempoTracker:
             at = t - self.onsetDelay
             p = self.position(at)
             e = (p - round(p)) * self.period - self.kickOffset  # seconds the kick came after its grid beat, as usual
+            if abs(e) <= TEMPO_KICK_GATE and (not self.hits or self.hits[-1] != round(p)):
+                self.hits.append(round(p))
+                if len(self.hits) == self.hits.maxlen and self.hits[-1] - self.hits[0] < TEMPO_TRUST_BEATS:
+                    self.trusted = True
             if abs(e) <= TEMPO_KICK_GATE and self.offsetN < TEMPO_KICK_LEARN:
                 self.offsetN += 1
                 self.kickOffset += e / self.offsetN
@@ -834,6 +845,8 @@ class _TempoTracker:
                 self.refPos, self.refT = round(self.position(at)), at
                 self.period = self.basePeriod = period
                 self.candidate, self.agree, self.doubt, self.flip = period, 0, 0, 0
+                self.hits.clear()
+                self.trusted = False
                 self.jumped = t
                 self.recent.clear()
                 self.onGrid.clear()
