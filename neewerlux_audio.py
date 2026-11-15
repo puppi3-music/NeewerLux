@@ -105,6 +105,7 @@ KICK_PHASE_MAX = 0.14  # seconds the clock may sit from the sound, and never ove
 KICK_PHASE_FAR_SHARE = 0.6  # share that must land together for a phase further off than that: a clock can sit anywhere against the sound, but it takes strong agreement
 KICK_PHASE_FAR_KICKS = 8    # ... counted out of at least this many, so a few off-beat bass notes at the start can't set it
 KICK_HOLD_BEATS = 2.25  # beats after a kick that kicks still count as playing (so a kick every 2 beats keeps them on)
+KICK_HOLD_MAX = 4.25    # ... or longer, up to this, when the recent kicks have had gaps that long (2-step garage: 2.5 beats)
 KICKLESS_BASS = 0.2   # share of the bass that still reaches the brightness in the beat modes while no kicks play
 TEMPO_MIN_BPM, TEMPO_MAX_BPM = 70, 180
 SUSTAIN_FROM = 0.65    # share of the loudness with kicks at which a sound with no kicks starts to hold the lights up
@@ -125,6 +126,8 @@ TEMPO_HARMONIC = 0.5    # weight of the repeat two beats on
 TEMPO_FAST_SHARE = 0.6  # ... see _estimate
 TEMPO_BAR = 1.0         # weight of the repeat a bar (four beats) on: 2-step garage's kicks are never a beat apart
 TEMPO_MIN_CONF = 0.15   # autocorrelation at the beat period needed to trust it
+TEMPO_COMB_DECAY = 0.95  # weight of each older beat in the phase comb: low values let one bar outvote the window
+TEMPO_FLIP = 8          # net estimates that must put the beat half a beat away before the grid moves there
 TEMPO_COAST = 60.0      # seconds a tempo is held through a section with no clear beat, as a track keeps its tempo through a breakdown
 TEMPO_COAST_AGREE = 16  # estimates in a row (4 s) that must agree before a pulse heard in such a section replaces the held tempo
 TEMPO_RESNAP = 0.04     # seconds: two kicks this close to a whole number of beats apart end the hold and set where the beats fall
@@ -603,6 +606,7 @@ class _TempoTracker:
         self.locked = False
         self.candidate = 0.0
         self.agree = self.doubt = 0
+        self.flip = 0       # estimates lately that put the beat on the off-beat, less those that didn't
         self.nextFit = 0.0
         self.coast = None   # when the hold began, while the tempo is held with no clear beat
         self.lastKick = None
@@ -645,14 +649,25 @@ class _TempoTracker:
             return
         if not self.locked or abs(period / self.period - 1.0) > 0.04:  # lock on, or a new tempo
             self.locked, self.period, self.refT, self.refPos = True, period, beatT, 0.0
-            self.doubt = 0
+            self.doubt = self.flip = 0
             self.coast = None
             return
         # Same tempo: follow small drifts gently, keeping the position continuous so no beat is skipped or doubled.
         self.refPos, self.refT = self.position(now), now
         self.period += (period - self.period) * 0.3
         p = self.position(beatT)
-        self.refPos -= (p - round(p)) * 0.4
+        err = p - round(p)
+        if abs(err) <= 0.25:
+            self.refPos -= err * 0.4
+            self.flip = max(0, self.flip - 1)
+        else:
+            # An estimate on the off-beat: syncopated kicks and off-beat hats (2-step, footwork)
+            # often win a few estimates. Nudging towards them would average out a quarter beat off,
+            # so move only when they clearly outnumber the others (the lock itself was on the off-beat).
+            self.flip += 1
+            if self.flip >= TEMPO_FLIP:
+                self.refPos -= err
+                self.flip = 0
         self.doubt = 0
 
     def _unsure(self):
@@ -731,12 +746,12 @@ class _TempoTracker:
         den = y0 - 2.0 * y1 + y2
         P = M + (0.5 * (y0 - y2) / den if den < 0 else 0.0)
         P = min(max(P, M - 0.5), M + 0.5) / div
-        # Phase: the offset whose comb of beats (recent ones weighing most) catches the most attack.
-        K = max(1, min(16, int((n - P) // P)))
+        # Phase: the offset whose comb of beats over the whole window (recent ones weighing a little more) catches the most attack.
+        K = max(1, int((n - P) // P))
         ph = np.arange(int(math.ceil(P)))
         k = np.arange(K)
         idx = (n - 1 - ph[:, None] - np.round(k * P)[None, :]).astype(int)
-        p = int(np.argmax((o[idx] * 0.85 ** k).sum(axis=1)))
+        p = int(np.argmax((o[idx] * TEMPO_COMB_DECAY ** k).sum(axis=1)))
         return P / self.hopRate, self.times[n - 1 - p] - ONSET_DELAY
 
 
@@ -1205,6 +1220,8 @@ class _LightShow:
         self.lastNote = -10.0  # when the notes last set the colour
         self.colourKick = 0.0  # "Bass pulse": the beat's push on the colour, fading slower than the flash
         self.lastKick = -10.0  # when a kick last reached a frame
+        self.kickGaps = deque(maxlen=8)  # seconds between the recent kicks
+        self.stopHeld = False  # a stop held back a beat, so the kick that ends it fires as heard
         self.kickLevel = 0.0   # how loud the music is with kicks playing (fourth-root scale), slowly forgotten
         self.bassShare = 1.0   # how much of the bass reaches the brightness in the beat modes
         self.jumpFrom = self.jumpTo = None  # "Beat colour jump": glide from this colour to that one
@@ -1228,6 +1245,10 @@ class _LightShow:
     def _kicksPlaying(self, now, src):
         period = src.beatPeriod() if src is not None else self.beatPeriod
         hold = SUSTAIN_KICK_HOLD if self.envs["sustain"].value > SUSTAIN_CHECK else KICK_HOLD_BEATS
+        # A pattern with long gaps between its kicks keeps them playing through those gaps.
+        gaps = [g for g in self.kickGaps if g < KICK_HOLD_MAX * period]
+        if len(gaps) >= 4:
+            hold = max(hold, min(KICK_HOLD_MAX, max(gaps) / period + 0.25))
         return now - self.lastKick < hold * period
 
     def _rollGrid(self, src, srcPos):
@@ -1561,6 +1582,8 @@ class _LightShow:
             # A kick is seen as its rise begins, so the sound around it may not have reached full level on this frame.
             loud = self.kickLevel > 0 and max(math.sqrt(math.sqrt(self.raw["level"])), math.sqrt(math.sqrt(self.raw["bass"]))) >= DROP_LOUDNESS * self.kickLevel
             self.dropFlash = self.lastKick > 0 and (((quietBeats >= DROP_QUIET_BEATS or self.kickAfterRoll) and loud) or (now - self.gapEnded < GAP_RECENT and self.gapLength >= GAP_DROP))
+            if self.lastKick > 0:
+                self.kickGaps.append(now - self.lastKick)
             self.lastKick = now
         if src is not None:
             # The position already runs ahead by the lead, so the first beat after a clock Start reads that far past it.
@@ -1572,13 +1595,16 @@ class _LightShow:
                 # goes by whether kicks have been playing, and the first kick back fires as it is heard,
                 # unless it is the kick a flash already led.
                 if not self.heard or stopped:
+                    self.stopHeld = self.stopHeld or (beat and stopped)
                     beat = False
                 elif not kicksPlaying:
                     beat = kick and now - self.lastBeat > lead + KICK_ON_BEAT
-                elif kick and now - self.gapEnded < GAP_RECENT and now - self.lastBeat > 0.25 * src.beatPeriod():
-                    beat = True  # the kick the stop held back
+                elif kick and self.stopHeld and now - self.gapEnded < GAP_RECENT and now - self.lastBeat > 0.25 * src.beatPeriod():
+                    beat = True  # the kick the stop held back (not one ending a space between kicks that held no beat back)
                 elif beat and now - self.lastBeat < 0.5 * src.beatPeriod():
                     beat = False  # a phase correction stepped back over a beat: don't fire it twice
+            if self.gapSince is None and (kick or now - self.gapEnded >= GAP_RECENT):
+                self.stopHeld = False
             e.state.update(beatSource=name, bpm=src.bpm(), kicks=kicksPlaying or kick,
                            beatInBar=(beatIdx % 4) + 1 if name == "clock" and beatIdx is not None and beatIdx >= 0 else 0)
         else:
