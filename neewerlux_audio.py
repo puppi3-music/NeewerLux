@@ -138,6 +138,9 @@ TEMPO_KICK_SPAN = 0.035  # the most the kicks may move the period from the one l
 TEMPO_KICK_SOFT = 0.01   # seconds: errors smaller than this steer in proportion (jitter in when a kick is heard), larger ones fully
 TEMPO_KICK_OFFSET = 0.05  # how fast the usual offset of kicks from the grid is learned (a mic or the kick sound shifts it)
 TEMPO_KICK_LEARN = 8      # kicks after the first lock that only learn that offset (their mean) before any steering
+TEMPO_JUMP_KICKS = 4      # kicks in a row, evenly spaced at a new tempo past the 4% relock, that lock onto it at once
+TEMPO_JUMP_SPREAD = 0.025  # seconds: the most their gaps may differ (a hop is 11 ms)
+TEMPO_JUMP_MAX = 0.15     # the furthest from the locked tempo such a jump may go
 ONSET_DELAY = 0.025     # seconds the detected attack lags the real one (measured on synthetic kicks)
 ROLL = (180, 1500)      # Hz: where snare rolls are looked for
 ROLL_WINDOW = 1.5       # seconds of that band each estimate looks at
@@ -621,6 +624,8 @@ class _TempoTracker:
         self.kickOffset = 0.0  # seconds kicks usually come after the grid beat they fit, learned while locked
         self.offsetN = 0       # kicks the offset has been learned from
         self.gaps = deque(maxlen=3)  # gaps between kicks that didn't fit the held tempo
+        self.recent = deque(maxlen=TEMPO_JUMP_KICKS)  # times of the last few kicks, for a jump in tempo
+        self.jumped = None     # when the kicks last locked onto a new tempo: until the window has heard it, its estimates of the old one are ignored
 
     def add(self, t, onset):
         self.env.append(onset)
@@ -651,6 +656,8 @@ class _TempoTracker:
             self.agree += 1
         else:
             self.candidate, self.agree = period, 0
+        if self.jumped is not None and now - self.jumped < TEMPO_WINDOW and abs(period / self.period - 1.0) > 0.04:
+            return  # the window still holds the tempo the kicks just left
         if self.coast is not None and abs(period / self.period - 1.0) <= 0.04:
             return  # the attacks of a breakdown (hats, pads) say nothing about where the beats fall
         if self.agree < (TEMPO_COAST_AGREE if self.coast is not None else 2):  # not yet confirmed: keep the current lock, if any, for now
@@ -704,6 +711,13 @@ class _TempoTracker:
         of tempo is followed within a few beats instead of waiting for the 8 s window to fill with it.
         weight is less than 1 for a kick that only cleared the lower bar for an expected beat."""
         if self.coast is None and self.locked and not rolling:
+            self.recent.append(t)
+            if self._jump(t):
+                self.lastKick = t
+                return
+        else:
+            self.recent.clear()
+        if self.coast is None and self.locked and not rolling:
             at = t - ONSET_DELAY
             p = self.position(at)
             e = (p - round(p)) * self.period - self.kickOffset  # seconds the kick came after its grid beat, as usual
@@ -732,6 +746,28 @@ class _TempoTracker:
                 if len(self.gaps) == self.gaps.maxlen and max(self.gaps) - min(self.gaps) < 2.0 * TEMPO_RESNAP:
                     self.coast = None  # steady kicks that don't fit: the next track has come in, so listen for its tempo as usual
         self.lastKick = t
+
+    def _jump(self, t):
+        """Lock onto a new tempo at once when the last few kicks are evenly spaced a whole number of beats
+        apart at a period 4-15% from the locked one: a mix cut straight into a faster or slower track."""
+        if len(self.recent) < self.recent.maxlen:
+            return False
+        g = np.diff(np.asarray(self.recent))
+        if g.max() - g.min() > TEMPO_JUMP_SPREAD:
+            return False
+        gap = float(g.mean())
+        for k in (1, 2, 4):
+            period = gap / k
+            off = abs(period / self.period - 1.0)
+            if 0.04 < off <= TEMPO_JUMP_MAX and self.minBpm <= 60.0 / period <= self.maxBpm:
+                at = t - ONSET_DELAY - self.kickOffset
+                self.refPos, self.refT = round(self.position(at)), at
+                self.period = self.basePeriod = period
+                self.candidate, self.agree, self.doubt, self.flip = period, 0, 0, 0
+                self.jumped = t
+                self.recent.clear()
+                return True
+        return False
 
     def _estimate(self):
         """(period in seconds, time of a recent beat), or None when there is no clear beat."""
