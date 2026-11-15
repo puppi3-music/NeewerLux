@@ -71,6 +71,23 @@ def _kick():
     return x
 
 
+def _realKick(build=0.013):
+    """A kick as mastered house kicks measure: a click (over 2 kHz) on the beat, the body swelling in over
+    `build` seconds after it. Its own noise, so the other sounds stay the same as with _kick()."""
+    t = np.arange(int(0.3 * RATE)) / RATE
+    f = 50 + 70 * np.exp(-t / 0.03)
+    swell = np.where(t < build, 0.5 - 0.5 * np.cos(np.pi * t / build), 1.0)
+    body = np.sin(2 * np.pi * np.cumsum(f) / RATE) * swell * np.exp(-np.maximum(t - build, 0) / 0.12)
+    n = int(0.03 * RATE)
+    spec = np.fft.rfft(np.random.default_rng(7).standard_normal(n))
+    fr = np.fft.rfftfreq(n, 1.0 / RATE)
+    spec[(fr < 2000) | (fr > 8000)] = 0
+    click = np.fft.irfft(spec, n)
+    click *= np.exp(-t[:n] / 0.004) / np.abs(click).max()
+    body[:n] += 0.5 * click
+    return body / np.abs(body).max()
+
+
 def _clap():
     n = int(0.2 * RATE)
     t = np.arange(n) / RATE
@@ -704,8 +721,12 @@ def main():
     ap.add_argument("--nml", help="take the BPM and beat grid from this Traktor collection (.nml), by file name; "
                     "without a grid anchor the first beat is fitted as with --first-beat auto")
     ap.add_argument("--beats", help="text file with one true beat time per line")
+    ap.add_argument("--kick", choices=("synth", "real"), default="synth",
+                    help="synthetic kick sound: synth (body from the first sample) or real (click, body 13 ms later)")
     ap.add_argument("--flash", action="store_true", help='also a "Flash on: Kicks" against "Beats" table')
     args = ap.parse_args()
+    if args.kick == "real":
+        SOUNDS["kick"] = (_realKick(), 0.8)
 
     default = na.TEMPO_WINDOW
     windows = [args.window or default] + ([w for w in (4.0, 6.0, 12.0, 16.0) if w != default] if args.sweep else [])

@@ -144,7 +144,13 @@ TEMPO_JUMP_MAX = 0.15     # the furthest from the locked tempo such a jump may g
 TEMPO_FIT_KICKS = 32      # kicks on the grid remembered to fit the period from when a hold begins
 TEMPO_FIT_MIN = 8         # ... and the least that will do
 TEMPO_FIT_RESID = 0.015   # seconds: the most a kick may sit off the fitted line to be counted
-ONSET_DELAY = 0.025     # seconds the detected attack lags the real one (measured on synthetic kicks)
+ONSET_DELAY = 0.025     # seconds the detected attack lags the real one, until clicks have been heard (measured on a kick with no click)
+CLICK_LOOK = (0.005, 0.07)  # seconds before a detected kick that its click is looked for: mastered kicks click on the beat and their body builds 10-20 ms later
+CLICK_JUMP = 4.0        # how many times the high-band energy of the 5 ms before must jump to count as the click
+CLICK_REF = 0.02        # seconds from a kick's attack to its detection that ONSET_DELAY already covers (synthetic kicks: 14-20 ms, more under a busy bass); a later click adds the rest
+CLICK_KEEP = 16         # recent clicks whose median lag moves the onset delay
+CLICK_MIN = 6           # ... and the fewest that will do, all within
+CLICK_CLUSTER = 0.006   # ... this many seconds of each other
 ROLL = (180, 1500)      # Hz: where snare rolls are looked for
 ROLL_WINDOW = 1.5       # seconds of that band each estimate looks at
 ROLL_HIT = (0.096, 0.18)  # seconds between hits that count as a roll, about 16ths at 85-155 BPM
@@ -597,6 +603,7 @@ class _TempoTracker:
 
     def __init__(self, hopRate):
         self.hopRate = hopRate
+        self.onsetDelay = ONSET_DELAY  # seconds a detected kick lags its click; the analyser learns it, kept across resets
         n = int(TEMPO_WINDOW * hopRate)
         self.env = deque(maxlen=n)
         self.times = deque(maxlen=n)
@@ -728,7 +735,7 @@ class _TempoTracker:
         P, a = np.polyfit(n[keep], k[keep], 1)
         if abs(P / self.period - 1.0) > 0.01 or np.abs(a + P * n[keep] - k[keep]).max() > TEMPO_FIT_RESID:
             return
-        last = a + P * n[-1] - ONSET_DELAY - self.kickOffset
+        last = a + P * n[-1] - self.onsetDelay - self.kickOffset
         self.refPos, self.refT = round(self.position(last)), last
         self.period = P
 
@@ -745,7 +752,7 @@ class _TempoTracker:
         else:
             self.recent.clear()
         if self.coast is None and self.locked and not rolling:
-            at = t - ONSET_DELAY
+            at = t - self.onsetDelay
             p = self.position(at)
             e = (p - round(p)) * self.period - self.kickOffset  # seconds the kick came after its grid beat, as usual
             if abs(e) <= TEMPO_KICK_GATE and self.offsetN < TEMPO_KICK_LEARN:
@@ -764,7 +771,7 @@ class _TempoTracker:
         if self.coast is not None and self.locked and self.lastKick is not None:
             beats = (t - self.lastKick) / self.period
             if 1 <= round(beats) <= 4 and abs(beats - round(beats)) * self.period < TEMPO_RESNAP:
-                p = self.position(t - ONSET_DELAY)
+                p = self.position(t - self.onsetDelay)
                 self.refPos -= p - round(p)
                 self.coast = None
                 self.doubt = 0
@@ -788,7 +795,7 @@ class _TempoTracker:
             period = gap / k
             off = abs(period / self.period - 1.0)
             if 0.04 < off <= TEMPO_JUMP_MAX and self.minBpm <= 60.0 / period <= self.maxBpm:
-                at = t - ONSET_DELAY - self.kickOffset
+                at = t - self.onsetDelay - self.kickOffset
                 self.refPos, self.refT = round(self.position(at)), at
                 self.period = self.basePeriod = period
                 self.candidate, self.agree, self.doubt, self.flip = period, 0, 0, 0
@@ -847,7 +854,7 @@ class _TempoTracker:
         k = np.arange(K)
         idx = (n - 1 - ph[:, None] - np.round(k * P)[None, :]).astype(int)
         p = int(np.argmax((o[idx] * TEMPO_COMB_DECAY ** k).sum(axis=1)))
-        return P / self.hopRate, self.times[n - 1 - p] - ONSET_DELAY
+        return P / self.hopRate, self.times[n - 1 - p] - self.onsetDelay
 
 
 class _RollFinder:
@@ -1122,6 +1129,7 @@ class _Analyser:
         self._peak = None      # loudest hop since the last light frame, per level
         self._colour = None    # summed band amplitudes since the last light frame
         self.kickSeen = False  # a kick was detected since the last light frame
+        self._clicks = deque(maxlen=CLICK_KEEP)  # seconds from recent kicks' clicks to their detection
 
     def feed(self, samples, endT, sens):
         """Analyse every whole hop of new sound, so no kick falls between light frames.
@@ -1164,11 +1172,38 @@ class _Analyser:
         elif self.heard:
             if self.kicks.step(kr, t, sens, self.kickExpected) and lv["bass"] > 1e-6:
                 self.kickSeen = True
+                self._learnClick()
                 self.tempo.kick(t, 0.5 if self.kicks.guided else 1.0, self.roll.active)
             self.tempo.add(t, kr + 0.5 * rr)
             self.roll.add(float(power[self._snare].mean()), float(kickPower.mean()))
             if self._hopCount % HARMONY_EVERY == 0:
                 self.harmony.step(self._longHist, t)
+
+    def _learnClick(self):
+        """Time the click of the kick just detected in the recent samples, and move the tempo's onset delay by how
+        much later than usual most of the last few were heard. A kick with no click (an 808, a mic far off) leaves it alone."""
+        x = self._longHist.astype(float)
+        hp = np.diff(x, 2)  # about 40 dB less at 50 Hz than at 3 kHz: the click stands, the body doesn't
+        step = max(1, int(self.rate / 1000))
+        e = np.add.reduceat(hp * hp, np.arange(0, len(hp) - step + 1, step))[:len(hp) // step]
+        n = len(e)
+        lo, hi = n - int(CLICK_LOOK[1] * 1000), n - int(CLICK_LOOK[0] * 1000)
+        if lo < 5:
+            return
+        before = np.convolve(e, np.ones(5) / 5.0)[4:n]  # before[k] = mean of e[k:k + 5], the 5 ms before k + 5
+        ratio = e[lo:hi] / (before[lo - 5:hi - 5] + 1e-12)
+        i = int(np.argmax(ratio))
+        if ratio[i] < CLICK_JUMP:
+            return
+        self._clicks.append((n - (lo + i)) * step / self.rate)
+        if len(self._clicks) >= CLICK_MIN:
+            # The densest few ms of recent lags, not their median: a hat or the bass a little before some
+            # kicks reads as an earlier click, and with a rolling bass that is a third of them.
+            lags = np.sort(np.fromiter(self._clicks, float))
+            ends = np.searchsorted(lags, lags + CLICK_CLUSTER, side="right")
+            i = int(np.argmax(ends - np.arange(len(lags))))
+            if ends[i] - i >= CLICK_MIN:
+                self.tempo.onsetDelay = ONSET_DELAY + max(0.0, float(np.median(lags[i:ends[i]])) - CLICK_REF)
 
     def hasLevels(self):
         return self._peak is not None
@@ -1381,7 +1416,7 @@ class _LightShow:
         period = src.beatPeriod()
         if name == "clock" and sum(abs(_wrapPhase(x - self.kickCentre, period)) <= KICK_ON_BEAT / 2.0 for x in self.kickPhase) < KICK_GUIDED_AGREE * len(self.kickPhase):
             return False
-        pos -= ONSET_DELAY / period
+        pos -= self.analyser.tempo.onsetDelay / period
         off = (pos - round(pos)) * period
         return abs(_wrapPhase(off - (self.kickCentre if name == "clock" else 0.0), period)) <= KICK_GUIDED_WINDOW
 
@@ -1393,7 +1428,7 @@ class _LightShow:
         if pos is None:
             return True
         period = src.beatPeriod()
-        pos -= (now - (self.analyser.kicks.lastBeat - ONSET_DELAY)) / period
+        pos -= (now - (self.analyser.kicks.lastBeat - self.analyser.tempo.onsetDelay)) / period
         off = (pos - round(pos)) * period
         centre = 0.0
         if name == "clock":
