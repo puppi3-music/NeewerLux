@@ -3115,6 +3115,7 @@ try: # try to load the GUI
             self.soundBeatsPerColourSpin.valueChanged.connect(self._soundSettingsChanged)
             self.soundClockNeedsSoundCheck.toggled.connect(self._soundSettingsChanged)
             self.soundPredictBeatsCheck.toggled.connect(self._soundSettingsChanged)
+            self.soundFlashOnCombo.currentTextChanged.connect(self._soundSettingsChanged)
             self._midiClock = None
             self.soundStartButton.clicked.connect(self.soundStart)
             self.soundStopButton.clicked.connect(self.soundStop)
@@ -3173,6 +3174,7 @@ try: # try to load the GUI
             d.update({
                 "mode": self.soundModeCombo.currentText(),
                 "rollStyle": self.soundRollStyleCombo.currentText(),
+                "flashOn": self.soundFlashOnCombo.currentText(),
                 "palettePreset": self.soundPalette.presetName(),
                 "palette": self.soundPalette.palette() if self.soundPalette.presetName() == "Custom" else None,
                 "allLights": self.soundAllLightsCheck.isChecked(),
@@ -3188,6 +3190,7 @@ try: # try to load the GUI
             if pos >= 0:
                 self.soundModeCombo.setCurrentIndex(pos)
             self.soundRollStyleCombo.setCurrentText(snd.get("rollStyle", "Strobe"))
+            self.soundFlashOnCombo.setCurrentText(snd.get("flashOn", "Beats"))
             for key, attr in self._SOUND_SPINS:
                 if key in snd or key in self._SOUND_DEFAULTS:
                     getattr(self, attr).setValue(int(snd.get(key, self._SOUND_DEFAULTS.get(key))))
@@ -3403,6 +3406,7 @@ try: # try to load the GUI
             e.beatsPerColour = self.soundBeatsPerColourSpin.value()
             e.clockNeedsSound = self.soundClockNeedsSoundCheck.isChecked()
             e.predictBeats = self.soundPredictBeatsCheck.isChecked()
+            e.flashOn = self.soundFlashOnCombo.currentText()
 
         def soundStart(self):
             if self.soundDeviceCombo.count() == 0:

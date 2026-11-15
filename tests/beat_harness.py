@@ -30,6 +30,11 @@ grid beats), run through the app's flash limiter on a model of the light (full f
   klag50   median ms from the true kick to its flash, before any input latency (a sound card adds more)
   kcut     kick flashes the Standard limit held back (kcutS: Show)
   beat%    fire% of the grid beats after the Standard limit; bcut = grid beats it held back
+and a table for the real mode (the light show run with "Flash on: Kicks", its flashes through the same model):
+  kpat%, kShow%, klag50, kcut, kcutS   as above, from the flashes the light show fired
+  kfalse   fired flashes with no true kick within 80 ms before
+  col%     share of colour changes within 30 ms of a true beat (Beat colour jump, 1 beat per colour)
+  colPer   colour changes per drum beat after the lock (1.0 = one per beat, as with "Beats")
 """
 
 import argparse
@@ -324,14 +329,16 @@ VARIANTS = {"clean": lineIn, "mic": laptopMic, "digital": digital}
 
 # --- running ---------------------------------------------------------------------
 
-def run(samples, window=None, tempoRange=None):
-    """Feed samples through the analyser and light show in simulated time. Returns what happened."""
+def run(samples, window=None, tempoRange=None, flashOn="Beats", colours=None):
+    """Feed samples through the analyser and light show in simulated time. Returns what happened;
+    the times the colour changed go into colours, when given."""
     if window is not None:
         na.TEMPO_WINDOW, na.TEMPO_MIN_SECONDS = window, window / 2.0
     engine = na.SoundEngine(lambda frame: True, logFunc=lambda *a: None)
     if tempoRange:
         engine.tempoMin, engine.tempoMax = tempoRange
     engine.mode = "Beat colour jump"
+    engine.flashOn = flashOn
     engine.targets = [0]
     engine.clockLeadMs = 0  # fired beats should then land on the true beats themselves
     analyser = na._Analyser(RATE)
@@ -349,6 +356,7 @@ def run(samples, window=None, tempoRange=None):
     log = []   # (time, locked, bpm) sampled every block
     fired = []
     lastBeat = show.lastBeat
+    lastJump = show.jumpAt
     now, i, nextBlock = 0.0, 0, BLOCK / RATE
     end = len(samples) / RATE
     tempo = analyser.tempo
@@ -362,6 +370,10 @@ def run(samples, window=None, tempoRange=None):
         if show.lastBeat != lastBeat:
             lastBeat = show.lastBeat
             fired.append(lastBeat)
+        if show.jumpAt != lastJump:
+            lastJump = show.jumpAt
+            if colours is not None:
+                colours.append(lastJump)
         now = min(nextBlock, now + wait) if wait else now + 1e-4
     return log, np.array(fired), np.array(kicks)
 
@@ -476,6 +488,27 @@ def scoreFlash(song, log, fired, kicks):
     return row
 
 
+REAL_COLS = ("kpat%", "klag50", "kcut", "kShow%", "kcutS", "kfalse", "col%", "colPer")
+
+
+def scoreReal(song, log, fired, kicks, colours):
+    """The light show run with "Flash on: Kicks": its own flashes against the kick pattern, its colour changes against the beats."""
+    row = scoreFlash(song, log, fired, fired)
+    for c in ("beat%", "bcut"):
+        row.pop(c, None)
+    tk = np.sort(song.kicks)
+    if len(tk):
+        row["kfalse"] = int(sum(not np.any((tk >= f - 0.08) & (tk <= f + 0.01)) for f in fired))
+    lockT = next((e[0] for e in log if e[1]), None)
+    col = np.array([c for c in colours if lockT is not None and c > lockT + 0.5])
+    if len(col):
+        row["col%"] = 100.0 * np.mean([np.min(np.abs(song.beats - c)) <= 0.03 for c in col])
+        drum = [b for b in song.drumBeats if b > lockT + 0.5]
+        if drum:
+            row["colPer"] = len(col) / float(len(drum))
+    return row
+
+
 def printTable(rows, title, cols=COLS):
     print("\n" + title)
     head = "%-30s" % "case" + "".join("%8s" % c for c in cols)
@@ -534,7 +567,7 @@ def main():
             for v in ([args.variant] if args.variant else list(VARIANTS)):
                 inputs.append(("%s/%s" % (name, v), song, VARIANTS[v](raw)))
     rangeNote = " range %g-%g BPM" % tuple(args.range) if args.range else ""
-    flashRows = []
+    flashRows, realRows = [], []
     for w in windows:
         rows = []
         for label, song, x in inputs:
@@ -542,11 +575,17 @@ def main():
             rows.append((label, score(song, *result)))
             if w == windows[0]:
                 flashRows.append((label, scoreFlash(song, *result)))
+                if args.flash:
+                    colours = []
+                    real = run(x, w, args.range, "Kicks", colours)
+                    realRows.append((label, scoreReal(song, *real, colours)))
         printTable(rows, "Tempo window %.0f s%s%s (synthetic results are provisional until checked on real tracks)"
                    % (w, " (app default)" if w == default else "", rangeNote))
     if args.flash:
         printTable(flashRows, "Flash on: Kicks against Beats, tempo window %.0f s%s (light model; no input latency)"
                    % (windows[0], rangeNote), FLASH_COLS)
+        printTable(realRows, 'The light show with "Flash on: Kicks", tempo window %.0f s%s (light model; no input latency)'
+                   % (windows[0], rangeNote), REAL_COLS)
     genre = [(label, song, x, GENRE_RANGES[label.split("/")[0]]) for label, song, x in inputs
              if label.split("/")[0] in GENRE_RANGES]
     if genre and not args.range and not args.file:
