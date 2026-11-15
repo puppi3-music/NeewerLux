@@ -572,8 +572,8 @@ class _TempoTracker:
     """Finds the tempo and beat phase in the sound, so beats can be fired on time, or a little
     early to make up for Bluetooth delay, instead of after each kick is heard. Every quarter
     second it autocorrelates the last 8 s of attacks to find the beat period (favouring tempos
-    near 120 BPM and periods that also repeat at two beats), then lines a comb of beats up with
-    the attacks to find where the beats fall. It locks after a few estimates agree. When the music
+    near 120 BPM, or the middle of the tempo range when 120 is outside it, and periods that also
+    repeat at two beats), then lines a comb of beats up with the attacks to find where the beats fall. It locks after a few estimates agree. When the music
     stops having a clear beat it holds the tempo and carries on counting, since a breakdown keeps
     the track's tempo, and the first two kicks back set where the beats fall, so the drop lands on
     the grid at once. Same interface as MidiClock."""
@@ -583,7 +583,16 @@ class _TempoTracker:
         n = int(TEMPO_WINDOW * hopRate)
         self.env = deque(maxlen=n)
         self.times = deque(maxlen=n)
+        self.minBpm, self.maxBpm = TEMPO_MIN_BPM, TEMPO_MAX_BPM
         self.reset()
+
+    def setRange(self, lo, hi):
+        """Look for tempos from lo to hi BPM only. Starts over when the range changes."""
+        lo = min(max(float(lo), 30.0), 300.0)
+        hi = min(max(float(hi), lo + 1.0), 300.0)
+        if (lo, hi) != (self.minBpm, self.maxBpm):
+            self.minBpm, self.maxBpm = lo, hi
+            self.reset()
 
     def reset(self):
         self.env.clear()
@@ -688,25 +697,34 @@ class _TempoTracker:
         if ac[0] <= 1e-12:
             return None
         ac /= ac[0]
-        lo = max(2, int(self.hopRate * 60.0 / TEMPO_MAX_BPM))
-        hi = min(n // 2 - 1, int(math.ceil(self.hopRate * 60.0 / TEMPO_MIN_BPM)))
+        lo = max(2, int(self.hopRate * 60.0 / self.maxBpm))
+        hi = min(n // 2 - 1, int(math.ceil(self.hopRate * 60.0 / self.minBpm)))
         if hi <= lo + 1:
             return None
         lags = np.arange(lo, hi + 1)
         score = ac[lags] + TEMPO_HARMONIC * ac[np.minimum(2 * lags, n - 1)]
-        score *= np.exp(-0.5 * np.log2(60.0 * self.hopRate / lags / 120.0) ** 2)
+        centre = 120.0 if self.minBpm <= 120.0 <= self.maxBpm else math.sqrt(self.minBpm * self.maxBpm)
+        score *= np.exp(-0.5 * np.log2(60.0 * self.hopRate / lags / centre) ** 2)
         L = int(lags[int(np.argmax(score))])
         # Twice as fast, if that tempo is in range and repeats nearly as strongly: drum'n'bass
         # repeats most every two beats, and would otherwise lock at half speed.
         half = int(round(L / 2.0))
         if half >= lo and ac[half] >= TEMPO_FAST_SHARE * ac[L]:
             L = half + int(np.argmax(ac[half - 1:half + 2])) - 1
-        if ac[L] < TEMPO_MIN_CONF:
+        # A beat that only repeats every two beats (footwork's 3-3-2 kicks) counts too, as when the
+        # tempo range leaves out half that tempo.
+        if max(ac[L], ac[min(2 * L, n - 1)]) < TEMPO_MIN_CONF:
             return None
-        y0, y1, y2 = ac[L - 1], ac[L], ac[L + 1]
+        # Refine the period on its own peak, or on the two-beat peak and halve it when that one is
+        # the clearer (the one-beat peak is then mostly noise).
+        M, div = L, 1.0
+        if 2 * L + 2 < n and ac[2 * L] > ac[L]:
+            M = 2 * L + int(np.argmax(ac[2 * L - 1:2 * L + 2])) - 1
+            div = 2.0
+        y0, y1, y2 = ac[M - 1], ac[M], ac[M + 1]
         den = y0 - 2.0 * y1 + y2
-        P = L + (0.5 * (y0 - y2) / den if den < 0 else 0.0)
-        P = min(max(P, L - 0.5), L + 0.5)
+        P = M + (0.5 * (y0 - y2) / den if den < 0 else 0.0)
+        P = min(max(P, M - 0.5), M + 0.5) / div
         # Phase: the offset whose comb of beats (recent ones weighing most) catches the most attack.
         K = max(1, min(16, int((n - P) // P)))
         ph = np.arange(int(math.ceil(P)))
@@ -1025,7 +1043,9 @@ class _Analyser:
         kickPower = power[self._kick]
         kr = self._kickRise.step(kickPower, dt)
         rr = self._restRise.step(bands[self._restBands], dt)
-        if self.heard and lv["power"] >= SILENCE:
+        if self.heard and lv["power"] < SILENCE:
+            self.tempo.add(t, 0.0)  # digital silence still takes time: skipping it would squeeze the window
+        elif self.heard:
             if self.kicks.step(kr, t, sens, self.kickExpected) and lv["bass"] > 1e-6:
                 self.kickSeen = True
                 self.tempo.kick(t)
@@ -1270,6 +1290,7 @@ class _LightShow:
         """One pass of the loop. Sends a frame if one is due. Returns the seconds to wait, or 0 to go straight on."""
         a = self.analyser
         interval = 1.0 / max(1, min(30, int(self.engine.fps)))
+        a.tempo.setRange(self.engine.tempoMin, self.engine.tempoMax)
         if self.heard:
             a.updateTempo(now)
         src, name = self._beatSource(now)
@@ -1701,6 +1722,8 @@ class SoundEngine:
         self.beatsPerColour = 1    # "Beat colour jump": change colour every this many beats
         self.clockNeedsSound = True  # MIDI clock beats only fire while kicks are heard (Traktor clocks on when stopped)
         self.predictBeats = True   # without a clock, find the tempo in the sound and fire beats on time
+        self.tempoMin = TEMPO_MIN_BPM  # tempo range searched in the sound, BPM: narrow it for fast or slow genres
+        self.tempoMax = TEMPO_MAX_BPM
 
         # Live state for the GUI (read-only from outside).
         self.state = {"level": 0.0, "bass": 0.0, "mid": 0.0, "high": 0.0,

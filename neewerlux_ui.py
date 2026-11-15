@@ -1633,7 +1633,22 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
             "and fire each beat on time, early by the beat lead, instead of after each kick is heard.\n"
             "Off: every kick flashes as it is heard, about 30 ms late plus the Bluetooth delay.")
         sg.addWidget(self.soundPredictBeatsCheck, 11, 1, 1, 3)
-        rollL = QLabel("Drum rolls:"); rollL.setFont(mainFont); sg.addWidget(rollL, 12, 0)
+        tempoL = QLabel("Tempo range:"); tempoL.setFont(mainFont); sg.addWidget(tempoL, 12, 0)
+        self.soundTempoMinSpin = _spin(50, 240, 70, " BPM")
+        self.soundTempoMaxSpin = _spin(50, 240, 180, " BPM")
+        tempoTip = ("Without a MIDI clock: the tempos looked for in the sound. Outside 70 to 180 BPM,\n"
+            "or when the lights lock at half or two thirds of the real tempo, set it around your genre:\n"
+            "footwork and juke 150 to 170, drum'n'bass 165 to 180, hardcore 170 to 210.\n"
+            "The narrower the range, the fewer wrong tempos it can lock to.")
+        for w in (tempoL, self.soundTempoMinSpin, self.soundTempoMaxSpin):
+            w.setToolTip(tempoTip)
+        tempoRow = QHBoxLayout()
+        tempoRow.addWidget(self.soundTempoMinSpin)
+        tempoRow.addWidget(QLabel("to"))
+        tempoRow.addWidget(self.soundTempoMaxSpin)
+        tempoRow.addStretch(1)
+        sg.addLayout(tempoRow, 12, 1, 1, 3)
+        rollL = QLabel("Drum rolls:"); rollL.setFont(mainFont); sg.addWidget(rollL, 13, 0)
         self.soundRollStyleCombo = QComboBox()
         self.soundRollStyleCombo.addItems(["Strobe", "Swell", "Strobe + Swell"])
         self.soundRollStyleCombo.setToolTip("How drum rolls show in Beat colour jump, Bass pulse and Rainbow drift.\n"
@@ -1641,7 +1656,7 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
             "Swell: brightness climbs smoothly to Max bright over about 8 s, with no pulsing.\n"
             "Strobe + Swell: the same pulses, on a brightness that climbs to Max bright over about 8 s.")
         rollL.setToolTip(self.soundRollStyleCombo.toolTip())
-        sg.addWidget(self.soundRollStyleCombo, 12, 1)
+        sg.addWidget(self.soundRollStyleCombo, 13, 1)
         self.soundFlashLevelCombo = QComboBox()
         self.soundFlashLevelCombo.addItem("Standard (4 a second)", "Standard")
         self.soundFlashLevelCombo.addItem("Show (10 a second)", "Show")
@@ -1651,8 +1666,8 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
             "Show: at most 10 in bursts of about 4 s, then 4 until about 8 s below that have passed. Only with a notice posted.\n"
             "Off: no limit at all, only with a notice posted.\n"
             "Show and Off go back to Standard each time NeewerLux starts.")
-        flashL = QLabel("Flash limit:"); flashL.setFont(mainFont); flashL.setToolTip(self.soundFlashLevelCombo.toolTip()); sg.addWidget(flashL, 12, 2)
-        sg.addWidget(self.soundFlashLevelCombo, 12, 3)
+        flashL = QLabel("Flash limit:"); flashL.setFont(mainFont); flashL.setToolTip(self.soundFlashLevelCombo.toolTip()); sg.addWidget(flashL, 13, 2)
+        sg.addWidget(self.soundFlashLevelCombo, 13, 3)
         sndLay.addLayout(sg)
 
         meterRow = QHBoxLayout()
