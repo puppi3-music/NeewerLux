@@ -323,6 +323,23 @@ def offbeatBass130():
     return s
 
 
+def oddIntro136():
+    """A weak intro: soft claps on a dotted-eighth figure (every 3/4 beat, 181.3 BPM = 4/3 of 136) with half
+    the hits missing, which the tracker locks to; then clear 136 house from bar 8. As on Sub Focus "Go Back",
+    where the 3/4-4/3 guard held that first lock and refused the true 136 for over a minute. With hits that
+    sparse the lock is never trusted, so the guard stays off and the kicks relock it."""
+    s = Song(_steady(136, 60))
+    r = np.random.default_rng(7)  # own rng, so the shared one and the other cases stay the same
+    s.sounds = {"soft": (SOUNDS["clap"][0], 0.35)}
+    for p in np.arange(0, 32, 0.75):
+        if r.random() < 0.5:
+            s.hit("soft", p)
+    s.change = float(s.beats[32])
+    for b in range(8, len(s.beats) // 4 - 1):
+        s.bar(b, **HOUSE)
+    return s
+
+
 def fast200():
     s = Song(_steady(200, 60))
     for b in range(len(s.beats) // 4 - 1):
@@ -370,7 +387,8 @@ CASES = {"house126": house126, "houseBuild": houseBuild, "houseFillBreak": house
          "silenceGap": silenceGap,
          "garage132": garage132, "footwork160": footwork160, "fast200": fast200,
          "dubstep140": dubstep140, "offbeatBass130": offbeatBass130,
-         "driftRamp": driftRamp, "driftJump": driftJump, "driftJump6": driftJump6, "strayKick": strayKick}
+         "driftRamp": driftRamp, "driftJump": driftJump, "driftJump6": driftJump6, "strayKick": strayKick,
+         "oddIntro136": oddIntro136}  # last: its variants' noise comes from the shared rng after the others'
 
 
 # --- input variants ---------------------------------------------------------------
