@@ -123,6 +123,7 @@ TEMPO_MIN_SECONDS = 4.0  # ... and the least it needs
 TEMPO_FIT_EVERY = 0.25  # seconds between estimates
 TEMPO_HARMONIC = 0.5    # weight of the repeat two beats on
 TEMPO_FAST_SHARE = 0.6  # ... see _estimate
+TEMPO_BAR = 1.0         # weight of the repeat a bar (four beats) on: 2-step garage's kicks are never a beat apart
 TEMPO_MIN_CONF = 0.15   # autocorrelation at the beat period needed to trust it
 TEMPO_COAST = 60.0      # seconds a tempo is held through a section with no clear beat, as a track keeps its tempo through a breakdown
 TEMPO_COAST_AGREE = 16  # estimates in a row (4 s) that must agree before a pulse heard in such a section replaces the held tempo
@@ -702,7 +703,10 @@ class _TempoTracker:
         if hi <= lo + 1:
             return None
         lags = np.arange(lo, hi + 1)
-        score = ac[lags] + TEMPO_HARMONIC * ac[np.minimum(2 * lags, n - 1)]
+        # The repeat m beats on, taken at its peak: m times a lag can be m/2 hops off it.
+        def rep(m):
+            return np.max([ac[np.clip(m * lags + d, 0, n - 1)] for d in range(-(m // 2), m // 2 + 1)], axis=0)
+        score = ac[lags] + TEMPO_HARMONIC * rep(2) + TEMPO_BAR * rep(4)
         centre = 120.0 if self.minBpm <= 120.0 <= self.maxBpm else math.sqrt(self.minBpm * self.maxBpm)
         score *= np.exp(-0.5 * np.log2(60.0 * self.hopRate / lags / centre) ** 2)
         L = int(lags[int(np.argmax(score))])
@@ -711,16 +715,18 @@ class _TempoTracker:
         half = int(round(L / 2.0))
         if half >= lo and ac[half] >= TEMPO_FAST_SHARE * ac[L]:
             L = half + int(np.argmax(ac[half - 1:half + 2])) - 1
-        # A beat that only repeats every two beats (footwork's 3-3-2 kicks) counts too, as when the
-        # tempo range leaves out half that tempo.
-        if max(ac[L], ac[min(2 * L, n - 1)]) < TEMPO_MIN_CONF:
+        # A beat that only repeats every two beats (footwork's 3-3-2 kicks) or every bar (2-step
+        # garage) counts too, as when the tempo range leaves out that slower tempo.
+        reps = [(ac[m * L - m // 2:m * L + m // 2 + 1].max(), m) for m in (1, 2, 4) if m * L + m < n]
+        best, div = max(reps)
+        if best < TEMPO_MIN_CONF:
             return None
-        # Refine the period on its own peak, or on the two-beat peak and halve it when that one is
-        # the clearer (the one-beat peak is then mostly noise).
-        M, div = L, 1.0
-        if 2 * L + 2 < n and ac[2 * L] > ac[L]:
-            M = 2 * L + int(np.argmax(ac[2 * L - 1:2 * L + 2])) - 1
-            div = 2.0
+        # Refine the period on the clearest of those peaks, divided down to one beat (the one-beat
+        # peak may be mostly noise).
+        M = div * L
+        if div > 1:
+            M += int(np.argmax(ac[M - div // 2:M + div // 2 + 1])) - div // 2
+        div = float(div)
         y0, y1, y2 = ac[M - 1], ac[M], ac[M + 1]
         den = y0 - 2.0 * y1 + y2
         P = M + (0.5 * (y0 - y2) / den if den < 0 else 0.0)
