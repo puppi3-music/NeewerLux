@@ -133,6 +133,7 @@ class Song:
         self.drumBeats = []   # beats where flashes are expected (drums playing)
         self.length = float(self.beats[-1] + 1.0)
         self.change = None    # time the tempo starts to change, for cases that change it
+        self.sounds = {}      # per-case sounds, used before SOUNDS
 
     def at(self, pos):
         i = int(math.floor(pos))
@@ -169,7 +170,7 @@ class Song:
             if name == "sub":
                 x, gain = _sub(*extra), 0.3
             else:
-                x, gain = SOUNDS[name]
+                x, gain = self.sounds.get(name) or SOUNDS[name]
             i = int(round(t * RATE))
             n = min(len(x), len(out) - i)
             if n > 0:
@@ -287,6 +288,41 @@ def dubstep140():
     return s
 
 
+def _note(seconds, hz, attack, harm=(1.0,)):
+    t = np.arange(int(seconds * RATE)) / RATE
+    x = sum(a * np.sin(2 * np.pi * hz * (k + 1) * t) for k, a in enumerate(harm))
+    env = np.minimum(1, t / attack) * np.minimum(1, (seconds - t) / 0.02).clip(0)
+    return x * env / np.abs(x).max()
+
+
+def offbeatBass130():
+    """Strobe-like techno: a kick whose body builds over 40 ms, and an off-beat bass note at x.52 as loud as
+    the kick that jumps in within one hop; a sub pumping in after each kick, open hats on the off-beats."""
+    P = 60 / 130.0
+    s = Song(_steady(130, 60))
+    r = np.random.default_rng(11)  # own noise, so the shared rng and the other cases stay the same
+    n = int(0.12 * RATE)
+
+    def noise(lo, hi):
+        spec = np.fft.rfft(r.standard_normal(n))
+        f = np.fft.rfftfreq(n, 1.0 / RATE)
+        spec[(f < lo) | (f > hi)] = 0
+        x = np.fft.irfft(spec, n)
+        return x / np.abs(x).max()
+
+    ohat = (noise(2500, 14000) + 0.4 * noise(300, 2000)) * np.exp(-np.arange(n) / RATE / 0.05)
+    s.sounds = {"kick": (_realKick(build=0.04), 0.8), "ohat": (ohat, 0.2),
+                "off": (_note(0.42 * P, 55.0, 0.006, (1.0, 0.6, 0.35)), 1.0),
+                "pump": (_note(0.40 * P, 41.0, 0.1), 0.8)}
+    for b in range(len(s.beats) // 4 - 1):
+        s.bar(b, kicks=(0, 1, 2, 3), claps=(1, 3), hats=np.arange(16) / 4.0)
+        for p in range(4):
+            s.hit("ohat", 4 * b + p + 0.5)
+            s.hit("off", 4 * b + p + 0.52)
+            s.hit("pump", 4 * b + p, shift=0.04)
+    return s
+
+
 def fast200():
     s = Song(_steady(200, 60))
     for b in range(len(s.beats) // 4 - 1):
@@ -333,7 +369,7 @@ GENRE_RANGES = {"footwork160": (150, 170), "fast200": (170, 210), "dubstep140": 
 CASES = {"house126": house126, "houseBuild": houseBuild, "houseFillBreak": houseFillBreak, "houseLongBreak": houseLongBreak,
          "silenceGap": silenceGap,
          "garage132": garage132, "footwork160": footwork160, "fast200": fast200,
-         "dubstep140": dubstep140,
+         "dubstep140": dubstep140, "offbeatBass130": offbeatBass130,
          "driftRamp": driftRamp, "driftJump": driftJump, "driftJump6": driftJump6, "strayKick": strayKick}
 
 

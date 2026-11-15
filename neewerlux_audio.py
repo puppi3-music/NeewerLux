@@ -127,6 +127,9 @@ TEMPO_FAST_SHARE = 0.6  # ... see _estimate
 TEMPO_BAR = 1.0         # weight of the repeat a bar (four beats) on: 2-step garage's kicks are never a beat apart
 TEMPO_MIN_CONF = 0.15   # autocorrelation at the beat period needed to trust it
 TEMPO_COMB_DECAY = 0.95  # weight of each older beat in the phase comb: low values let one bar outvote the window
+TEMPO_REST = 0.5        # weight of the attacks above the bass in the attacks the tempo is found from
+TEMPO_COMB_SPAN = 0.06  # seconds of bass attack after each comb beat it sums: kick bodies build over 30-60 ms, an off-beat bass note jumps in one hop
+TEMPO_COMB_REST = 1.0   # weight of the attacks above the bass in the phase comb (taken in their one hop: hats and claps are sharp)
 TEMPO_FLIP = 8          # net estimates that must put the beat half a beat away before the grid moves there
 TEMPO_COAST = 60.0      # seconds a tempo is held through a section with no clear beat, as a track keeps its tempo through a breakdown
 TEMPO_COAST_AGREE = 16  # estimates in a row (4 s) that must agree before a pulse heard in such a section replaces the held tempo
@@ -596,7 +599,7 @@ class _TempoTracker:
     early to make up for Bluetooth delay, instead of after each kick is heard. Every quarter
     second it autocorrelates the last 8 s of attacks to find the beat period (favouring tempos
     near 120 BPM, or the middle of the tempo range when 120 is outside it, and periods that also
-    repeat at two beats), then lines a comb of beats up with the attacks to find where the beats fall. It locks after a few estimates agree. When the music
+    repeat at two beats), then lines a comb of beats up with the attacks (the bass's taken over the 60 ms after each beat) to find where the beats fall. It locks after a few estimates agree. When the music
     stops having a clear beat it holds the tempo and carries on counting, since a breakdown keeps
     the track's tempo, and the first two kicks back set where the beats fall, so the drop lands on
     the grid at once. Same interface as MidiClock."""
@@ -606,6 +609,8 @@ class _TempoTracker:
         self.onsetDelay = ONSET_DELAY  # seconds a detected kick lags its click; the analyser learns it, kept across resets
         n = int(TEMPO_WINDOW * hopRate)
         self.env = deque(maxlen=n)
+        self.bass = deque(maxlen=n)  # the bass part of each attack, and the rest, for the phase comb
+        self.rest = deque(maxlen=n)
         self.times = deque(maxlen=n)
         self.minBpm, self.maxBpm = TEMPO_MIN_BPM, TEMPO_MAX_BPM
         self.reset()
@@ -620,6 +625,8 @@ class _TempoTracker:
 
     def reset(self):
         self.env.clear()
+        self.bass.clear()
+        self.rest.clear()
         self.times.clear()
         self.period = 0.0
         self.refT = self.refPos = 0.0
@@ -638,8 +645,11 @@ class _TempoTracker:
         self.onGrid = deque(maxlen=TEMPO_FIT_KICKS)  # times of recent kicks that steered the grid, to fit the period when a hold begins
         self.jumped = None     # when the kicks last locked onto a new tempo: until the window has heard it, its estimates of the old one are ignored
 
-    def add(self, t, onset):
-        self.env.append(onset)
+    def add(self, t, bass, rest=0.0):
+        """The attack heard in the hop ending at t: the rise of the bass and of the bands above it."""
+        self.env.append(bass + TEMPO_REST * rest)
+        self.bass.append(bass)
+        self.rest.append(rest)
         self.times.append(t)
 
     def active(self, now=None):
@@ -810,6 +820,7 @@ class _TempoTracker:
         o = np.asarray(self.env, float)
         n = len(o)
         o = o - o.mean()
+        o0 = o
         f = np.fft.rfft(o, 2 * n)
         ac = np.fft.irfft(f * np.conj(f))[:n]
         if ac[0] <= 1e-12:
@@ -848,12 +859,26 @@ class _TempoTracker:
         den = y0 - 2.0 * y1 + y2
         P = M + (0.5 * (y0 - y2) / den if den < 0 else 0.0)
         P = min(max(P, M - 0.5), M + 0.5) / div
-        # Phase: the offset whose comb of beats over the whole window (recent ones weighing a little more) catches the most attack.
-        K = max(1, int((n - P) // P))
-        ph = np.arange(int(math.ceil(P)))
+        # Phase: the offset whose comb of beats over the whole window (recent ones weighing a little more) catches the
+        # most attack: the bass's over the TEMPO_COMB_SPAN after each beat, the rest's in the beat's hop. A kick whose
+        # body swells in over a few hops then outweighs an off-beat bass note that jumps in at once, though that
+        # note's rise in its one hop is the bigger.
+        w = max(1, int(round(TEMPO_COMB_SPAN * self.hopRate)))
+        b = np.asarray(self.bass, float)
+        o = np.convolve(b - b.mean(), np.ones(w))[w - 1:]  # o[i] sums the bass attack of hops i to i + w - 1
+        r = np.asarray(self.rest, float)
+        s = o + TEMPO_COMB_REST * (r - r.mean())[:len(o)]
+        K = max(1, int((n - w - P) // P))
         k = np.arange(K)
-        idx = (n - 1 - ph[:, None] - np.round(k * P)[None, :]).astype(int)
-        p = int(np.argmax((o[idx] * TEMPO_COMB_DECAY ** k).sum(axis=1)))
+        weights = TEMPO_COMB_DECAY ** k
+
+        def comb(x, last, ph):
+            return (x[(last - ph[:, None] - np.round(k * P)[None, :]).astype(int)] * weights).sum(axis=1)
+        ph = np.arange(int(math.ceil(P)))
+        p = int(np.argmax(comb(s, n - w, ph))) + w - 1  # hops back from the newest to where that span starts
+        # A sum's peak is flat across the hops before the attack: time the beat by the hop of the biggest attack in the span.
+        ph = np.arange(max(0, p - w), p + 2)
+        p = int(ph[np.argmax(comb(o0, n - 1, ph))])
         return P / self.hopRate, self.times[n - 1 - p] - self.onsetDelay
 
 
@@ -1174,7 +1199,7 @@ class _Analyser:
                 self.kickSeen = True
                 self._learnClick()
                 self.tempo.kick(t, 0.5 if self.kicks.guided else 1.0, self.roll.active)
-            self.tempo.add(t, kr + 0.5 * rr)
+            self.tempo.add(t, kr, rr)
             self.roll.add(float(power[self._snare].mean()), float(kickPower.mean()))
             if self._hopCount % HARMONY_EVERY == 0:
                 self.harmony.step(self._longHist, t)
