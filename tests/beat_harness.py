@@ -579,6 +579,36 @@ def nmlGrid(nml, path):
     sys.exit("%s: no BPM for %s" % (nml, name))
 
 
+def traktorOffset(path):
+    """Seconds by which Traktor's timeline runs ahead of the decoded audio (Traktor time = decoded time + this),
+    as measured to the sample in dj-tools (track-analyzer traktor.audio_offset): an MP3 adds 1152 samples for a
+    Xing/Info header frame plus the LAME delay ffmpeg skips (its start_time); an m4a with an edit list subtracts
+    the AAC priming, which ffmpeg trims and Traktor doesn't play. Other formats: 0."""
+    import json
+    import subprocess
+    ext = os.path.splitext(path)[1].lower()
+    probe = lambda *a: subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", *a, "-of", "json", path],
+                                      capture_output=True, text=True).stdout
+    try:
+        if ext == ".mp3":
+            j = json.loads(probe("-show_entries", "stream=start_time,sample_rate"))["streams"][0]
+            sr = int(j["sample_rate"])
+            with open(path, "rb") as f:
+                h = f.read(10)
+                f.seek(10 + ((h[6] << 21) | (h[7] << 14) | (h[8] << 7) | h[9]) + (10 if h[5] & 0x10 else 0)
+                       if h[:3] == b"ID3" else 0)
+                b = f.read(4096)
+            k = next((i for i in range(len(b) - 1) if b[i] == 0xFF and b[i + 1] & 0xE0 == 0xE0), None)
+            info = k is not None and (b.find(b"Xing", k, k + 200) != -1 or b.find(b"Info", k, k + 200) != -1)
+            return (round(float(j.get("start_time", 0)) * sr) + (1152 if info else 0)) / sr
+        if ext in (".m4a", ".mp4"):
+            j = json.loads(probe("-read_intervals", "%+#1", "-show_entries", "packet=pts_time:stream=sample_rate"))
+            return min(0.0, float(j["packets"][0]["pts_time"]))
+    except (OSError, ValueError, KeyError, IndexError):
+        pass
+    return 0.0
+
+
 def kickOnsets(x):
     """Offline kick onsets from the whole track: the rise of the 40-160 Hz envelope at 1 ms steps.
     Returns (times, strengths) of the local peaks of that rise."""
@@ -685,8 +715,10 @@ def main():
             gridBpm, anchor = nmlGrid(args.nml, args.file)
             bpm = bpm or gridBpm
             if anchor is not None and fb in ("0", "auto"):
-                fb = anchor % (60.0 / bpm)
-                print("nml grid: %.4f BPM, first beat %.3f s" % (bpm, fb))
+                shift = traktorOffset(args.file)
+                fb = (anchor - shift) % (60.0 / bpm)
+                print("nml grid: %.4f BPM, first beat %.3f s (Traktor's timeline %.1f ms ahead of the decode)"
+                      % (bpm, fb, shift * 1000))
             elif fb == "0":
                 fb = "auto"  # no anchor in the collection: fit it
         fb = fb if fb == "auto" else float(fb)
