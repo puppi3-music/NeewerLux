@@ -35,6 +35,9 @@ Changes relative to upstream [NeewerLite-Python v0.12d](https://github.com/tabur
 - A MIDI Start no longer makes Sound mode forget where the clock sits against the music, which left flashes off the kicks until enough kicks had been heard again.
 - Launching no longer opens a greyed-out Light Preferences tab when the app was last closed on it.
 
+### Development
+- **Beat-tracking harness** (`tests/beat_harness.py`, not part of the app). It feeds synthetic house, builds, fills and breakdowns, UK garage, footwork, 200 BPM and tempo drift through the real analyser and light show in simulated time, as a line feed and as a laptop mic. It scores lock time, tempo misreads, grid error, fired beats and kick detection, and can try other tempo windows (`--sweep`) or score a real track (`--file`).
+
 ## v1.3.0 - 2026-10-02
 
 ### Added
