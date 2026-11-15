@@ -232,6 +232,17 @@ def footwork160():
     return s
 
 
+def dubstep140():
+    """Half-time: kick on 1 (plus a pickup kick every other bar), snare and clap on 3, 8th hats; a long sub
+    under each bar. Scored against 140, the tempo DJ software shows, though it feels like 70."""
+    s = Song(_steady(140, 60))
+    for b in range(len(s.beats) // 4 - 1):
+        kicks = (0,) if b % 2 == 0 else (0, 2.75)
+        s.bar(b, kicks=kicks, claps=(2,), snares=(2,), hats=np.arange(8) / 2.0)
+        s.sub(4 * b, 3.5, 41.0 if b % 2 == 0 else 46.0)
+    return s
+
+
 def fast200():
     s = Song(_steady(200, 60))
     for b in range(len(s.beats) // 4 - 1):
@@ -262,11 +273,12 @@ def strayKick():
 
 
 # The tempo range a user would set for these cases' genres, tried in a second table by default.
-GENRE_RANGES = {"footwork160": (150, 170), "fast200": (170, 210)}
+GENRE_RANGES = {"footwork160": (150, 170), "fast200": (170, 210), "dubstep140": (130, 150)}
 
 CASES = {"house126": house126, "houseBuild": houseBuild, "houseFillBreak": houseFillBreak,
          "silenceGap": silenceGap,
          "garage132": garage132, "footwork160": footwork160, "fast200": fast200,
+         "dubstep140": dubstep140,
          "driftRamp": driftRamp, "driftJump": driftJump, "strayKick": strayKick}
 
 
