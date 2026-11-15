@@ -3,9 +3,10 @@ with a simulated clock, and scores how well the predicted beats line up with the
 
 A dev tool, not part of the app. Run from the repo root:
 
-    uv run python tests/beat_harness.py                   # every synthetic case, clean and laptop-mic input
+    uv run python tests/beat_harness.py                   # every synthetic case: line, laptop-mic and digital input
     uv run python tests/beat_harness.py --case garage132  # one case
     uv run python tests/beat_harness.py --sweep           # also try other tempo windows
+    uv run python tests/beat_harness.py --range 150 170   # every case with this tempo range
     uv run --with soundfile python tests/beat_harness.py --file track.flac --bpm 132 --first-beat 0.41
 
 Synthetic cases are made in code (kick, clap, snare, hat, sub), so true beat and kick times are known
@@ -195,6 +196,15 @@ def houseFillBreak():
     return s
 
 
+def silenceGap():
+    """House with four bars of digital silence (a track ends, a deck is stopped), then the kicks again."""
+    s = Song(_steady(126, 60))
+    for b in range(len(s.beats) // 4 - 1):
+        if not 12 <= b < 16:
+            s.bar(b, **HOUSE)
+    return s
+
+
 def garage132():
     """2-step: kick on 1 and a syncopated one late in the bar, never on 2 or 4; clap on 2 and 4; swung hats."""
     s = Song(_steady(132, 60))
@@ -251,7 +261,11 @@ def strayKick():
     return s
 
 
+# The tempo range a user would set for these cases' genres, tried in a second table by default.
+GENRE_RANGES = {"footwork160": (150, 170), "fast200": (170, 210)}
+
 CASES = {"house126": house126, "houseBuild": houseBuild, "houseFillBreak": houseFillBreak,
+         "silenceGap": silenceGap,
          "garage132": garage132, "footwork160": footwork160, "fast200": fast200,
          "driftRamp": driftRamp, "driftJump": driftJump, "strayKick": strayKick}
 
@@ -276,21 +290,28 @@ def laptopMic(x):
 
 
 def lineIn(x):
-    """A line feed: the music plus a -80 dB noise floor. Digital silence would hit a separate bug: hops under
-    the silence floor are left out of the tempo history, which squeezes its time and reads the tempo fast."""
+    """A line feed: the music plus a -80 dB noise floor."""
     return x + 1e-4 * rng.standard_normal(len(x))
 
 
-VARIANTS = {"clean": lineIn, "mic": laptopMic}
+def digital(x):
+    """A digital feed with exact silence between sounds, as from a loopback device. Hops under the
+    silence floor once dropped out of the tempo history, which squeezed its time and read the tempo fast."""
+    return x
+
+
+VARIANTS = {"clean": lineIn, "mic": laptopMic, "digital": digital}
 
 
 # --- running ---------------------------------------------------------------------
 
-def run(samples, window=None):
+def run(samples, window=None, tempoRange=None):
     """Feed samples through the analyser and light show in simulated time. Returns what happened."""
     if window is not None:
         na.TEMPO_WINDOW, na.TEMPO_MIN_SECONDS = window, window / 2.0
     engine = na.SoundEngine(lambda frame: True, logFunc=lambda *a: None)
+    if tempoRange:
+        engine.tempoMin, engine.tempoMax = tempoRange
     engine.mode = "Beat colour jump"
     engine.targets = [0]
     engine.clockLeadMs = 0  # fired beats should then land on the true beats themselves
@@ -386,7 +407,7 @@ COLS = ("lock", "ratio", "on%", "sits", "grid50", "grid90", "fire%", "fire50", "
 
 def printTable(rows, title):
     print("\n" + title)
-    head = "%-22s" % "case" + "".join("%8s" % c for c in COLS)
+    head = "%-30s" % "case" + "".join("%8s" % c for c in COLS)
     print(head)
     print("-" * len(head))
     for name, row in rows:
@@ -394,7 +415,7 @@ def printTable(rows, title):
         for c in COLS:
             v = row.get(c)
             cells.append("%8s" % ("-" if v is None else ("%.1f" % v if isinstance(v, float) else v)))
-        print("%-22s" % name + "".join(cells))
+        print("%-30s" % name + "".join(cells))
 
 
 def songFromFile(path, bpm, firstBeat, beatsFile):
@@ -419,6 +440,8 @@ def main():
     ap.add_argument("--variant", choices=sorted(VARIANTS), help="only this input variant")
     ap.add_argument("--sweep", action="store_true", help="also run with tempo windows of 4, 6, 12 and 16 s")
     ap.add_argument("--window", type=float, help="tempo window in seconds (default: the app's)")
+    ap.add_argument("--range", type=float, nargs=2, metavar=("LO", "HI"),
+                    help="tempo range in BPM for every input (default: the app's, plus a genre-range table)")
     ap.add_argument("--file", help="score a real track instead (needs --bpm and --first-beat, or --beats)")
     ap.add_argument("--bpm", type=float)
     ap.add_argument("--first-beat", type=float, default=0.0)
@@ -438,10 +461,16 @@ def main():
             raw = song.render()
             for v in ([args.variant] if args.variant else list(VARIANTS)):
                 inputs.append(("%s/%s" % (name, v), song, VARIANTS[v](raw)))
+    rangeNote = " range %g-%g BPM" % tuple(args.range) if args.range else ""
     for w in windows:
-        rows = [(label, score(song, *run(x, w))) for label, song, x in inputs]
-        printTable(rows, "Tempo window %.0f s%s (synthetic results are provisional until checked on real tracks)"
-                   % (w, " (app default)" if w == default else ""))
+        rows = [(label, score(song, *run(x, w, args.range))) for label, song, x in inputs]
+        printTable(rows, "Tempo window %.0f s%s%s (synthetic results are provisional until checked on real tracks)"
+                   % (w, " (app default)" if w == default else "", rangeNote))
+    genre = [(label, song, x, GENRE_RANGES[label.split("/")[0]]) for label, song, x in inputs
+             if label.split("/")[0] in GENRE_RANGES]
+    if genre and not args.range and not args.file:
+        rows = [("%s %g-%g" % ((label,) + r), score(song, *run(x, args.window, r))) for label, song, x, r in genre]
+        printTable(rows, "Genre tempo ranges, tempo window %.0f s" % (args.window or default))
 
 
 if __name__ == "__main__":

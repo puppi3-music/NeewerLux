@@ -3110,6 +3110,8 @@ try: # try to load the GUI
             self.soundMidiRefreshButton.clicked.connect(self._soundMidiRefreshClicked)
             self.soundBeatSourceCombo.currentIndexChanged.connect(self._soundApplyClock)
             self.soundClockLeadSpin.valueChanged.connect(self._soundSettingsChanged)
+            self.soundTempoMinSpin.valueChanged.connect(self._soundSettingsChanged)
+            self.soundTempoMaxSpin.valueChanged.connect(self._soundSettingsChanged)
             self.soundBeatsPerColourSpin.valueChanged.connect(self._soundSettingsChanged)
             self.soundClockNeedsSoundCheck.toggled.connect(self._soundSettingsChanged)
             self.soundPredictBeatsCheck.toggled.connect(self._soundSettingsChanged)
@@ -3161,7 +3163,9 @@ try: # try to load the GUI
                         ("minBri", "soundMinBriSpin"), ("maxBri", "soundMaxBriSpin"),
                         ("saturation", "soundSatSpin"), ("colourFade", "soundColourFadeSpin"),
                         ("rate", "soundRateSpin"), ("clockLead", "soundClockLeadSpin"),
-                        ("beatsPerColour", "soundBeatsPerColourSpin"))
+                        ("beatsPerColour", "soundBeatsPerColourSpin"),
+                        ("tempoMin", "soundTempoMinSpin"), ("tempoMax", "soundTempoMaxSpin"))
+        _SOUND_DEFAULTS = {"tempoMin": 70, "tempoMax": 180}  # for presets saved before these settings
 
         def _soundCollect(self):
             """The Sound tab settings a preset holds (not the input device or beat source)."""
@@ -3185,8 +3189,8 @@ try: # try to load the GUI
                 self.soundModeCombo.setCurrentIndex(pos)
             self.soundRollStyleCombo.setCurrentText(snd.get("rollStyle", "Strobe"))
             for key, attr in self._SOUND_SPINS:
-                if key in snd:
-                    getattr(self, attr).setValue(int(snd[key]))
+                if key in snd or key in self._SOUND_DEFAULTS:
+                    getattr(self, attr).setValue(int(snd.get(key, self._SOUND_DEFAULTS.get(key))))
             for key, chk in (("allLights", self.soundAllLightsCheck),
                              ("clockNeedsSound", self.soundClockNeedsSoundCheck),
                              ("predictBeats", self.soundPredictBeatsCheck)):
@@ -3394,6 +3398,8 @@ try: # try to load the GUI
             e.fps = self.soundRateSpin.value()
             e.targets = self._soundTargets()
             e.clockLeadMs = self.soundClockLeadSpin.value()
+            lo, hi = self.soundTempoMinSpin.value(), self.soundTempoMaxSpin.value()
+            e.tempoMin, e.tempoMax = min(lo, hi), max(lo, hi)
             e.beatsPerColour = self.soundBeatsPerColourSpin.value()
             e.clockNeedsSound = self.soundClockNeedsSoundCheck.isChecked()
             e.predictBeats = self.soundPredictBeatsCheck.isChecked()
