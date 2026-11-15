@@ -71,6 +71,26 @@ def _kick():
     return x
 
 
+def _realKick(build=0.013, drive=0.0):
+    """A kick as mastered house kicks measure: a click (over 2 kHz) on the beat, the body swelling in over
+    `build` seconds after it. Its own noise, so the other sounds stay the same as with _kick(). A `drive`
+    saturates the body as techno kicks are, which gives it harmonics over 150 Hz that a laptop mic still hears."""
+    t = np.arange(int(0.3 * RATE)) / RATE
+    f = 50 + 70 * np.exp(-t / 0.03)
+    swell = np.where(t < build, 0.5 - 0.5 * np.cos(np.pi * t / build), 1.0)
+    body = np.sin(2 * np.pi * np.cumsum(f) / RATE) * swell * np.exp(-np.maximum(t - build, 0) / 0.12)
+    if drive:
+        body = np.tanh(drive * body) / np.tanh(drive)
+    n = int(0.03 * RATE)
+    spec = np.fft.rfft(np.random.default_rng(7).standard_normal(n))
+    fr = np.fft.rfftfreq(n, 1.0 / RATE)
+    spec[(fr < 2000) | (fr > 8000)] = 0
+    click = np.fft.irfft(spec, n)
+    click *= np.exp(-t[:n] / 0.004) / np.abs(click).max()
+    body[:n] += 0.5 * click
+    return body / np.abs(body).max()
+
+
 def _clap():
     n = int(0.2 * RATE)
     t = np.arange(n) / RATE
@@ -116,6 +136,7 @@ class Song:
         self.drumBeats = []   # beats where flashes are expected (drums playing)
         self.length = float(self.beats[-1] + 1.0)
         self.change = None    # time the tempo starts to change, for cases that change it
+        self.sounds = {}      # per-case sounds, used before SOUNDS
 
     def at(self, pos):
         i = int(math.floor(pos))
@@ -152,7 +173,7 @@ class Song:
             if name == "sub":
                 x, gain = _sub(*extra), 0.3
             else:
-                x, gain = SOUNDS[name]
+                x, gain = self.sounds.get(name) or SOUNDS[name]
             i = int(round(t * RATE))
             n = min(len(x), len(out) - i)
             if n > 0:
@@ -270,6 +291,58 @@ def dubstep140():
     return s
 
 
+def _note(seconds, hz, attack, harm=(1.0,)):
+    t = np.arange(int(seconds * RATE)) / RATE
+    x = sum(a * np.sin(2 * np.pi * hz * (k + 1) * t) for k, a in enumerate(harm))
+    env = np.minimum(1, t / attack) * np.minimum(1, (seconds - t) / 0.02).clip(0)
+    return x * env / np.abs(x).max()
+
+
+def offbeatBass130():
+    """Strobe-like techno: a saturated kick whose body builds over 40 ms, and an off-beat bass note at x.52 as loud as
+    the kick that jumps in within one hop; a sub pumping in after each kick, open hats on the off-beats."""
+    P = 60 / 130.0
+    s = Song(_steady(130, 60))
+    r = np.random.default_rng(11)  # own noise, so the shared rng and the other cases stay the same
+    n = int(0.12 * RATE)
+
+    def noise(lo, hi):
+        spec = np.fft.rfft(r.standard_normal(n))
+        f = np.fft.rfftfreq(n, 1.0 / RATE)
+        spec[(f < lo) | (f > hi)] = 0
+        x = np.fft.irfft(spec, n)
+        return x / np.abs(x).max()
+
+    ohat = (noise(2500, 14000) + 0.4 * noise(300, 2000)) * np.exp(-np.arange(n) / RATE / 0.05)
+    s.sounds = {"kick": (_realKick(build=0.04, drive=6.0), 0.8), "ohat": (ohat, 0.2),
+                "off": (_note(0.42 * P, 55.0, 0.006, (1.0, 0.6, 0.35)), 1.0),
+                "pump": (_note(0.40 * P, 41.0, 0.1), 0.8)}
+    for b in range(len(s.beats) // 4 - 1):
+        s.bar(b, kicks=(0, 1, 2, 3), claps=(1, 3), hats=np.arange(16) / 4.0)
+        for p in range(4):
+            s.hit("ohat", 4 * b + p + 0.5)
+            s.hit("off", 4 * b + p + 0.52)
+            s.hit("pump", 4 * b + p, shift=0.04)
+    return s
+
+
+def oddIntro136():
+    """A weak intro: soft claps on a dotted-eighth figure (every 3/4 beat, 181.3 BPM = 4/3 of 136) with half
+    the hits missing, which the tracker locks to; then clear 136 house from bar 8. As on Sub Focus "Go Back",
+    where the 3/4-4/3 guard held that first lock and refused the true 136 for over a minute. With hits that
+    sparse the lock is never trusted, so the guard stays off and the kicks relock it."""
+    s = Song(_steady(136, 60))
+    r = np.random.default_rng(7)  # own rng, so the shared one and the other cases stay the same
+    s.sounds = {"soft": (SOUNDS["clap"][0], 0.35)}
+    for p in np.arange(0, 32, 0.75):
+        if r.random() < 0.5:
+            s.hit("soft", p)
+    s.change = float(s.beats[32])
+    for b in range(8, len(s.beats) // 4 - 1):
+        s.bar(b, **HOUSE)
+    return s
+
+
 def fast200():
     s = Song(_steady(200, 60))
     for b in range(len(s.beats) // 4 - 1):
@@ -316,8 +389,9 @@ GENRE_RANGES = {"footwork160": (150, 170), "fast200": (170, 210), "dubstep140": 
 CASES = {"house126": house126, "houseBuild": houseBuild, "houseFillBreak": houseFillBreak, "houseLongBreak": houseLongBreak,
          "silenceGap": silenceGap,
          "garage132": garage132, "footwork160": footwork160, "fast200": fast200,
-         "dubstep140": dubstep140,
-         "driftRamp": driftRamp, "driftJump": driftJump, "driftJump6": driftJump6, "strayKick": strayKick}
+         "dubstep140": dubstep140, "offbeatBass130": offbeatBass130,
+         "driftRamp": driftRamp, "driftJump": driftJump, "driftJump6": driftJump6, "strayKick": strayKick,
+         "oddIntro136": oddIntro136}  # last: its variants' noise comes from the shared rng after the others'
 
 
 # --- input variants ---------------------------------------------------------------
@@ -560,19 +634,133 @@ def printTable(rows, title, cols=COLS):
         print("%-30s" % name + "".join(cells))
 
 
+def nmlGrid(nml, path):
+    """Traktor's beat grid for this file from a collection .nml, matched by file name: (BPM, anchor
+    in seconds) from the AutoGrid cue, or (BPM, None) when the entry has only a tempo."""
+    import xml.etree.ElementTree as ET
+    name = os.path.basename(path)
+    for e in ET.parse(nml).getroot().iter("ENTRY"):
+        loc = e.find("LOCATION")
+        if loc is None or loc.get("FILE") != name:
+            continue
+        for cue in e.iter("CUE_V2"):
+            grid = cue.find("GRID")
+            if cue.get("TYPE") == "4" and grid is not None:
+                return float(grid.get("BPM")), float(cue.get("START")) / 1000.0
+        tempo = e.find("TEMPO")
+        if tempo is not None:
+            return float(tempo.get("BPM")), None
+    sys.exit("%s: no BPM for %s" % (nml, name))
+
+
+def traktorOffset(path):
+    """Seconds by which Traktor's timeline runs ahead of the decoded audio (Traktor time = decoded time + this),
+    as measured to the sample in dj-tools (track-analyzer traktor.audio_offset): an MP3 adds 1152 samples for a
+    Xing/Info header frame plus the LAME delay ffmpeg skips (its start_time); an m4a with an edit list subtracts
+    the AAC priming, which ffmpeg trims and Traktor doesn't play. Other formats: 0."""
+    import json
+    import subprocess
+    ext = os.path.splitext(path)[1].lower()
+    probe = lambda *a: subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", *a, "-of", "json", path],
+                                      capture_output=True, text=True).stdout
+    try:
+        if ext == ".mp3":
+            j = json.loads(probe("-show_entries", "stream=start_time,sample_rate"))["streams"][0]
+            sr = int(j["sample_rate"])
+            with open(path, "rb") as f:
+                h = f.read(10)
+                f.seek(10 + ((h[6] << 21) | (h[7] << 14) | (h[8] << 7) | h[9]) + (10 if h[5] & 0x10 else 0)
+                       if h[:3] == b"ID3" else 0)
+                b = f.read(4096)
+            k = next((i for i in range(len(b) - 1) if b[i] == 0xFF and b[i + 1] & 0xE0 == 0xE0), None)
+            info = k is not None and (b.find(b"Xing", k, k + 200) != -1 or b.find(b"Info", k, k + 200) != -1)
+            return (round(float(j.get("start_time", 0)) * sr) + (1152 if info else 0)) / sr
+        if ext in (".m4a", ".mp4"):
+            j = json.loads(probe("-read_intervals", "%+#1", "-show_entries", "packet=pts_time:stream=sample_rate"))
+            return min(0.0, float(j["packets"][0]["pts_time"]))
+    except (OSError, ValueError, KeyError, IndexError):
+        pass
+    return 0.0
+
+
+def kickOnsets(x):
+    """Offline kick onsets from the whole track: the rise of the 40-160 Hz envelope at 1 ms steps.
+    Returns (times, strengths) of the local peaks of that rise."""
+    spec = np.fft.rfft(x)
+    f = np.fft.rfftfreq(len(x), 1.0 / RATE)
+    spec[(f < 40) | (f > 160)] = 0
+    low = np.fft.irfft(spec, len(x))
+    hop = RATE // 1000
+    env = np.sqrt(np.add.reduceat(low * low, np.arange(0, len(low), hop)) / hop)
+    env = np.convolve(env, np.ones(5) / 5, "same")
+    rise = np.maximum(np.diff(env, prepend=env[0]), 0)
+    rise = np.convolve(rise, np.ones(3) / 3, "same")
+    # Peaks: the biggest rise within 60 ms either side, above a floor.
+    from numpy.lib.stride_tricks import sliding_window_view
+    pad = np.pad(rise, 60)
+    peak = (rise == sliding_window_view(pad, 121).max(axis=1)) & (rise > 0.1 * np.percentile(rise, 99.5))
+    idx = np.nonzero(peak)[0]
+    return idx / 1000.0, rise[idx]
+
+
+def fitGrid(times, w, bpm):
+    """Fixed tempo near bpm (within 0.2%) and its phase, fitted over the whole track: the tempo whose
+    grid gathers the kick onsets tightest. Returns (bpm, first beat, concentration 0-1)."""
+    best = None
+    for b in np.linspace(bpm * 0.998, bpm * 1.002, 161):
+        p = 60.0 / b
+        z = np.sum(w * np.exp(2j * np.pi * times / p))
+        r = abs(z) / w.sum()
+        if best is None or r > best[2]:
+            best = (b, (np.angle(z) / (2 * np.pi) * p) % p, r)
+    b, t0, r = best
+    p = 60.0 / b
+    # Refine the phase: weighted median offset of the strong onsets near the grid.
+    off = (times - t0 + p / 2) % p - p / 2
+    near = np.abs(off) < 0.04
+    if near.any():
+        o, ww = off[near], w[near]
+        k = np.argsort(o)
+        t0 += o[k][np.searchsorted(np.cumsum(ww[k]), ww.sum() / 2)]
+    return b, t0 % p, r
+
+
 def songFromFile(path, bpm, firstBeat, beatsFile):
     import soundfile  # uv run --with soundfile
-    x, rate = soundfile.read(path, always_2d=True)
-    x = x.mean(axis=1)
+    try:
+        x, rate = soundfile.read(path, always_2d=True)
+        x = x.mean(axis=1)
+    except soundfile.LibsndfileError:  # m4a and the like: decode with ffmpeg
+        import subprocess
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-ac", "1", "-ar", str(RATE), "-f", "f32le", "-"],
+                             check=True, capture_output=True).stdout
+        x, rate = np.frombuffer(raw, np.float32).astype(float), RATE
     if rate != RATE:  # plain linear resample is enough for beat tracking
         x = np.interp(np.arange(int(len(x) * RATE / rate)) * rate / RATE, np.arange(len(x)), x)
+    onsets = None
     if beatsFile:
         beats = np.loadtxt(beatsFile)
     else:
-        beats = np.arange(firstBeat, len(x) / RATE, 60.0 / bpm)
+        if firstBeat == "auto":
+            onsets = kickOnsets(x)
+            fit, firstBeat, r = fitGrid(onsets[0], onsets[1], bpm)
+            print("auto grid: %.3f BPM (given %.3f), first beat %.3f s, onset concentration %.2f" % (fit, bpm, firstBeat, r))
+            bpm = fit
+        beats = np.arange(float(firstBeat), len(x) / RATE, 60.0 / bpm)
     s = Song(beats)
-    s.drumBeats = list(beats)  # unknown sections: every beat counts, so fire% reads low through breakdowns
     s.length = len(x) / RATE
+    if onsets is None:
+        s.drumBeats = list(beats)  # unknown sections: every beat counts, so fire% reads low through breakdowns
+    else:
+        # Beats with a clear kick onset within 25 ms count as kicks and drum beats; the rest
+        # (breakdowns, intros without a kick) are left out of fire% and kick%.
+        t, w = onsets
+        j = np.clip(np.searchsorted(t, beats), 1, len(t) - 1)
+        j = np.where(np.abs(t[j - 1] - beats) < np.abs(t[j] - beats), j - 1, j)
+        hasKick = (np.abs(t[j] - beats) <= 0.025) & (w[j] > 0.25 * np.median(w[j]))
+        s.kicks = list(beats[hasKick])
+        s.drumBeats = list(beats[hasKick])
+        print("kicks on %d of %d beats" % (hasKick.sum(), len(beats)))
     return s, x
 
 
@@ -586,16 +774,37 @@ def main():
                     help="tempo range in BPM for every input (default: the app's, plus a genre-range table)")
     ap.add_argument("--file", help="score a real track instead (needs --bpm and --first-beat, or --beats)")
     ap.add_argument("--bpm", type=float)
-    ap.add_argument("--first-beat", type=float, default=0.0)
+    ap.add_argument("--first-beat", default="0", help='seconds, or "auto" to fit it (and the BPM within 0.2%%) from the kicks')
+    ap.add_argument("--nml", help="take the BPM and beat grid from this Traktor collection (.nml), by file name; "
+                    "without a grid anchor the first beat is fitted as with --first-beat auto")
     ap.add_argument("--beats", help="text file with one true beat time per line")
+    ap.add_argument("--kick", choices=("synth", "real"), default="synth",
+                    help="synthetic kick sound: synth (body from the first sample) or real (click, body 13 ms later)")
     ap.add_argument("--flash", action="store_true", help='also a "Flash on: Kicks" against "Beats" table')
     args = ap.parse_args()
+    if args.kick == "real":
+        SOUNDS["kick"] = (_realKick(), 0.8)
 
     default = na.TEMPO_WINDOW
     windows = [args.window or default] + ([w for w in (4.0, 6.0, 12.0, 16.0) if w != default] if args.sweep else [])
     if args.file:
-        song, x = songFromFile(args.file, args.bpm, args.first_beat, args.beats)
-        inputs = [(os.path.basename(args.file), song, x)]
+        bpm, fb = args.bpm, args.first_beat
+        if args.nml:
+            gridBpm, anchor = nmlGrid(args.nml, args.file)
+            bpm = bpm or gridBpm
+            if anchor is not None and fb in ("0", "auto"):
+                shift = traktorOffset(args.file)
+                fb = (anchor - shift) % (60.0 / bpm)
+                print("nml grid: %.4f BPM, first beat %.3f s (Traktor's timeline %.1f ms ahead of the decode)"
+                      % (bpm, fb, shift * 1000))
+            elif fb == "0":
+                fb = "auto"  # no anchor in the collection: fit it
+        fb = fb if fb == "auto" else float(fb)
+        song, x = songFromFile(args.file, bpm, fb, args.beats)
+        name = os.path.basename(args.file)
+        if args.variant:  # e.g. mic: the track as a laptop mic across the room would hear it
+            x, name = VARIANTS[args.variant](x), "%s/%s" % (name, args.variant)
+        inputs = [(name, song, x)]
     else:
         names = [args.case] if args.case else list(CASES)
         inputs = []
