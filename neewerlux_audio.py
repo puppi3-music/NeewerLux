@@ -1336,8 +1336,8 @@ class _LightShow:
             # Taken off the position, as the clock only reads a tick into its past.
             srcPos -= self.kickCentre / src.beatPeriod()
         self.rollPos, self.rollHit = self._rollGrid(src, srcPos)
-        # With beats predicted, a kick only needs its own frame if it is the first one back.
-        beatDue = (a.kickSeen and (src is None or not self._kicksPlaying(now, src))) or self.tracker.due(srcPos) or self.rollTracker.due(self.rollPos)
+        # With beats predicted, a kick only needs its own frame if it is the first one back, or if kicks flash.
+        beatDue = (a.kickSeen and (src is None or self.engine.flashOn == "Kicks" or not self._kicksPlaying(now, src))) or self.tracker.due(srcPos) or self.rollTracker.due(self.rollPos)
 
         if not beatDue and (not a.hasLevels() or now - self.lastFrame < interval) or (beatDue and not a.hasLevels() and self.raw is None):
             wait = min(interval - (now - self.lastFrame), HOP / a.rate)
@@ -1590,7 +1590,11 @@ class _LightShow:
             onBeat = min(0.95, 0.1 + lead / max(0.05, src.beatPeriod()))
             beat, beatIdx = self.tracker.step(srcPos, onBeat)
             gridBeat = beat
-            if name == "tempo" or e.clockNeedsSound:
+            if e.flashOn == "Kicks":
+                # Flash on each kick as it is heard, so the lights show the kick pattern (without the beat
+                # lead); the grid still counts the bar, steps the colour and places rolls.
+                beat = kick and self.heard and not silent
+            elif name == "tempo" or e.clockNeedsSound:
                 # Keep counting the bar, but only flash to kicks. The beat fires ahead of its kick, so it
                 # goes by whether kicks have been playing, and the first kick back fires as it is heard,
                 # unless it is the kick a flash already led.
@@ -1611,7 +1615,9 @@ class _LightShow:
             beat = kick and self.heard and not silent
             e.state.update(beatSource="audio", bpm=0.0, beatInBar=0)
         every = max(1, int(e.beatsPerColour))
-        if beat:
+        # With "Flash on: Kicks" the colour steps on the grid's beats while kicks play, not on every kick.
+        countBeat = gridBeat and (kicksPlaying or kick) and self.heard and not stopped if src is not None and e.flashOn == "Kicks" else beat
+        if countBeat:
             self.beatCount += 1
         # A loud sound with no kicks flashes on the beats it's missing, without changing colour on each one.
         if gridBeat and not beat and not kicksPlaying and self.heard and not stopped and self.envs["sustain"].value > SUSTAIN_FLASH:
@@ -1637,8 +1643,8 @@ class _LightShow:
                 and now - self.lastNote >= SUSTAIN_COLOUR_BEATS * period:
             return False, True, SUSTAIN_COLOUR_BEATS
         if name == "clock" and beatIdx is not None:  # count from the clock's downbeat, so changes land on bar lines
-            return beat, beat and beatIdx % every == 0, every
-        return beat, beat and (self.beatCount - 1) % every == 0, every
+            return beat, countBeat and beatIdx % every == 0, every
+        return beat, countBeat and (self.beatCount - 1) % every == 0, every
 
     def _jumpColour(self, now, src, colourBeat, pal, every, colourFade):
         """Each colour change glides over a share of the time until the next one, set by Colour fade
@@ -1754,6 +1760,7 @@ class SoundEngine:
         self.beatsPerColour = 1    # "Beat colour jump": change colour every this many beats
         self.clockNeedsSound = True  # MIDI clock beats only fire while kicks are heard (Traktor clocks on when stopped)
         self.predictBeats = True   # without a clock, find the tempo in the sound and fire beats on time
+        self.flashOn = "Beats"     # "Beats": flash on the beat grid, ahead by the lead; "Kicks": on each kick as heard, the grid still counting
         self.tempoMin = TEMPO_MIN_BPM  # tempo range searched in the sound, BPM: narrow it for fast or slow genres
         self.tempoMax = TEMPO_MAX_BPM
 
