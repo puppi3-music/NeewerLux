@@ -141,6 +141,9 @@ TEMPO_KICK_LEARN = 8      # kicks after the first lock that only learn that offs
 TEMPO_JUMP_KICKS = 4      # kicks in a row, evenly spaced at a new tempo past the 4% relock, that lock onto it at once
 TEMPO_JUMP_SPREAD = 0.025  # seconds: the most their gaps may differ (a hop is 11 ms)
 TEMPO_JUMP_MAX = 0.15     # the furthest from the locked tempo such a jump may go
+TEMPO_FIT_KICKS = 32      # kicks on the grid remembered to fit the period from when a hold begins
+TEMPO_FIT_MIN = 8         # ... and the least that will do
+TEMPO_FIT_RESID = 0.015   # seconds: the most a kick may sit off the fitted line to be counted
 ONSET_DELAY = 0.025     # seconds the detected attack lags the real one (measured on synthetic kicks)
 ROLL = (180, 1500)      # Hz: where snare rolls are looked for
 ROLL_WINDOW = 1.5       # seconds of that band each estimate looks at
@@ -625,6 +628,7 @@ class _TempoTracker:
         self.offsetN = 0       # kicks the offset has been learned from
         self.gaps = deque(maxlen=3)  # gaps between kicks that didn't fit the held tempo
         self.recent = deque(maxlen=TEMPO_JUMP_KICKS)  # times of the last few kicks, for a jump in tempo
+        self.onGrid = deque(maxlen=TEMPO_FIT_KICKS)  # times of recent kicks that steered the grid, to fit the period when a hold begins
         self.jumped = None     # when the kicks last locked onto a new tempo: until the window has heard it, its estimates of the old one are ignored
 
     def add(self, t, onset):
@@ -693,17 +697,40 @@ class _TempoTracker:
         if self.doubt >= 8:  # about 2 s without a clear beat
             self.candidate, self.agree, self.doubt = 0.0, 0, 0
             if self.locked and self.coast is None:
-                self.coast = self.times[-1]
+                self._startCoast(self.times[-1])
 
     def checkCoast(self, now, lastKick, rolling):
         """Start holding the tempo when the kicks have stopped (a breakdown), and let go after too long."""
         if self.locked and self.coast is None and self.lastKick is not None and not rolling \
                 and now - lastKick > max(2.0, 4.0 * self.period):  # music with no kicks at all has no breakdown to hold through
-            self.coast = now
+            self._startCoast(now)
         if self.coast is not None and rolling:  # a roll keeps the track's tempo: the hold's time starts again when it ends
             self.coast = now
         if self.coast is not None and now - self.coast > TEMPO_COAST:
             self.reset()
+
+    def _startCoast(self, now):
+        """Hold the tempo from now. The kicks steer the phase every beat, which hides a period a fraction
+        of a millisecond off; held for a long breakdown, that would add up to a late grid. So the period
+        (and the phase at the last kick) are set from a straight line through the recent kicks first."""
+        self.coast = now
+        k = np.asarray(self.onGrid)
+        self.onGrid.clear()
+        if len(k) < TEMPO_FIT_MIN:
+            return
+        n = np.round((k - k[0]) / self.period)
+        if len(np.unique(n)) < len(n):
+            return
+        P, a = np.polyfit(n, k, 1)
+        keep = np.abs(a + P * n - k) <= TEMPO_FIT_RESID  # leave out a soft kick in a fill, heard late
+        if keep.sum() < TEMPO_FIT_MIN:
+            return
+        P, a = np.polyfit(n[keep], k[keep], 1)
+        if abs(P / self.period - 1.0) > 0.01 or np.abs(a + P * n[keep] - k[keep]).max() > TEMPO_FIT_RESID:
+            return
+        last = a + P * n[-1] - ONSET_DELAY - self.kickOffset
+        self.refPos, self.refT = round(self.position(last)), last
+        self.period = P
 
     def kick(self, t, weight=1.0, rolling=False):
         """A kick was heard at time t. While holding, two in a row that fit the tempo set where the beats fall.
@@ -725,6 +752,7 @@ class _TempoTracker:
                 self.offsetN += 1
                 self.kickOffset += e / self.offsetN
             elif abs(e) <= TEMPO_KICK_GATE:
+                self.onGrid.append(t)
                 self.kickOffset += TEMPO_KICK_OFFSET * weight * e
                 weight *= min(1.0, abs(e) / TEMPO_KICK_SOFT) if TEMPO_KICK_SOFT > 0 else 1.0
                 self.refPos, self.refT = p, at
@@ -741,7 +769,7 @@ class _TempoTracker:
                 self.coast = None
                 self.doubt = 0
                 self.gaps.clear()
-            else:
+            elif abs(beats - round(beats)) * self.period >= TEMPO_RESNAP:  # a whole number of beats apart (a sub note every two bars) fits the held tempo
                 self.gaps.append(t - self.lastKick)
                 if len(self.gaps) == self.gaps.maxlen and max(self.gaps) - min(self.gaps) < 2.0 * TEMPO_RESNAP:
                     self.coast = None  # steady kicks that don't fit: the next track has come in, so listen for its tempo as usual
@@ -766,6 +794,7 @@ class _TempoTracker:
                 self.candidate, self.agree, self.doubt, self.flip = period, 0, 0, 0
                 self.jumped = t
                 self.recent.clear()
+                self.onGrid.clear()
                 return True
         return False
 

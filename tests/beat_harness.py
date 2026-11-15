@@ -210,6 +210,19 @@ def houseFillBreak():
     return s
 
 
+def houseLongBreak():
+    """House with a 32-bar breakdown (about 61 s, as on real tracks): hats and sub notes, no kicks."""
+    s = Song(_steady(126, 100))
+    for b in range(len(s.beats) // 4 - 1):
+        if 8 <= b < 40:
+            s.bar(b, hats=(0.5, 1.5, 2.5, 3.5), drums=False)
+            if b % 2 == 0:
+                s.sub(4 * b, 8, 55.0)
+        else:
+            s.bar(b, **HOUSE)
+    return s
+
+
 def silenceGap():
     """House with four bars of digital silence (a track ends, a deck is stopped), then the kicks again."""
     s = Song(_steady(126, 60))
@@ -300,7 +313,7 @@ def strayKick():
 # The tempo range a user would set for these cases' genres, tried in a second table by default.
 GENRE_RANGES = {"footwork160": (150, 170), "fast200": (170, 210), "dubstep140": (130, 150)}
 
-CASES = {"house126": house126, "houseBuild": houseBuild, "houseFillBreak": houseFillBreak,
+CASES = {"house126": house126, "houseBuild": houseBuild, "houseFillBreak": houseFillBreak, "houseLongBreak": houseLongBreak,
          "silenceGap": silenceGap,
          "garage132": garage132, "footwork160": footwork160, "fast200": fast200,
          "dubstep140": dubstep140,
