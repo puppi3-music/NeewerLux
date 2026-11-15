@@ -71,13 +71,16 @@ def _kick():
     return x
 
 
-def _realKick(build=0.013):
+def _realKick(build=0.013, drive=0.0):
     """A kick as mastered house kicks measure: a click (over 2 kHz) on the beat, the body swelling in over
-    `build` seconds after it. Its own noise, so the other sounds stay the same as with _kick()."""
+    `build` seconds after it. Its own noise, so the other sounds stay the same as with _kick(). A `drive`
+    saturates the body as techno kicks are, which gives it harmonics over 150 Hz that a laptop mic still hears."""
     t = np.arange(int(0.3 * RATE)) / RATE
     f = 50 + 70 * np.exp(-t / 0.03)
     swell = np.where(t < build, 0.5 - 0.5 * np.cos(np.pi * t / build), 1.0)
     body = np.sin(2 * np.pi * np.cumsum(f) / RATE) * swell * np.exp(-np.maximum(t - build, 0) / 0.12)
+    if drive:
+        body = np.tanh(drive * body) / np.tanh(drive)
     n = int(0.03 * RATE)
     spec = np.fft.rfft(np.random.default_rng(7).standard_normal(n))
     fr = np.fft.rfftfreq(n, 1.0 / RATE)
@@ -296,7 +299,7 @@ def _note(seconds, hz, attack, harm=(1.0,)):
 
 
 def offbeatBass130():
-    """Strobe-like techno: a kick whose body builds over 40 ms, and an off-beat bass note at x.52 as loud as
+    """Strobe-like techno: a saturated kick whose body builds over 40 ms, and an off-beat bass note at x.52 as loud as
     the kick that jumps in within one hop; a sub pumping in after each kick, open hats on the off-beats."""
     P = 60 / 130.0
     s = Song(_steady(130, 60))
@@ -311,7 +314,7 @@ def offbeatBass130():
         return x / np.abs(x).max()
 
     ohat = (noise(2500, 14000) + 0.4 * noise(300, 2000)) * np.exp(-np.arange(n) / RATE / 0.05)
-    s.sounds = {"kick": (_realKick(build=0.04), 0.8), "ohat": (ohat, 0.2),
+    s.sounds = {"kick": (_realKick(build=0.04, drive=6.0), 0.8), "ohat": (ohat, 0.2),
                 "off": (_note(0.42 * P, 55.0, 0.006, (1.0, 0.6, 0.35)), 1.0),
                 "pump": (_note(0.40 * P, 41.0, 0.1), 0.8)}
     for b in range(len(s.beats) // 4 - 1):
@@ -798,7 +801,10 @@ def main():
                 fb = "auto"  # no anchor in the collection: fit it
         fb = fb if fb == "auto" else float(fb)
         song, x = songFromFile(args.file, bpm, fb, args.beats)
-        inputs = [(os.path.basename(args.file), song, x)]
+        name = os.path.basename(args.file)
+        if args.variant:  # e.g. mic: the track as a laptop mic across the room would hear it
+            x, name = VARIANTS[args.variant](x), "%s/%s" % (name, args.variant)
+        inputs = [(name, song, x)]
     else:
         names = [args.case] if args.case else list(CASES)
         inputs = []
