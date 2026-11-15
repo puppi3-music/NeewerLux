@@ -637,11 +637,13 @@ def printTable(rows, title, cols=COLS):
 def nmlGrid(nml, path):
     """Traktor's beat grid for this file from a collection .nml, matched by file name: (BPM, anchor
     in seconds) from the AutoGrid cue, or (BPM, None) when the entry has only a tempo."""
+    import unicodedata
     import xml.etree.ElementTree as ET
     name = os.path.basename(path)
+    key = unicodedata.normalize("NFC", name)  # a Mac collection may spell accents one way, the disk the other
     for e in ET.parse(nml).getroot().iter("ENTRY"):
         loc = e.find("LOCATION")
-        if loc is None or loc.get("FILE") != name:
+        if loc is None or unicodedata.normalize("NFC", loc.get("FILE", "")) != key:
             continue
         for cue in e.iter("CUE_V2"):
             grid = cue.find("GRID")
