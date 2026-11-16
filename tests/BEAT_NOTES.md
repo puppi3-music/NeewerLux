@@ -24,7 +24,8 @@ percentile grid error in ms; **extra** = flashes with no beat.
 
 - **Love is Gonna Save Us (Benny Benassi, ARTBAT) 150-190 s.** A long fill: hits at ±117 / ±234 ms from the beat,
   few on it. The tempo window reads 4/3 (171 BPM) there and the 3/4-4/3 guard holds it off, but 102.5 (4/5) and
-  then 171 still get through around 157 s. On 89.2→90.8 after the 2026-11-16 fixes; 150-190 s is still mostly off.
+  then 171 still get through around 157 s. On 89.2→90.8 after the 2026-11-16 fixes, 92.8 with the comb-gated hold;
+  150-190 s is still mostly off.
 - **Savana (Chris Lake) 203-239 s:** the kicks stop and an off-beat bass plays alone (hits at +213 ms, first every
   two beats, then every beat, plus a sound at +45..+65 ms). Its hits are taken as kicks, so no breakdown hold
   starts; at 208.5 s the off-beat flip (TEMPO_FLIP) moves the trusted grid half a beat, and it stays there until the
@@ -36,6 +37,10 @@ percentile grid error in ms; **extra** = flashes with no beat.
 - **Freestyler (Bomfunk MC's):** ~81% on; phase off under the off-beat bass in places.
 - **I Found You (GVN, Elliot Vast):** ~41% on; kickless sections with a 16th off-beat bass.
 - **Go Back (Sub Focus):** switches 136→174 at ~144 s and is scored against one 174 grid, so its on% means little.
+- **Falling Up (Anabel Englund, Punctual) g90 9.4→19.1, extra 21→45** since the comb-gated hold (kept 2026-11-16,
+  see Off-beat flips (r)); on% 97.2, not traced yet.
+- **light years (Inez, John Summit) 60-80 s:** 91.5 (93.1 before the comb-gated hold); traced, no fix (Off-beat
+  flips).
 - **Strobe g90 ~11-12 ms:** kick detection lateness moves by section (the kick's rise swells longer under the bass).
 
 ## Tried and dropped
@@ -174,6 +179,13 @@ Each entry: what was tried, on which problem, and what the numbers showed.
   drop, which is scored against Traktor's one 174 grid (see Open problems); from 150 s both are 100%. Scored instead
   by the share of detected kicks on the tracker's own grid, 90-140 s is even: base 43 of 99, (r) 44 of 98. Not a
   real loss, no fix; light years is the only gap left vs base.
+  **(r) kept (2026-11-16), ported into neewerlux_audio.py**, though light years (93.1→91.5) breaks the "about a
+  point" rule: base already fails its 60-80 s, just inside the tolerance, the evidence there is split and five
+  fixes failed, while (r) gains Desire +10.5, Apex +3.4, Feels Like Us +3.1, Love +2.0, Savana +1.3, messy +1.1.
+  Accepted costs vs base: Sub Focus 49.4→47.9 (scoring artifact, see above); g90 Punctual 9.4→19.1 (extra 21→45),
+  Feels Like Us 13.6→17.9, Desire 4.5→10.8, synthetic houseFillBreak/clean 5.8→15.1 (digital 5.8→3.8); synthetic
+  on% all the same, Strobe mic 100.0 (base 99.6). Punctual's g90 and extras are not traced yet. The port (with
+  small cleanups) gives output identical to c68 on all 18 tracks and the synthetic suite.
   light years 60-80 s traced (2026-11-16): base fails it too, just inside the tolerance. The trusted hold from
   57.8 s ends on a kick at 64.49 s (grid -6 ms vs Traktor); the window then reads 138.8-138.9 with its comb ~40 ms
   early, and its fits pull the phase -40, -28, -20, -10 ms (each under the 45 ms gate) and blend the period up from
@@ -271,3 +283,6 @@ Everything tried on a day, kept or dropped, in order. Numbers are on / g50 / g90
   synthetic/Strobe mic the same. Best variant; not kept yet (Sub Focus, light years behind base).
 - Comb-gated hold, Sub Focus under (r): its -1.5 vs base is all in the 136→174 ramp (90-140 s) scored against one
   174 grid; on detected kicks the two are even (43/99 vs 44/98). No fix; only light years still behind base.
+- Comb-gated hold (r) kept and ported into neewerlux_audio.py: vs base Desire 89.3→99.8, Apex 85.4→88.8, Feels Like
+  Us 87.4→90.5, Love 90.8→92.8; light years 93.1→91.5 and the g90 costs accepted (see Off-beat flips). New baseline
+  for later changes is this module.
