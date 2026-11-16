@@ -158,6 +158,8 @@ TEMPO_TRUST_BEATS = 12    # (a lock at 4/3 of the kicks' tempo gets one on every
 TEMPO_FIT_KICKS = 32      # kicks on the grid remembered to fit the period from when a hold begins
 TEMPO_FIT_MIN = 8         # ... and the least that will do
 TEMPO_FIT_RESID = 0.015   # seconds: the most a kick may sit off the fitted line to be counted
+TEMPO_FIT_STEP = 0.004    # seconds: a step in the kicks' phase this big or more is fitted as a step, not a tilt ...
+TEMPO_FIT_STEP_GAIN = 0.5  # ... when it leaves at most this share of the single line's squared error
 TEMPO_DENSE_KICKS = 2.5   # kicks per beat over the window that make a tempo up to half the range's top twice as fast:
                           # footwork's 3-3-2 kicks repeat only every two beats, and at half speed come 3.5 to a beat
 ONSET_DELAY = 0.025     # seconds the detected attack lags the real one, until clicks have been heard (measured on a kick with no click)
@@ -813,9 +815,23 @@ class _TempoTracker:
         keep = np.abs(a + P * n - k) <= TEMPO_FIT_RESID  # leave out a soft kick in a fill, heard late
         if keep.sum() < TEMPO_FIT_MIN:
             return
-        P, a = np.polyfit(n[keep], k[keep], 1)
-        if abs(P / self.period - 1.0) > 0.01 or np.abs(a + P * n[keep] - k[keep]).max() > TEMPO_FIT_RESID:
+        n, k = n[keep], k[keep]
+        P, a = np.polyfit(n, k, 1)
+        if abs(P / self.period - 1.0) > 0.01 or np.abs(a + P * n - k).max() > TEMPO_FIT_RESID:
             return
+        # A step in the kicks (a new part, the kick heard a few ms later) tilts a single line, and the tilt adds up
+        # over a long hold. Fit one period with the phase free to step once; take it when it explains the kicks
+        # far better, and the phase from the kicks after the step.
+        sse = np.sum((a + P * n - k) ** 2)
+        best = None
+        for i in range(TEMPO_FIT_MIN // 2, len(n) - TEMPO_FIT_MIN // 2 + 1):
+            X = np.column_stack([n, n >= n[i], np.ones(len(n))])
+            c = np.linalg.lstsq(X, k, rcond=None)[0]
+            e = np.sum((X @ c - k) ** 2)
+            if best is None or e < best[0]:
+                best = (e, c)
+        if best is not None and abs(best[1][1]) >= TEMPO_FIT_STEP and best[0] < TEMPO_FIT_STEP_GAIN * sse:
+            P, a = best[1][0], best[1][2] + best[1][1]
         last = a + P * n[-1] - self.onsetDelay - self.kickOffset
         self.refPos, self.refT = round(self.position(last)), last
         self.period = P
