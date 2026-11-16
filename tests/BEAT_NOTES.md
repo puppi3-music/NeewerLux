@@ -121,8 +121,22 @@ Each entry: what was tried, on which problem, and what the numbers showed.
   the 4 s exit fires at 132 s, trust is lost at 161.85 s and the window's 4/3 reading (167 BPM) takes over.
   Feels Like Us 83.7, Freestyler 77.8, light years 91.5 are as in (e), so (g) isn't kept either. It is the base for
   the next steps (scratchpad c52_audio.py).
-  Open from (g): Desire 160-180 s (trust lost after the hold exit), Feels Like Us' frozen wrong period, Freestyler
-  210-230 s, light years 60-80 s.
+  Desire 160-180 s traced (2026-11-16): base loses it the same way (24% / 10%), so it isn't (g)'s doing. The kicks
+  stop at 159.84 s; 1.7 s later, before the hold starts (2 s), the window agrees twice on 167 BPM (1.305 × the
+  beat, outside the 1% 4/3 guard) and relocks, which clears trust; the hold then keeps 167. (h) = (g) + a trusted
+  lock doesn't take a new window tempo when no kick has come for over 2 beats (the hold starts instead): Desire
+  93.5→96.2 (160 s: 24→95%), every other track, synthetic and Strobe mic the same. Left in Desire: at 171.7-172.5 s
+  a fill of 8ths (hits ±117 ms off the beat, 0.235 s apart) ended the hold through the "steady gaps that don't fit"
+  exit (steady at half a beat, read as a new track); the window's phase pull then took the grid to -48 ms on the
+  fill, so the real kicks at 173.5 s and 180 s missed the 45 ms gate. (i) = (h) + gaps within 10 ms of a whole
+  number of 16ths of the held beat aren't counted toward that exit: **Desire 99.8** (170 s 38→100%, 180 s
+  64→100%), Freestyler 77.8→78.4, I Found You 44.4→43.6, Sub Focus +0.3; synthetic the same; Strobe mic 100.0,
+  extra 21→27. Two tries that changed nothing: skipping the window pull while most of the last 8 kicks miss the
+  grid (onShare isn't filled during a hold, so it stays high), and requiring the "none fit" exit's 6 kicks to span
+  2 s (that exit wasn't the one firing). Vs base, (i) still loses Feels Like Us 87.4→83.7, Freestyler 80.2→78.4,
+  light years 93.1→91.5, so it isn't kept; it's the base for the next steps (scratchpad c56_audio.py). Desire
+  160-170 s is still +31 ms (the hold's fit takes in a -71 ms fill hit at 159.84 s).
+  Open from (i): Feels Like Us' frozen wrong period (175-194 s), Freestyler 210-230 s, light years 60-80 s.
 
 **Kick timing**
 - Timing kicks from the start of their rise instead of the 0.7 × peak crossing (for Strobe g90): unguarded it made
@@ -191,3 +205,6 @@ Everything tried on a day, kept or dropped, in order. Numbers are on / g50 / g90
 - Traced why the buggy "trusted hold" run (Savana/Love/Feels Like Us 100) broke Strobe, DURO, Age of Love: a
   permanent hold whose ±0.25-beat full resnaps let fill hits and a 16th-early kick walk the grid (see Off-beat
   flips). A tight-gate + exit version dropped: Age of Love 46.8, messy 75, g90 worse.
+- Comb-gated hold, Desire 160-190 s: (h) no window relock in the first seconds after the kicks stop when trusted,
+  (i) a fill's 8ths/16ths don't count as a new track's steady gaps: Desire 93.5→99.8, rest the same; not kept yet
+  (Feels Like Us, Freestyler, light years still behind base).
