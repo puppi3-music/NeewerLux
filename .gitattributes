@@ -1,0 +1,10 @@
+# Every text file is stored and checked out with LF line endings, on every OS,
+# whatever the local core.autocrlf setting.
+* text=auto eol=lf
+
+# cmd.exe needs CRLF in batch files
+*.bat text eol=crlf
+
+*.ico binary
+*.png binary
+*.icns binary
