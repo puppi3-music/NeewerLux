@@ -1,0 +1,793 @@
+"""Nanoleaf panel support for NeewerLux.
+
+Drives Nanoleaf panel controllers (Shapes, Canvas, Lines, Elements, Light Panels) through
+their local Open API: HTTP on port 16021 for state, UDP extControl streaming for per-panel
+colour. Standard library only.
+
+The app's send paths talk to Bleak objects directly (availableLights[i][0] is a BLEDevice,
+[1] a BleakClient, and every write is a Neewer byte string handed to write_gatt_char). This
+module provides stand-ins with the same surface, NanoleafDevice and NanoleafClient, so a
+Nanoleaf row looks like any other row to the rest of the app. NanoleafClient decodes the
+Neewer byte strings it is given and turns them into Open API calls.
+
+A row is either the whole device (one light) or one panel of it. All rows of one physical
+device share a NanoleafController, which owns the HTTP helper, the panel layout and the
+UDP stream.
+"""
+
+import asyncio
+import colorsys
+import json
+import os
+import socket
+import sys
+import time
+import urllib.error
+import urllib.request
+
+API_PORT = 16021
+STREAM_PORT = 60222  # extControl v2 always streams to this port
+
+CCT_MIN = 1200  # the Open API's colour temperature range
+CCT_MAX = 6500
+
+# Shape types in /panelLayout/layout that are not lights. Ids from the Open API docs:
+# 1 Rhythm module, 12 Shapes controller, 16 Lines connector, 19 controller cap,
+# 20 power connector. Confirm against the real Shapes set.
+NON_LIGHT_SHAPE_TYPES = {1, 12, 16, 19, 20}
+
+# SSDP service types the controllers answer to. Discovery also accepts any reply that
+# carries an nl-deviceid header, so an unlisted model still shows up.
+SSDP_ADDR = ("239.255.255.250", 1900)
+SSDP_SERVICE_TYPES = [
+    "nanoleaf_aurora:light",  # Light Panels
+    "nanoleaf:nl29",          # Canvas
+    "nanoleaf:nl42",          # Shapes hexagons
+    "nanoleaf:nl47",          # Shapes triangles
+    "nanoleaf:nl48",          # Shapes mini triangles
+    "nanoleaf:nl52",          # Elements
+    "nanoleaf:nl59",          # Lines
+    "ssdp:all",
+]
+
+ADDRESS_PREFIX = "NL:"
+PANEL_SEPARATOR = "-P"
+
+PAIRING_HINT = ("Hold the power button on the Nanoleaf controller for 5-7 seconds until the "
+                "lights flash, then pair within 30 seconds.")
+
+
+class NanoleafError(Exception):
+    pass
+
+
+# ---------------------------------------------------------------------------
+# Colour helpers
+# ---------------------------------------------------------------------------
+
+def _fallbackKelvinToRGB(kelvin):
+    """Coarse blackbody approximation, used only until the app registers its own converter."""
+    table = [(1200, (255, 82, 0)), (2000, (255, 137, 14)), (2700, (255, 167, 87)),
+             (3200, (255, 187, 120)), (4000, (255, 209, 163)), (5000, (255, 228, 206)),
+             (5600, (255, 238, 227)), (6500, (255, 254, 250))]
+    if kelvin <= table[0][0]:
+        return table[0][1]
+    for (k0, c0), (k1, c1) in zip(table, table[1:]):
+        if kelvin <= k1:
+            t = (kelvin - k0) / (k1 - k0)
+            return tuple(int(round(a + (b - a) * t)) for a, b in zip(c0, c1))
+    return table[-1][1]
+
+
+_kelvinToRGB = _fallbackKelvinToRGB
+
+
+def setKelvinConverter(fn):
+    """Use the app's Kelvin to RGB converter (convert_K_to_RGB) for per-panel CCT."""
+    global _kelvinToRGB
+    _kelvinToRGB = fn or _fallbackKelvinToRGB
+
+
+def clampKelvin(kelvin):
+    return max(CCT_MIN, min(CCT_MAX, int(kelvin)))
+
+
+def hsiToRGB(hue, sat, intensity):
+    r, g, b = colorsys.hsv_to_rgb((hue % 360) / 360.0, max(0, min(100, sat)) / 100.0,
+                                  max(0, min(100, intensity)) / 100.0)
+    return (int(round(r * 255)), int(round(g * 255)), int(round(b * 255)))
+
+
+def cctToRGB(kelvin, brightness):
+    r, g, b = _kelvinToRGB(clampKelvin(kelvin))
+    scale = max(0, min(100, brightness)) / 100.0
+    return (int(round(r * scale)), int(round(g * scale)), int(round(b * scale)))
+
+
+# ---------------------------------------------------------------------------
+# Neewer byte strings
+# ---------------------------------------------------------------------------
+
+def _checksum(values):
+    return sum(v & 255 for v in values) & 255
+
+
+def decodeCommand(data):
+    """Decode a Neewer byte string into a tuple naming what it asks for.
+
+    ("power", on) | ("hsi", hue, sat, intensity) | ("cct", kelvin, brightness)
+    | ("brightness", value) | ("temp", kelvin) | ("scene",) | ("query_power",)
+    | ("query_channel",) | ("unknown",)
+    Kelvin values are unclamped (the byte holds hundreds of K).
+    """
+    d = list(data)
+    if len(d) < 2 or d[0] != 120:
+        return ("unknown",)
+    tag = d[1]
+    try:
+        if tag == 129:
+            return ("power", d[3] == 1)
+        if tag == 134:
+            return ("hsi", d[3] | (d[4] << 8), d[5], d[6])
+        if tag == 135:
+            return ("cct", d[4] * 100, d[3])
+        if tag == 130:
+            return ("brightness", d[3])
+        if tag == 131:
+            return ("temp", d[3] * 100)
+        if tag == 136:
+            return ("scene",)
+        if tag == 133:
+            return ("query_power",)
+        if tag == 132:
+            return ("query_channel",)
+    except IndexError:
+        pass
+    return ("unknown",)
+
+
+def powerReply(on):
+    """The notify payload a Neewer light sends in answer to a power query."""
+    reply = [120, 2, 1, 1 if on else 2, 0]
+    reply[4] = _checksum(reply[:4])
+    return bytearray(reply)
+
+
+# A one-byte reply makes the app treat the channel as unknown ("---") straight away,
+# rather than retrying the query until it times out.
+CHANNEL_REPLY = bytearray([120])
+
+
+def stateBodyFor(command):
+    """The PUT /state body for a decoded command sent to a whole device, or None."""
+    kind = command[0]
+    if kind == "power":
+        return {"on": {"value": command[1]}}
+    if kind == "hsi":
+        _, hue, sat, intensity = command
+        return {"hue": {"value": max(0, min(360, hue))},
+                "sat": {"value": max(0, min(100, sat))},
+                "brightness": {"value": max(0, min(100, intensity)), "duration": 0}}
+    if kind == "cct":
+        _, kelvin, bri = command
+        return {"ct": {"value": clampKelvin(kelvin)},
+                "brightness": {"value": max(0, min(100, bri)), "duration": 0}}
+    if kind == "brightness":
+        return {"brightness": {"value": max(0, min(100, command[1])), "duration": 0}}
+    if kind == "temp":
+        return {"ct": {"value": clampKelvin(command[1])}}
+    return None
+
+
+# ---------------------------------------------------------------------------
+# UDP streaming frames
+# ---------------------------------------------------------------------------
+
+def encodeFrameV2(colours, transition=1):
+    """extControl v2 frame: panel count, then per panel id, R, G, B, W, transition (x100 ms).
+
+    colours is a list of (panelId, (r, g, b)). Counts, ids and transition are big-endian 16-bit.
+    """
+    out = bytearray(len(colours).to_bytes(2, "big"))
+    for panelId, (r, g, b) in colours:
+        out += panelId.to_bytes(2, "big")
+        out += bytes((r & 255, g & 255, b & 255, 0))
+        out += int(transition).to_bytes(2, "big")
+    return bytes(out)
+
+
+def encodeFrameV1(colours, transition=1):
+    """extControl v1 frame (Light Panels on older firmware): 8-bit counts and ids, one frame per panel."""
+    out = bytearray([len(colours) & 255])
+    for panelId, (r, g, b) in colours:
+        out += bytes((panelId & 255, 1, r & 255, g & 255, b & 255, 0, int(transition) & 255))
+    return bytes(out)
+
+
+def decodeFrameV2(data):
+    """Inverse of encodeFrameV2, for tests and the fake controller."""
+    count = int.from_bytes(data[0:2], "big")
+    out = []
+    for i in range(count):
+        p = 2 + i * 8
+        out.append((int.from_bytes(data[p:p + 2], "big"), (data[p + 2], data[p + 3], data[p + 4]),
+                    int.from_bytes(data[p + 6:p + 8], "big")))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# HTTP
+# ---------------------------------------------------------------------------
+
+def _request(method, url, body=None, timeout=3.0):
+    """Blocking HTTP call. Returns (status, parsed JSON or None). Raises NanoleafError on network errors."""
+    data = None if body is None else json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method=method)
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            status, raw = resp.status, resp.read()
+    except urllib.error.HTTPError as e:
+        status, raw = e.code, b""
+    except (urllib.error.URLError, OSError) as e:
+        reason = getattr(e, "reason", e)
+        raise NanoleafError("Could not reach the Nanoleaf at " + url.split("/api/")[0] + ": " + str(reason))
+    if not raw:
+        return status, None
+    try:
+        return status, json.loads(raw.decode("utf-8"))
+    except ValueError:
+        return status, raw.decode("utf-8", "replace")
+
+
+def parseHostPort(text, defaultPort=API_PORT):
+    """'192.168.1.20' or '192.168.1.20:16021' (or 'http://...') -> (ip, port)."""
+    text = text.strip()
+    if "://" in text:
+        text = text.split("://", 1)[1]
+    text = text.split("/", 1)[0]
+    if text.count(":") == 1:
+        host, port = text.split(":")
+        return host, int(port)
+    return text, defaultPort
+
+
+def pair(ip, port=API_PORT, timeout=5.0):
+    """Ask the controller for an auth token. The controller must be in pairing mode."""
+    status, body = _request("POST", "http://%s:%d/api/v1/new" % (ip, port), timeout=timeout)
+    if status == 403:
+        raise NanoleafError("The Nanoleaf is not in pairing mode. " + PAIRING_HINT)
+    if status not in (200, 201) or not isinstance(body, dict) or "auth_token" not in body:
+        raise NanoleafError("Pairing failed (HTTP %s)" % status)
+    return body["auth_token"]
+
+
+def normaliseDeviceId(deviceId):
+    """Device ids come as MAC-style strings; strip separators so they fit addresses and filenames."""
+    return "".join(c for c in str(deviceId) if c.isalnum()).upper()
+
+
+# ---------------------------------------------------------------------------
+# Discovery
+# ---------------------------------------------------------------------------
+
+def _parseSsdpReply(data, sender):
+    headers = {}
+    for line in data.decode("utf-8", "replace").split("\r\n")[1:]:
+        if ":" in line:
+            k, v = line.split(":", 1)
+            headers[k.strip().lower()] = v.strip()
+    st = headers.get("st", "") + headers.get("nt", "")
+    if "nl-deviceid" not in headers and "nanoleaf" not in st.lower():
+        return None
+    ip, port = sender[0], API_PORT
+    if "location" in headers:
+        ip, port = parseHostPort(headers["location"])
+    return {"id": normaliseDeviceId(headers.get("nl-deviceid", ip)),
+            "name": headers.get("nl-devicename", "Nanoleaf"),
+            "model": headers.get("st", ""),
+            "ip": ip, "port": port}
+
+
+def discover(timeout=3.0):
+    """SSDP search for Nanoleaf controllers on the local network. Blocking; run it off the GUI thread."""
+    found = {}
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+    try:
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+        sock.settimeout(0.25)
+        for st in SSDP_SERVICE_TYPES:
+            msg = ("M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\n"
+                   'MAN: "ssdp:discover"\r\nMX: 2\r\nST: ' + st + "\r\n\r\n")
+            sock.sendto(msg.encode("ascii"), SSDP_ADDR)
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            try:
+                data, sender = sock.recvfrom(4096)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            info = _parseSsdpReply(data, sender)
+            if info and info["id"] not in found:
+                found[info["id"]] = info
+    finally:
+        sock.close()
+    return list(found.values())
+
+
+def localIPv4():
+    """This machine's address on the LAN (the interface the default route uses). Sends nothing."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("10.255.255.255", 1))
+        return s.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        s.close()
+
+
+def _probe(ip, port, timeout):
+    try:
+        with socket.create_connection((ip, port), timeout=timeout):
+            pass
+    except OSError:
+        return None
+    try:
+        # any HTTP answer (a Nanoleaf gives 401 or 403 without a token) confirms it is an API server
+        _request("GET", "http://%s:%d/api/v1/" % (ip, port), timeout=1.5)
+    except NanoleafError:
+        return None
+    return {"id": "", "name": "Nanoleaf", "model": "", "ip": ip, "port": port}
+
+
+def scanHosts(hosts, port=API_PORT, timeout=0.6, workers=128):
+    """Connect to port 16021 on each host. Unlike SSDP these are outgoing connections, so a
+    firewall that drops replies to multicast searches (Windows does by default) does not block them."""
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(workers, max(1, len(hosts)))) as pool:
+        results = pool.map(lambda h: _probe(h, port, timeout), hosts)
+        return [r for r in results if r]
+
+
+def scanSubnet(port=API_PORT, timeout=0.6):
+    """Probe every address in this machine's /24 for a Nanoleaf API port. Takes about 1-2 seconds."""
+    ip = localIPv4()
+    if not ip or ip.startswith("127."):
+        return []
+    base = ip.rsplit(".", 1)[0]
+    return scanHosts([base + "." + str(i) for i in range(1, 255) if base + "." + str(i) != ip], port, timeout)
+
+
+def discoverAll(timeout=3.0, scan=True):
+    """SSDP discovery, plus a /24 address scan for controllers SSDP missed. Blocking."""
+    found = discover(timeout)
+    if scan:
+        known = {d["ip"] for d in found}
+        found += [d for d in scanSubnet() if d["ip"] not in known]
+    return found
+
+
+# ---------------------------------------------------------------------------
+# Saved devices
+# ---------------------------------------------------------------------------
+
+def defaultSavedPath():
+    return os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "light_prefs", "nanoleaf.json")
+
+
+def loadSaved(path=None):
+    """The paired devices: a list of {id, name, model, ip, port, token, perPanel[, panels]}."""
+    path = path or defaultSavedPath()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return []
+    return [d for d in data if isinstance(d, dict) and d.get("id") and d.get("token")] if isinstance(data, list) else []
+
+
+def saveSaved(devices, path=None):
+    path = path or defaultSavedPath()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(devices, f, indent=2)
+    os.replace(tmp, path)
+
+
+def addSaved(entry, path=None):
+    """Add or replace (by id) one paired device. Keeps perPanel from an existing entry."""
+    devices = loadSaved(path)
+    for i, d in enumerate(devices):
+        if d["id"] == entry["id"]:
+            merged = dict(d)
+            merged.update(entry)
+            devices[i] = merged
+            break
+    else:
+        devices.append(dict({"perPanel": False}, **entry))
+    saveSaved(devices, path)
+    return devices
+
+
+def pairAndDescribe(ip, port=API_PORT, name=None, deviceId=None):
+    """Pair, then read the device's name, model and serial. Returns a saved-device entry. Blocking."""
+    token = pair(ip, port)
+    status, info = _request("GET", "http://%s:%d/api/v1/%s/" % (ip, port, token))
+    info = info if isinstance(info, dict) else {}
+    # The serial number is the id whenever the device reports one, so pairing from discovery and
+    # pairing by IP give the same address. The discovery id is only a fallback.
+    return {"id": normaliseDeviceId(info.get("serialNo") or deviceId or ip),
+            "name": name or info.get("name") or "Nanoleaf",
+            "model": info.get("model", ""),
+            "ip": ip, "port": port, "token": token, "perPanel": False}
+
+
+# ---------------------------------------------------------------------------
+# Controller: one per physical device
+# ---------------------------------------------------------------------------
+
+def orderPanels(layout):
+    """Light panel ids from a /panelLayout/layout body, left to right (then top to bottom)."""
+    panels = [p for p in layout.get("positionData", [])
+              if p.get("shapeType") not in NON_LIGHT_SHAPE_TYPES and p.get("panelId", 0) != 0]
+    panels.sort(key=lambda p: (p.get("x", 0), -p.get("y", 0), p["panelId"]))
+    return [p["panelId"] for p in panels]
+
+
+class NanoleafController:
+    """Shared by all rows of one device: HTTP, layout, power and the UDP stream."""
+
+    def __init__(self, entry, savedPath=None):
+        self.id = entry["id"]
+        self.name = entry.get("name") or "Nanoleaf"
+        self.model = entry.get("model", "")
+        self.ip = entry["ip"]
+        self.port = int(entry.get("port", API_PORT))
+        self.token = entry["token"]
+        self.perPanel = bool(entry.get("perPanel", False))
+        self.panels = list(entry.get("panels", []))  # ordered light panel ids, cached from the layout
+        self.savedPath = savedPath
+        self.transition = 1  # stream transition time, in 100 ms steps
+        self.streamPort = STREAM_PORT  # tests point this at the fake
+
+        self._clients = set()
+        self._layoutLoaded = False
+
+        # whole-device state, latest-wins: while one PUT is in flight later bodies merge into _pendingState
+        self._stateBusy = False
+        self._pendingState = None
+
+        # per-panel streaming
+        self.streaming = False
+        self._streamVersion = "v2"
+        self._streamAddr = None
+        self._sock = None
+        self._entering = None  # future while entering stream mode
+        self._saved = None  # (effect name, state) to restore when streaming ends
+        self.panelColours = {}  # panelId -> (r, g, b) as last requested
+        self.panelOn = {}  # panelId -> bool
+        self._flushHandle = None
+        self._inflight = 0
+
+    # -- addresses -----------------------------------------------------------
+
+    @property
+    def address(self):
+        return ADDRESS_PREFIX + self.id
+
+    def panelAddress(self, panelId):
+        return self.address + PANEL_SEPARATOR + str(panelId)
+
+    def devices(self):
+        """The rows for this device: one for the whole device, or one per panel in per-panel mode."""
+        if self.perPanel and self.panels:
+            return [NanoleafDevice(self, pid, n + 1) for n, pid in enumerate(self.panels)]
+        return [NanoleafDevice(self)]
+
+    # -- HTTP ----------------------------------------------------------------
+
+    def _url(self, path):
+        return "http://%s:%d/api/v1/%s%s" % (self.ip, self.port, self.token, path)
+
+    async def http(self, method, path, body=None):
+        return await asyncio.to_thread(_request, method, self._url(path), body)
+
+    async def loadLayout(self):
+        status, layout = await self.http("GET", "/panelLayout/layout")
+        if status == 401 or status == 403:
+            raise NanoleafError("The Nanoleaf rejected the saved token; pair it again.")
+        if status != 200 or not isinstance(layout, dict):
+            raise NanoleafError("Could not read the panel layout (HTTP %s)" % status)
+        panels = orderPanels(layout)
+        changed = panels != self.panels
+        self.panels = panels
+        self._layoutLoaded = True
+        if changed and self.savedPath is not False:
+            self._savePanels()
+        return panels
+
+    def _savePanels(self):
+        try:
+            devices = loadSaved(self.savedPath)
+            for d in devices:
+                if d["id"] == self.id:
+                    d["panels"] = self.panels
+                    saveSaved(devices, self.savedPath)
+                    break
+        except OSError:
+            pass
+
+    # -- connection refcount --------------------------------------------------
+
+    async def open(self, client):
+        if not self._clients or not self._layoutLoaded:
+            await self.loadLayout()  # also checks the device is reachable and the token is good
+        self._clients.add(client)
+
+    async def close(self, client):
+        self._clients.discard(client)
+        if not self._clients:
+            await self.stopStreaming()
+
+    # -- whole device ---------------------------------------------------------
+
+    async def putState(self, body):
+        """PUT /state, latest-wins. If a PUT is in flight this merges body into the next one and returns."""
+        if any(k in body for k in ("hue", "sat", "ct")) and self.streaming:
+            # a colour sent to the whole device ends the stream on the controller
+            self._endStream(restore=False)
+        if self._stateBusy:
+            if self._pendingState is None:
+                self._pendingState = {}
+            self._pendingState.update(body)
+            return
+        self._stateBusy = True
+        try:
+            while body:
+                status, _ = await self.http("PUT", "/state", body)
+                if status >= 400:
+                    raise NanoleafError("The Nanoleaf refused the state change (HTTP %s)" % status)
+                body, self._pendingState = self._pendingState, None
+        finally:
+            self._stateBusy = False
+            self._pendingState = None
+
+    async def getPower(self):
+        status, body = await self.http("GET", "/state/on")
+        if status != 200 or not isinstance(body, dict):
+            raise NanoleafError("Could not read the power state (HTTP %s)" % status)
+        return bool(body.get("value"))
+
+    # -- per panel --------------------------------------------------------------
+
+    async def setPanel(self, panelId, rgb=None, on=None):
+        """Set a panel's colour and/or power. Writes in the same event-loop turn go out as one datagram."""
+        if rgb is not None:
+            self.panelColours[panelId] = tuple(rgb)
+            if on is None:
+                on = True
+        if on is not None:
+            self.panelOn[panelId] = on
+        # Count writes still in progress so a frame goes out only once all of them have landed:
+        # writes waiting for stream mode to start resume a loop turn or two later than the first.
+        self._inflight += 1
+        try:
+            await self._ensureStreaming()
+        finally:
+            self._inflight -= 1
+            if self.streaming:
+                self._scheduleFlush()
+
+    def _scheduleFlush(self):
+        if self._flushHandle is None and self._inflight == 0:
+            self._flushHandle = asyncio.get_running_loop().call_soon(self._flush)
+
+    def frameColours(self):
+        out = []
+        for pid in self.panels or sorted(self.panelColours):
+            if pid not in self.panelColours and pid not in self.panelOn:
+                continue
+            rgb = self.panelColours.get(pid, (255, 255, 255)) if self.panelOn.get(pid, True) else (0, 0, 0)
+            out.append((pid, rgb))
+        return out
+
+    def _flush(self):
+        self._flushHandle = None
+        if not self.streaming or self._sock is None:
+            return
+        colours = self.frameColours()
+        if not colours:
+            return
+        encode = encodeFrameV2 if self._streamVersion == "v2" else encodeFrameV1
+        try:
+            self._sock.sendto(encode(colours, self.transition), self._streamAddr)
+        except OSError:
+            pass  # a dropped frame; the next one carries every panel again
+
+    async def _ensureStreaming(self):
+        if self.streaming:
+            return
+        if self._entering is None:
+            self._entering = asyncio.get_running_loop().create_future()
+            try:
+                await self._startStreaming()
+                self._entering.set_result(True)
+            except Exception as e:
+                self._entering.set_exception(e)
+                self._entering.exception()  # mark retrieved; waiters re-raise it
+                raise
+            finally:
+                self._entering = None
+        else:
+            await asyncio.shield(self._entering)
+
+    async def _startStreaming(self):
+        if self._saved is None:
+            status, effect = await self.http("GET", "/effects/select")
+            status2, state = await self.http("GET", "/state")
+            self._saved = (effect if isinstance(effect, str) else None,
+                           state if isinstance(state, dict) else {})
+        # stream colours are scaled by the global brightness, so stream at full brightness
+        await self.http("PUT", "/state", {"on": {"value": True}, "brightness": {"value": 100, "duration": 0}})
+        status, body = await self.http("PUT", "/effects", {"write": {
+            "command": "display", "animType": "extControl", "extControlVersion": "v2"}})
+        if status < 300:
+            self._streamVersion = "v2"
+            self._streamAddr = (self.ip, self.streamPort)
+        else:
+            status, body = await self.http("PUT", "/effects", {"write": {
+                "command": "display", "animType": "extControl"}})
+            if status >= 300 or not isinstance(body, dict):
+                raise NanoleafError("The Nanoleaf would not enter streaming mode (HTTP %s)" % status)
+            self._streamVersion = "v1"
+            self._streamAddr = (body.get("streamControlIpAddr", self.ip), int(body.get("streamControlPort", self.streamPort)))
+        if self._sock is None:
+            self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.streaming = True
+
+    def _endStream(self, restore):
+        self.streaming = False
+        if self._flushHandle is not None:
+            self._flushHandle.cancel()
+            self._flushHandle = None
+        if self._sock is not None:
+            self._sock.close()
+            self._sock = None
+        if not restore:
+            self._saved = None
+
+    async def stopStreaming(self):
+        """Leave stream mode and put back the effect and brightness from before it started."""
+        wasStreaming = self.streaming
+        self._endStream(restore=True)
+        saved, self._saved = self._saved, None
+        if not wasStreaming or saved is None:
+            return
+        effect, state = saved
+        body = {}
+        if effect and not effect.startswith("*"):
+            await self.http("PUT", "/effects", {"select": effect})
+        else:
+            # *Solid* / *Static* / *Dynamic* cannot be re-selected by name; put the colour back instead
+            if state.get("colorMode") == "ct" and "ct" in state:
+                body["ct"] = {"value": state["ct"].get("value")}
+            elif "hue" in state:
+                body["hue"] = {"value": state["hue"].get("value")}
+                body["sat"] = {"value": state.get("sat", {}).get("value", 100)}
+        if "brightness" in state:
+            body["brightness"] = {"value": state["brightness"].get("value"), "duration": 0}
+        if "on" in state:
+            body["on"] = {"value": bool(state["on"].get("value"))}
+        if body:
+            await self.http("PUT", "/state", body)
+
+
+# ---------------------------------------------------------------------------
+# Bleak stand-ins
+# ---------------------------------------------------------------------------
+
+class NanoleafDevice:
+    """Stands in for a BLEDevice in availableLights[i][0]."""
+
+    def __init__(self, controller, panelId=None, panelNumber=None):
+        self.controller = controller
+        self.panelId = panelId
+        self.panelNumber = panelNumber
+
+    @property
+    def name(self):
+        if self.panelId is None:
+            return self.controller.name
+        return "%s panel %d" % (self.controller.name, self.panelNumber or 0)
+
+    @property
+    def address(self):
+        if self.panelId is None:
+            return self.controller.address
+        return self.controller.panelAddress(self.panelId)
+
+    @property
+    def ip(self):
+        return self.controller.ip
+
+    @property
+    def token(self):
+        return self.controller.token
+
+    def __repr__(self):
+        return "NanoleafDevice(%s, %s)" % (self.address, self.name)
+
+
+class NanoleafClient:
+    """Stands in for a BleakClient in availableLights[i][1]."""
+
+    def __init__(self, device, *args, **kwargs):
+        self.device = device
+        self.controller = device.controller
+        self.address = device.address
+        self._connected = False
+        self._notify = None
+
+    @property
+    def is_connected(self):
+        return self._connected
+
+    async def connect(self, **kwargs):
+        await self.controller.open(self)
+        self._connected = True
+        return True
+
+    async def disconnect(self):
+        if self._connected:
+            self._connected = False
+            await self.controller.close(self)
+        return True
+
+    async def start_notify(self, uuid, callback, **kwargs):
+        self._notify = (uuid, callback)
+
+    async def stop_notify(self, uuid):
+        self._notify = None
+
+    def _reply(self, payload):
+        if self._notify is not None:
+            uuid, callback = self._notify
+            callback(uuid, payload)
+
+    async def write_gatt_char(self, uuid, data, response=False):
+        if not self._connected:
+            raise NanoleafError("Not connected to " + self.address)
+        command = decodeCommand(data)
+        kind = command[0]
+
+        if kind == "query_power":
+            pid = self.device.panelId
+            if pid is not None and pid in self.controller.panelOn:
+                on = self.controller.panelOn[pid]
+            else:
+                on = await self.controller.getPower()
+            self._reply(powerReply(on))
+            return
+        if kind == "query_channel":
+            self._reply(CHANNEL_REPLY)
+            return
+
+        if self.device.panelId is None:
+            body = stateBodyFor(command)
+            if body is not None:
+                await self.controller.putState(body)
+            return
+
+        pid = self.device.panelId
+        if kind == "power":
+            await self.controller.setPanel(pid, on=command[1])
+        elif kind == "hsi":
+            await self.controller.setPanel(pid, rgb=hsiToRGB(command[1], command[2], command[3]))
+        elif kind == "cct":
+            await self.controller.setPanel(pid, rgb=cctToRGB(command[1], command[2]))
+        # brightness-only, temp-only and scenes are not sent to panels: the app only splits
+        # commands for CCT-only lights, which a Nanoleaf never is.

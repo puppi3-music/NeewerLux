@@ -31,11 +31,36 @@ Every send path in [NeewerLux.py](NeewerLux.py) calls `availableLights[i][1].wri
 | `[120,136,..]` | Neewer scene | ignored | ignored |
 | `[120,133,0,253]` / `[120,132,0,252]` | power / channel query | answer through the notify callback from `GET /state/on`; channel stays `---` | same, from the controller |
 
-Addresses: `NL:<device id from discovery>` for the controller and `NL:<device id>-P<panelId>` for a panel. They work unchanged as prefs sidecar filenames, alias targets, snapshot preset keys and `--light` values. Check during implementation that `-P` does not collide with the separators in `parseBatchString` ([NeewerLux.py:5969](NeewerLux.py#L5969)).
+Addresses: `NL:<id>` for the controller and `NL:<id>-P<panelId>` for a panel, where `<id>` is the device's serial number (`serialNo` from `GET /api/v1/<token>/`) with separators stripped and upper-cased. The serial is used rather than the discovery id so that pairing from discovery and pairing by IP give the same address; the discovery id is only a fallback. They work unchanged as prefs sidecar filenames, alias targets, snapshot preset keys and `--light` values. **Phase 2 task (decided):** `parseBatchString` ([NeewerLux.py:5969](NeewerLux.py#L5969)) splits on `:`, so a batch segment `NL:S12345:HSI:...` reads the light as `NL`. Teach it the `NL:` prefix (rejoin `parts[0:2]` as the light id when `parts[0]` is `NL`); the address format stays as it is. Light indexes are unaffected.
 
 No new dependencies: HTTP with `urllib` run through `asyncio.to_thread`, discovery and streaming with `socket`.
 
-## Phase 1: `neewerlux_nanoleaf.py` and its tests (no app changes)
+## Phase 1: `neewerlux_nanoleaf.py` and its tests (no app changes) — DONE, not yet run on hardware
+
+Status: implemented on branch `nanoleaf-support`, 24 tests passing, not yet committed.
+
+Hardware check (2026-11-16, `tests/nanoleaf_hw_check.py` against "Shapes AC58", model NL42, firmware not recorded, two triangles plus controller): pairing, whole-device HSI and CCT, the power query, per-panel streaming over extControl v2, left-to-right order and restoring the previous effect all worked. Layout confirmed: Shapes triangles are shapeType 8; the controller is shapeType 12 at panelId 0 and is skipped. This set has no connector or power-connector pieces, so types 16, 19 and 20 are still unconfirmed. 21.5 fps is the script's own pacing (`asyncio.sleep(1/30)` on Windows timer granularity), not a device limit; a real ceiling still needs measuring under sound-reactive in Phase 3. `--discover` found the controller at 10.0.0.152 (whether by SSDP or the address scan was not recorded).
+
+What was built, and where it differs from the original outline below:
+- `neewerlux_nanoleaf.py` as outlined. Additions:
+  - `decodeCommand()` also handles the split brightness-only (`130`) and temp-only (`131`) commands; whole-device rows send them as `/state` changes, panel rows ignore them (Nanoleaf rows are never CCT-only, so the app never splits for them).
+  - Channel query answers at once with a one-byte payload, so the app shows `---` without waiting for retries to time out.
+  - Whole-device `/state` writes are latest-wins: while one PUT is in flight, later bodies merge into the next one, so animations do not queue behind slow HTTP.
+  - A colour sent to a panel turns that panel on (the parallel write path never sends "on" first).
+  - Entering streaming sets brightness to 100 and turns the device on (stream colours are scaled by global brightness). Restore re-selects the saved effect by name; for `*Solid*`-style effects that cannot be re-selected it puts back the saved hue/sat or ct instead. Brightness and on/off are always restored.
+  - Falls back to extControl v1 (port from the PUT response, v1 frame format) when the controller refuses v2.
+  - Frames go out when the last in-flight panel write finishes, not on a plain `call_soon`: writes waiting for stream mode to start resume a loop turn or two later, and a plain `call_soon` split one frame into two datagrams.
+  - Every frame carries every panel that has a colour, so a dropped datagram does not leave a panel stale.
+  - `nanoleaf.json` entries also store `panels`, the ordered panel ids from the last layout read, so per-panel rows can be listed at startup while the device is offline. No `.gitignore` change was needed: `light_prefs/*` already covers it.
+  - `setKelvinConverter(fn)` registers `convert_K_to_RGB`; a coarse built-in table is used until then.
+  - Panels are ordered by x, then top to bottom (higher y first) at equal x.
+  - Non-light shape types filtered: 1 (Rhythm), 12 (Shapes controller), 16 (Lines connector), 19 (controller cap), 20 (power connector), plus panel id 0. From the Open API docs; still to confirm on the Shapes set.
+- Discovery: Windows Firewall (on by default) drops SSDP replies, because they come from the device's address rather than the multicast address the search went to. `discoverAll()` therefore runs SSDP and then a /24 scan (`scanSubnet` / `scanHosts`: TCP connect to 16021 plus one HTTP request, ~1–2 s, outgoing only so the firewall allows it). Scan results have no name or id until paired; the id comes from `serialNo` at pairing anyway. The Phase 2 dialog should call `discoverAll()`.
+- `tests/fake_nanoleaf.py` as outlined; runnable by hand (`pair` toggles the button state, `state` prints it).
+- `tests/test_nanoleaf.py` as outlined, plus tests for v1 fallback, restoring a `*Solid*` colour, a whole-device colour ending the stream and re-entering it, and the latest-wins merging.
+- New `tests/nanoleaf_hw_check.py`: the hardware check from verification step 8 (discover, pair or reuse the saved token, print the raw layout with shape types, whole-device colours, panels one at a time left to right, rainbow with frame rate, restore). Saves to the repo's `light_prefs/nanoleaf.json`.
+
+Original outline:
 
 New file `neewerlux_nanoleaf.py`:
 - `discover(timeout)`: SSDP M-SEARCH for the Nanoleaf service types, returning name, device id, ip and port from the `Location`, `nl-devicename` and `nl-deviceid` headers.
@@ -85,7 +110,7 @@ Nothing changes in the worker thread, `writeToLight`, `parallelWriteToLights`, t
 
 ## Before starting
 
-The working tree has uncommitted changes in `NeewerLux.py`, `neewerlux_ui.py` and three other files, on branch `rust-rewrite-plan`. Commit or stash them, then do this work on a new `nanoleaf-support` branch.
+Done: work is on branch `nanoleaf-support`, made from `rust-rewrite-plan` with a clean tree.
 
 ## Verification
 
@@ -96,4 +121,4 @@ The working tree has uncommitted changes in `NeewerLux.py`, `neewerlux_ui.py` an
 5. Mixed: a Neewer light and the fake in one animation, with no stutter on the Neewer side.
 6. Headless: `--nanoleaf_pair`, then `--http`, then drive the device through the HTTP API and the web UI.
 7. Restart the app: the saved device reappears without pairing, with its custom name and preferred ID.
-8. On the Shapes set: discovery, pairing, colour accuracy for HSI and CCT, per-panel left-to-right order, controller and connector pieces excluded from the rows, and frame rate during sound-reactive. Do this after Phase 1 too (a short script that pairs, reads the layout and streams a test pattern) so protocol surprises show up before the app integration.
+8. On the Shapes set: discovery, pairing, colour accuracy for HSI and CCT, per-panel left-to-right order, controller and connector pieces excluded from the rows, and frame rate during sound-reactive. Do this after Phase 1 too, with `tests/nanoleaf_hw_check.py` (`--discover`, then `<ip>`), so protocol surprises show up before the app integration.
