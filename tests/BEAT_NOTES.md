@@ -136,7 +136,20 @@ Each entry: what was tried, on which problem, and what the numbers showed.
   2 s (that exit wasn't the one firing). Vs base, (i) still loses Feels Like Us 87.4→83.7, Freestyler 80.2→78.4,
   light years 93.1→91.5, so it isn't kept; it's the base for the next steps (scratchpad c56_audio.py). Desire
   160-170 s is still +31 ms (the hold's fit takes in a -71 ms fill hit at 159.84 s).
-  Open from (i): Feels Like Us' frozen wrong period (175-194 s), Freestyler 210-230 s, light years 60-80 s.
+  Open from (i), since traced: Feels Like Us' frozen wrong period (175-194 s), Freestyler 210-230 s, light years 60-80 s.
+  Feels Like Us 173-175 s traced (2026-11-16): the hold ends at 173.22 s on a kick that fits, then update()'s 30%
+  blend pulls the period 131.9→133.4→134.4 BPM in two calls toward the window's 137 reading. The window still holds
+  the breakdown, and 137 is 3.9% off, just inside the 4% relock band. The trusted-hold restart at 175.22 s (no
+  on-grid kick for 2 s) then freezes 134.4, and the kicks after it are ~200 ms off that grid. (j) = (i) + no blend
+  when trusted, within TEMPO_WINDOW of a trusted hold ending on a kick that fits, and the reading is more than 2%
+  from the current period. Feels Like Us 83.7→90.5 (base 87.4); Sub Focus 49.0→47.9 (100-140 s, its tempo ramp
+  141→167, already 21-52% on in every variant); the other 16 tracks, synthetic and Strobe mic exactly as (i).
+  Dropped on the way: no blend for any trusted lock whose reading is more than 2% from basePeriod (Sub Focus 30.0:
+  it locks ~169 and only the blend carries it to 174); the same at 3.5% (Feels Like Us only 84.0, Sub Focus 30.0);
+  2% from the current period for any trusted lock (synthetic oddIntro136/mic 85.8→10.2: a wrongly trusted 181 lock
+  on the dotted claps escapes only by the blend walking it to a reading 4% off). (j) is still not kept: Freestyler
+  80.2→78.4 and light years 93.1→91.5 are behind base (scratchpad c60_audio.py).
+  Open from (j): Freestyler 210-230 s, light years 60-80 s.
 
 **Kick timing**
 - Timing kicks from the start of their rise instead of the 0.7 × peak crossing (for Strobe g90): unguarded it made
@@ -208,3 +221,6 @@ Everything tried on a day, kept or dropped, in order. Numbers are on / g50 / g90
 - Comb-gated hold, Desire 160-190 s: (h) no window relock in the first seconds after the kicks stop when trusted,
   (i) a fill's 8ths/16ths don't count as a new track's steady gaps: Desire 93.5→99.8, rest the same; not kept yet
   (Feels Like Us, Freestyler, light years still behind base).
+- Comb-gated hold, Feels Like Us 175-194 s: (j) right after a trusted hold, a window reading 2-4% off doesn't blend
+  into the period: Feels Like Us 83.7→90.5, Sub Focus -1.1, rest/synthetic/Strobe mic the same; not kept yet
+  (Freestyler, light years still behind base).
