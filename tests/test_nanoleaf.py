@@ -1,6 +1,6 @@
 """Tests for neewerlux_nanoleaf. Run from the repo root:
 
-    uv run python -m unittest tests.test_nanoleaf
+    uv run --no-sync python -m unittest tests.test_nanoleaf
 """
 
 import asyncio
@@ -178,10 +178,55 @@ class FakeControllerTests(unittest.TestCase):
 
     def test_unreachable(self):
         c = nl.NanoleafController({"id": "X", "ip": "127.0.0.1", "port": 1, "token": "t"}, savedPath=False)
+        c.relocateHosts = []  # nowhere else to look
         client = nl.NanoleafClient(nl.NanoleafDevice(c))
         with self.assertRaises(nl.NanoleafError):
             asyncio.run(client.connect())
         self.assertFalse(client.is_connected)
+
+    def test_find_moved_device(self):
+        entry = {"id": "S12345", "ip": "127.0.0.2", "port": self.fake.port, "token": TOKEN}
+        self.assertEqual(nl.findMovedDevice(entry, hosts=["127.0.0.1"]), ("127.0.0.1", self.fake.port))
+        # a different serial, or a token this device does not know, is not a match
+        self.assertIsNone(nl.findMovedDevice(dict(entry, id="OTHER"), hosts=["127.0.0.1"]))
+        self.assertIsNone(nl.findMovedDevice(dict(entry, token="wrong"), hosts=["127.0.0.1"]))
+        self.assertIsNone(nl.findMovedDevice(entry, hosts=[]))
+
+    def test_connect_recovers_after_ip_change(self):
+        entry = {"id": "S12345", "name": "Fake Shapes", "ip": "127.0.0.2", "port": self.fake.port,
+                 "token": TOKEN, "perPanel": False}
+        nl.saveSaved([entry], self.savedPath)
+        c = nl.NanoleafController(entry, savedPath=self.savedPath)
+        c.relocateHosts = ["127.0.0.1"]
+
+        async def run():
+            # two rows connecting at once share one search
+            a, b = nl.NanoleafClient(c.devices()[0]), nl.NanoleafClient(nl.NanoleafDevice(c))
+            await asyncio.gather(a.connect(), b.connect())
+            self.assertTrue(a.is_connected and b.is_connected)
+            await a.write_gatt_char(UUID, ON)
+            await a.disconnect()
+            await b.disconnect()
+
+        asyncio.run(run())
+        self.assertEqual(c.ip, "127.0.0.1")
+        self.assertEqual(nl.loadSaved(self.savedPath)[0]["ip"], "127.0.0.1")
+        self.assertTrue(self.fake.state["on"]["value"])
+
+    def test_no_second_search_within_interval(self):
+        c = nl.NanoleafController({"id": "S12345", "ip": "127.0.0.2", "port": self.fake.port, "token": TOKEN},
+                                  savedPath=False)
+        c.relocateHosts = []
+
+        async def run():
+            self.assertFalse(await c.relocate())
+            c.relocateHosts = ["127.0.0.1"]
+            self.assertFalse(await c.relocate())  # too soon after the last search
+            c.relocateInterval = 0
+            self.assertTrue(await c.relocate())
+
+        asyncio.run(run())
+        self.assertEqual(c.ip, "127.0.0.1")
 
     def test_whole_device(self):
         c = self.makeController()
@@ -348,6 +393,52 @@ class FakeControllerTests(unittest.TestCase):
             await client.disconnect()
 
         asyncio.run(run())
+
+
+class AddressTests(unittest.TestCase):
+    def test_address_helpers(self):
+        self.assertTrue(nl.isAddress("nl:s1-p5"))
+        self.assertFalse(nl.isAddress("D0:A8:11:22:33:44"))
+        self.assertEqual(nl.deviceIdFromAddress("NL:S23220H3960"), "S23220H3960")
+        self.assertEqual(nl.deviceIdFromAddress("nl:s1-p5001"), "S1")
+
+    def test_update_saved(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "nanoleaf.json")
+            nl.saveSaved([{"id": "A", "ip": "1.1.1.1", "token": "t"}, {"id": "B", "ip": "2.2.2.2", "token": "u"}], path)
+            self.assertTrue(nl.updateSaved("B", path, ip="2.2.2.9"))
+            self.assertFalse(nl.updateSaved("C", path, ip="3.3.3.3"))
+            self.assertEqual([x["ip"] for x in nl.loadSaved(path)], ["1.1.1.1", "2.2.2.9"])
+
+
+class BatchStringTests(unittest.TestCase):
+    """parseBatchString in NeewerLux.py learns the NL: prefix."""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            import NeewerLux
+        except Exception as e:  # bleak or PySide missing
+            raise unittest.SkipTest("NeewerLux.py could not be imported: %s" % e)
+        cls.app = NeewerLux
+
+    def parse(self, text):
+        return self.app.parseBatchString(text)
+
+    def test_nanoleaf_addresses(self):
+        self.assertEqual(self.parse("NL:S1:HSI:0:100:50"),
+                         [{"light": "NL:S1", "mode": "HSI", "hue": 0, "sat": 100, "bri": 50}])
+        self.assertEqual(self.parse("NL:S1-P5:OFF"), [{"light": "NL:S1-P5", "mode": "OFF"}])
+        self.assertEqual(self.parse("nl:S23220H3960:CCT:5600:80"),
+                         [{"light": "NL:S23220H3960", "mode": "CCT", "temp": 56, "bri": 80}])
+
+    def test_mixed_with_other_forms(self):
+        cmds = self.parse("1:HSI:240:100:50;NL:S1:ON;D0:A8:11:22:33:44:CCT:32:20;*:OFF")
+        self.assertEqual([c["light"] for c in cmds], ["1", "NL:S1", "D0:A8:11:22:33:44", "*"])
+        self.assertEqual([c["mode"] for c in cmds], ["HSI", "ON", "CCT", "OFF"])
+
+    def test_bare_prefix_is_skipped(self):
+        self.assertEqual(self.parse("NL:ON"), [])
 
 
 if __name__ == "__main__":

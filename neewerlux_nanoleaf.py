@@ -61,6 +61,10 @@ class NanoleafError(Exception):
     pass
 
 
+class NanoleafUnreachable(NanoleafError):
+    """Nothing answered at the address (as opposed to an HTTP error from the device)."""
+
+
 # ---------------------------------------------------------------------------
 # Colour helpers
 # ---------------------------------------------------------------------------
@@ -232,7 +236,7 @@ def _request(method, url, body=None, timeout=3.0):
         status, raw = e.code, b""
     except (urllib.error.URLError, OSError) as e:
         reason = getattr(e, "reason", e)
-        raise NanoleafError("Could not reach the Nanoleaf at " + url.split("/api/")[0] + ": " + str(reason))
+        raise NanoleafUnreachable("Could not reach the Nanoleaf at " + url.split("/api/")[0] + ": " + str(reason))
     if not raw:
         return status, None
     try:
@@ -398,6 +402,17 @@ def saveSaved(devices, path=None):
     os.replace(tmp, path)
 
 
+def updateSaved(deviceId, path=None, **fields):
+    """Change fields of one saved device in place. Returns False if it is not in the file."""
+    devices = loadSaved(path)
+    for d in devices:
+        if d["id"] == deviceId:
+            d.update(fields)
+            saveSaved(devices, path)
+            return True
+    return False
+
+
 def addSaved(entry, path=None):
     """Add or replace (by id) one paired device. Keeps perPanel from an existing entry."""
     devices = loadSaved(path)
@@ -426,6 +441,37 @@ def pairAndDescribe(ip, port=API_PORT, name=None, deviceId=None):
             "ip": ip, "port": port, "token": token, "perPanel": False}
 
 
+def isAddress(address):
+    """True for a Nanoleaf row address (NL:<id> or NL:<id>-P<panel>), any case."""
+    return str(address).upper().startswith(ADDRESS_PREFIX)
+
+
+def deviceIdFromAddress(address):
+    """'NL:S123-P5001' -> 'S123'."""
+    rest = str(address)[len(ADDRESS_PREFIX):].upper()
+    return rest.split(PANEL_SEPARATOR, 1)[0]
+
+
+def findMovedDevice(entry, hosts=None, port=None, timeout=0.6):
+    """Look for a saved device that has a new IP address (DHCP). Blocking.
+
+    Scans hosts (default: this machine's /24) for the API port, asks each hit for its
+    info with the saved token, and returns (ip, port) for the one whose serial matches
+    entry["id"], or None. A device that does not know the token answers 401 and is skipped.
+    """
+    port = int(port or entry.get("port", API_PORT))
+    found = scanHosts(hosts, port, timeout) if hosts is not None else scanSubnet(port, timeout)
+    for hit in found:
+        try:
+            status, info = _request("GET", "http://%s:%d/api/v1/%s/" % (hit["ip"], hit["port"], entry["token"]),
+                                    timeout=2.0)
+        except NanoleafError:
+            continue
+        if status == 200 and isinstance(info, dict) and normaliseDeviceId(info.get("serialNo", "")) == entry["id"]:
+            return hit["ip"], hit["port"]
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Controller: one per physical device
 # ---------------------------------------------------------------------------
@@ -451,6 +497,10 @@ class NanoleafController:
         self.perPanel = bool(entry.get("perPanel", False))
         self.panels = list(entry.get("panels", []))  # ordered light panel ids, cached from the layout
         self.savedPath = savedPath
+        self.relocateHosts = None  # hosts to search when the device moves; None = this machine's /24 (tests narrow it)
+        self.relocateInterval = 60.0  # seconds between searches, so connect retries do not rescan every time
+        self._lastRelocate = None
+        self._relocating = None  # future while a search runs, shared by rows connecting at once
         self.transition = 1  # stream transition time, in 100 ms steps
         self.streamPort = STREAM_PORT  # tests point this at the fake
 
@@ -512,20 +562,61 @@ class NanoleafController:
 
     def _savePanels(self):
         try:
-            devices = loadSaved(self.savedPath)
-            for d in devices:
-                if d["id"] == self.id:
-                    d["panels"] = self.panels
-                    saveSaved(devices, self.savedPath)
-                    break
+            updateSaved(self.id, self.savedPath, panels=self.panels)
         except OSError:
             pass
+
+    def update(self, entry):
+        """Take new details from the saved file (after pairing again, or an IP fix)."""
+        self.name = entry.get("name") or self.name
+        self.model = entry.get("model", self.model)
+        self.ip = entry["ip"]
+        self.port = int(entry.get("port", API_PORT))
+        self.token = entry["token"]
+
+    # -- IP changes -------------------------------------------------------------
+
+    async def relocate(self):
+        """Search the network for this device at a new address. Returns True if it moved.
+
+        Searches at most once per relocateInterval; rows connecting at the same time share one search."""
+        if self._relocating is not None:
+            return await asyncio.shield(self._relocating)
+        now = time.monotonic()
+        if self._lastRelocate is not None and now - self._lastRelocate < self.relocateInterval:
+            return False
+        self._lastRelocate = now
+        self._relocating = asyncio.get_running_loop().create_future()
+        moved = False
+        try:
+            entry = {"id": self.id, "token": self.token, "port": self.port}
+            hit = await asyncio.to_thread(findMovedDevice, entry, self.relocateHosts)
+            if hit and hit != (self.ip, self.port):
+                self.ip, self.port = hit
+                moved = True
+                if self.savedPath is not False:
+                    try:
+                        updateSaved(self.id, self.savedPath, ip=self.ip, port=self.port)
+                    except OSError:
+                        pass
+        finally:
+            self._relocating.set_result(moved)
+            self._relocating = None
+        return moved
 
     # -- connection refcount --------------------------------------------------
 
     async def open(self, client):
         if not self._clients or not self._layoutLoaded:
-            await self.loadLayout()  # also checks the device is reachable and the token is good
+            tried = (self.ip, self.port)
+            try:
+                await self.loadLayout()  # also checks the device is reachable and the token is good
+            except NanoleafUnreachable:
+                # DHCP may have given it a new address: find it by serial with the saved token.
+                # Another row may have found it while this one was failing; then just retry.
+                if (self.ip, self.port) == tried and not await self.relocate():
+                    raise
+                await self.loadLayout()
         self._clients.add(client)
 
     async def close(self, client):

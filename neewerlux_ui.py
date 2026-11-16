@@ -604,6 +604,91 @@ class ColorPickDialog(QDialog):
         return self._hue, self._sat
 
 
+class NanoleafPairDialog(QDialog):
+    """Find and pair a Nanoleaf panel controller. Does no networking itself: it asks for a search
+    or a pairing through its signals, and the caller reports back with setFound / setStatus / setBusy."""
+
+    searchRequested = customSignal()
+    pairRequested = customSignal(str)  # "ip" or "ip:port"
+
+    def __init__(self, hint, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add Nanoleaf")
+        self.setMinimumWidth(420)
+        lay = QVBoxLayout(self)
+
+        intro = QLabel("The controller must be on Wi-Fi (a set added only over Thread has no local API). "
+                       "Pick it from the list or type its IP address.\n\n" + hint)
+        intro.setWordWrap(True)
+        lay.addWidget(intro)
+
+        listRow = QHBoxLayout()
+        listRow.addWidget(QLabel("Found on this network:"), 1)
+        self.searchButton = QPushButton("Search again")
+        self.searchButton.clicked.connect(self.searchRequested.emit)
+        listRow.addWidget(self.searchButton)
+        lay.addLayout(listRow)
+
+        self.foundList = QListWidget()
+        self.foundList.setMinimumHeight(110)
+        self.foundList.currentItemChanged.connect(self._picked)
+        self.foundList.itemDoubleClicked.connect(lambda _item: self._pair())
+        lay.addWidget(self.foundList)
+
+        form = QFormLayout()
+        self.addressField = QLineEdit()
+        self.addressField.setPlaceholderText("e.g. 192.168.1.50 or 192.168.1.50:16021")
+        self.addressField.returnPressed.connect(self._pair)
+        form.addRow("IP address:", self.addressField)
+        lay.addLayout(form)
+
+        self.statusLabel = QLabel("")
+        self.statusLabel.setWordWrap(True)
+        lay.addWidget(self.statusLabel)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Close)
+        self.pairButton = bb.addButton("Pair", QDialogButtonBox.AcceptRole)
+        self.pairButton.clicked.connect(self._pair)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    def _picked(self, item, _previous=None):
+        if item is not None and item.data(Qt.UserRole):
+            self.addressField.setText(item.data(Qt.UserRole))
+
+    def _pair(self):
+        text = self.addressField.text().strip()
+        if not text:
+            self.setStatus("Pick a device from the list or type its IP address.")
+            return
+        self.pairRequested.emit(text)
+
+    def setBusy(self, busy, message=None):
+        self.searchButton.setEnabled(not busy)
+        self.pairButton.setEnabled(not busy)
+        if message is not None:
+            self.setStatus(message)
+
+    def setStatus(self, text):
+        self.statusLabel.setText(text)
+
+    def setFound(self, devices):
+        """devices: dicts with ip, port, name and an optional 'paired' flag."""
+        self.foundList.clear()
+        for d in devices:
+            hostPort = "%s:%d" % (d["ip"], d["port"])
+            label = "%s  (%s)" % (d.get("name") or "Nanoleaf", hostPort)
+            if d.get("paired"):
+                label += "  - already added"
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, hostPort)
+            self.foundList.addItem(item)
+        if not devices:
+            item = QListWidgetItem("Nothing found. Type the IP address below (see the Nanoleaf app's device settings).")
+            item.setFlags(Qt.NoItemFlags)
+            self.foundList.addItem(item)
+
+
 # Palettes for the Sound tab, as (group, [(name, colours), ...]). A named group is a submenu of the
 # Colours button; group None sits at the top level. Colours None = each mode's own built-in colours.
 # Names must be unique across groups: saved sound presets store the name alone.
@@ -1211,6 +1296,9 @@ class Ui_MainWindow(object):
         toolbar.addSpacing(10)
         self.scanCommandButton = QPushButton("Scan")
         toolbar.addWidget(self.scanCommandButton)
+        self.addNanoleafButton = QPushButton("Add Nanoleaf\u2026")
+        self.addNanoleafButton.setToolTip("Pair a Nanoleaf panel set on this network")
+        toolbar.addWidget(self.addNanoleafButton)
         self.tryConnectButton = QPushButton("Connect")
         self.tryConnectButton.setEnabled(False)
         toolbar.addWidget(self.tryConnectButton)

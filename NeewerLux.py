@@ -69,6 +69,13 @@ except ModuleNotFoundError as e:
     print("    https://pypi.org/project/bleak/")
     sys.exit(1) # you can't use the program itself without Bleak, so kill the program if we don't have it
 
+# NANOLEAF PANEL SUPPORT (standard library only; stand-ins for the Bleak objects)
+try:
+    import neewerlux_nanoleaf as nanoleaf
+except Exception as e:
+    print(f"  [DEBUG] Nanoleaf module import failed: {type(e).__name__}: {e}")
+    nanoleaf = None
+
 # IMPORT THE WINDOWS LIBRARY (needed for older bleak versions on Windows; newer bleak handles this internally)
 if platform.system() == "Windows":
     try:
@@ -193,10 +200,11 @@ lastAnimButtonPressed = 1 # which animation button you clicked last - if none, t
 lastSelection = [] # the current light selection (this is for snapshot preset entering/leaving buttons)
 lastSortingField = -1 # the last field used for sorting purposes
 
-availableLights = [] # the list of Neewer lights currently available to control
+availableLights = [] # the list of lights (Neewer over Bluetooth, Nanoleaf over the LAN) currently available to control
 # List Subitems (for ^^^^^^):
 # [0] - Bleak Scan Object (can use .name / .address to get specifics; RSSI stored separately at index [9])
-# [1] - Bleak Connection (the actual Bluetooth connection to the light itself)
+#       or a nanoleaf.NanoleafDevice standing in for one (address NL:<serial>)
+# [1] - Bleak Connection (the actual Bluetooth connection to the light itself), or a nanoleaf.NanoleafClient
 # [2] - Custom Name for Light (string)
 # [3] - Last Used Parameters (list)
 # [4] - The range of color temperatures to use in CCT mode (list, min, max) <- changed in 0.12
@@ -204,7 +212,9 @@ availableLights = [] # the list of Neewer lights currently available to control
 # [6] - Whether or not this light has been manually turned ON/OFF (boolean)
 # [7] - The Power and Channel data returned for this light (list)
 # [8] - Preferred ID for sorting (int)
-# [9] - Last known RSSI value in dBm (int or str "?")
+# [9] - Last known RSSI value in dBm (int or str "?"), "LAN" for Nanoleaf rows
+
+nanoleafControllers = {} # Nanoleaf device id -> NanoleafController, shared by all of that device's rows and every rescan
 
 # Light Preset ***Default*** Settings (for sections below):
 # NOTE: The list is 0-based, so the preset itself is +1 from the subitem
@@ -503,7 +513,7 @@ try: # try to load the GUI
                 self.ColorModeTabWidget.setCurrentIndex(7)  # default to Info tab
 
             if findLightsOnStartup == True: # if we're set up to find lights on startup, then indicate that
-                self.statusBar.showMessage("Please wait - searching for Neewer lights...")
+                self.statusBar.showMessage("Please wait - searching for lights...")
             else:
                 self.statusBar.showMessage("Welcome to NeewerLux!  Hit the Scan button above to scan for lights.")
 
@@ -1658,6 +1668,10 @@ try: # try to load the GUI
             self.turnOnButton.clicked.connect(self.turnLightOn)
 
             self.scanCommandButton.clicked.connect(self.startSelfSearch)
+            if nanoleaf is not None:
+                self.addNanoleafButton.clicked.connect(self.openNanoleafPairDialog)
+            else:
+                self.addNanoleafButton.hide()
             self.tryConnectButton.clicked.connect(self.startConnect)
             self.selectAllButton.clicked.connect(self.lightTable.selectAll)
 
@@ -2196,12 +2210,7 @@ try: # try to load the GUI
                         changedPrefs += 1 # add one to the preferences changed counter
 
                 # IF A CUSTOM NAME IS SET UP FOR THIS LIGHT, THEN CHANGE THE TABLE TO REFLECT THAT
-                if availableLights[selectedRows[0]][2] != "":
-                    self.setTheTable([availableLights[selectedRows[0]][2] + " (" + availableLights[selectedRows[0]][0].name + ")" "\n  [ʀssɪ: " + _get_light_rssi(availableLights[selectedRows[0]]) + " dBm]",
-                                    "", "", ""], selectedRows[0])
-                else: # if there is no custom name, then reset the table to show that
-                    self.setTheTable([availableLights[selectedRows[0]][0].name + "\n  [ʀssɪ: " + _get_light_rssi(availableLights[selectedRows[0]]) + " dBm]",
-                                    "", "", ""], selectedRows[0])
+                self.setTheTable([_light_table_label(availableLights[selectedRows[0]]), "", "", ""], selectedRows[0])
 
                 if self.colorTempRange.isChecked(): # if we've asked to save a custom temperature range for this light
                     if availableLights[selectedRows[0]][4] != newRange: # change the range in the available lights table if they are different
@@ -2865,7 +2874,75 @@ try: # try to load the GUI
             global threadAction
             threadAction = "discover"
 
-            self.statusBar.showMessage("Please wait - searching for Neewer lights...")
+            self.statusBar.showMessage("Please wait - searching for lights...")
+
+        # NANOLEAF PAIRING: the dialog asks, the network work runs on its own thread,
+        # and the results come back to the GUI thread through runOnGui
+        def openNanoleafPairDialog(self):
+            from neewerlux_ui import NanoleafPairDialog
+            dlg = getattr(self, "_nanoleafDialog", None)
+            if dlg is None:
+                dlg = NanoleafPairDialog(nanoleaf.PAIRING_HINT, self)
+                dlg.searchRequested.connect(self._nanoleafSearch)
+                dlg.pairRequested.connect(self._nanoleafPair)
+                self._nanoleafDialog = dlg
+            dlg.show()
+            dlg.raise_()
+            dlg.activateWindow()
+            self._nanoleafSearch()
+
+        def _nanoleafDialogCall(self, method, *args):
+            """Call a dialog method from a worker thread, once back on the GUI thread."""
+            def call():
+                try:
+                    getattr(self._nanoleafDialog, method)(*args)
+                except RuntimeError: # the dialog was destroyed meanwhile
+                    pass
+            runOnGui(call)
+
+        def _nanoleafSearch(self):
+            self._nanoleafDialog.setBusy(True, "Searching the network for Nanoleaf controllers...")
+
+            def work():
+                try:
+                    found = nanoleaf.discoverAll()
+                    savedIPs = {d["ip"] for d in nanoleaf.loadSaved()}
+                    for d in found:
+                        d["paired"] = d["ip"] in savedIPs
+                    message = "Found %d. Pick one, then Pair." % len(found) if found else "No Nanoleaf controllers found."
+                except Exception as e:
+                    found, message = [], "Search failed: " + str(e)
+                self._nanoleafDialogCall("setFound", found)
+                self._nanoleafDialogCall("setBusy", False, message)
+
+            threading.Thread(target=work, name="nanoleafSearch", daemon=True).start()
+
+        def _nanoleafPair(self, hostText):
+            try:
+                ip, port = nanoleaf.parseHostPort(hostText)
+            except ValueError:
+                self._nanoleafDialog.setStatus("That is not an IP address (or ip:port).")
+                return
+            self._nanoleafDialog.setBusy(True, "Pairing with " + ip + "...")
+
+            def work():
+                global threadAction
+                try:
+                    entry = nanoleaf.pairAndDescribe(ip, port)
+                    nanoleaf.addSaved(entry)
+                except Exception as e:
+                    self._nanoleafDialogCall("setBusy", False, str(e))
+                    return
+                printDebugString("Paired Nanoleaf [" + entry["name"] + "] NL:" + entry["id"] + " at " + ip)
+                self._nanoleafDialogCall("setBusy", False, "Paired " + entry["name"] + " (NL:" + entry["id"] + "). "
+                                         "It is added to the light table; pair another or close this window.")
+                if threadAction == "": # list it now
+                    threadAction = "discover"
+                    runOnGui(lambda: self.statusBar.showMessage("Paired " + entry["name"] + " - searching for lights..."))
+                else: # the worker is busy; a scan already running may have read the file too early
+                    runOnGui(lambda: self.statusBar.showMessage("Paired " + entry["name"] + " - press Re-scan to list it"))
+
+            threading.Thread(target=work, name="nanoleafPair", daemon=True).start()
 
         # TELL THE BACKGROUND THREAD TO START CONNECTING TO LIGHTS
         def startConnect(self):
@@ -3074,30 +3151,18 @@ try: # try to load the GUI
                         self.scanCommandButton.setText("Re-scan") # change the "Scan" button to "Re-scan"
 
                     if len(availableLights) == 1: # we found 1 light
-                        self.statusBar.showMessage("We located 1 Neewer light on the last search")
+                        self.statusBar.showMessage("We located 1 light on the last search")
                     elif len(availableLights) > 1: # we found more than 1 light
-                        self.statusBar.showMessage("We located " + str(len(availableLights)) + " Neewer lights on the last search")
+                        self.statusBar.showMessage("We located " + str(len(availableLights)) + " lights on the last search")
                 else: # if we didn't find any (additional) lights on the last scan
-                    self.statusBar.showMessage("We didn't locate any Neewer lights on the last search")
+                    self.statusBar.showMessage("We didn't locate any lights on the last search")
 
             for a in range(len(availableLights)):
-                _rssi_str = _get_light_rssi(availableLights[a])
-                if availableLights[a][1] == "": # the light does not currently have a Bleak object connected to it
-                    if availableLights[a][2] != "": # the light has a custom name, so add the custom name to the light
-                        self.setTheTable([availableLights[a][2] + " (" + availableLights[a][0].name + ")" + "\n  [ʀssɪ: " + _rssi_str + " dBm]", availableLights[a][0].address, "Waiting", "Waiting to connect..."])
-                    else: # the light does not have a custom name, so just use the model # of the light
-                        self.setTheTable([availableLights[a][0].name + "\n  [ʀssɪ: " + _rssi_str + " dBm]", availableLights[a][0].address, "Waiting", "Waiting to connect..."])
-                else: # the light does have a Bleak object connected to it
-                    if availableLights[a][2] != "": # the light has a custom name, so add the custom name to the light
-                        if availableLights[a][1].is_connected: # we have a connection to the light
-                            self.setTheTable([availableLights[a][2] + " (" + availableLights[a][0].name + ")" + "\n  [ʀssɪ: " + _rssi_str + " dBm]", availableLights[a][0].address, "LINKED", "Waiting to send..."])
-                        else: # we're still trying to connect, or haven't started trying yet
-                            self.setTheTable([availableLights[a][2] + " (" + availableLights[a][0].name + ")" + "\n  [ʀssɪ: " + _rssi_str + " dBm]", availableLights[a][0].address, "Waiting", "Waiting to connect..."])
-                    else: # the light does not have a custom name, so just use the model # of the light
-                        if availableLights[a][1].is_connected:
-                            self.setTheTable([availableLights[a][0].name + "\n  [ʀssɪ: " + _rssi_str + " dBm]", availableLights[a][0].address, "LINKED", "Waiting to send..."])
-                        else:
-                            self.setTheTable([availableLights[a][0].name + "\n  [ʀssɪ: " + _rssi_str + " dBm]", availableLights[a][0].address, "Waiting", "Waiting to connect..."])
+                _label = _light_table_label(availableLights[a])
+                if availableLights[a][1] != "" and availableLights[a][1].is_connected: # we have a connection to the light
+                    self.setTheTable([_label, availableLights[a][0].address, "LINKED", "Waiting to send..."])
+                else: # no connection object yet, or we're still trying to connect
+                    self.setTheTable([_label, availableLights[a][0].address, "Waiting", "Waiting to connect..."])
 
             # Update vertical header labels to show effective IDs (preferred ID if set, else row number)
             headerLabels = []
@@ -4137,6 +4202,9 @@ def convert_K_to_RGB(Ktemp):
     
     return int(red), int(green), int(blue) # return the integer value for each part of the RGB values for this step
 
+if nanoleaf is not None:
+    nanoleaf.setKelvinConverter(convert_K_to_RGB) # per-panel CCT uses the same colours as the rest of the app
+
 def convert_HSI_to_RGB(h, s = 1, v = 1):
     # Taken from this StackOverflow page, which is an articulation of the colorsys code to
     # convert HSV values (not HSI, but close, as I'm keeping S and V locked to 1) to RGB:
@@ -4570,6 +4638,26 @@ def _get_light_rssi(light_entry):
     except (AttributeError, TypeError):
         return "?"
 
+def isNanoleafLight(light_entry):
+    """True for an availableLights entry that is a Nanoleaf device or panel."""
+    return nanoleaf is not None and isinstance(light_entry[0], nanoleaf.NanoleafDevice)
+
+def _light_signal_text(light_entry):
+    """'-60 dBm' for a Bluetooth light, 'LAN' for a Nanoleaf."""
+    if isNanoleafLight(light_entry):
+        return "LAN"
+    return _get_light_rssi(light_entry) + " dBm"
+
+def _light_table_label(light_entry):
+    """The Name column text: custom name (model), then the signal on a second line."""
+    if light_entry[2] != "":
+        name = light_entry[2] + " (" + light_entry[0].name + ")"
+    else:
+        name = light_entry[0].name
+    if isNanoleafLight(light_entry):
+        return name + "\n  [LAN]"
+    return name + "\n  [ʀssɪ: " + _get_light_rssi(light_entry) + " dBm]"
+
 # TEST TO MAKE SURE THE VALUE GIVEN TO THE FUNCTION IS VALID OR IN BOUNDS
 def testValid(theParam, theValue, defaultValue, startBounds, endBounds, returnDefault = False):
     if theParam == "temp":
@@ -4762,11 +4850,16 @@ async def findDevices():
 
     # Use return_adv=True to get AdvertisementData (which carries RSSI in newer Bleak)
     try:
-        scan_results = await BleakScanner.discover(return_adv=True)  # returns dict[str, tuple[BLEDevice, AdvertisementData]]
-    except TypeError:
-        # Very old Bleak that doesn't support return_adv, fall back
-        scan_results_list = await BleakScanner.discover()
-        scan_results = {d.address: (d, None) for d in scan_results_list}
+        try:
+            scan_results = await BleakScanner.discover(return_adv=True)  # returns dict[str, tuple[BLEDevice, AdvertisementData]]
+        except TypeError:
+            # Very old Bleak that doesn't support return_adv, fall back
+            scan_results_list = await BleakScanner.discover()
+            scan_results = {d.address: (d, None) for d in scan_results_list}
+    except Exception as e:
+        # no Bluetooth adapter (or it is off): carry on, so Nanoleaf rows still appear
+        printDebugString("Bluetooth scan failed (" + type(e).__name__ + ": " + str(e) + "), skipping Bluetooth lights")
+        scan_results = {}
 
     for addr, (d, adv) in scan_results.items(): # go through all of the devices Bleak just found
         if d.address in whiteListedMACs: # if the MAC address is in the list of whitelisted addresses, add this device
@@ -4811,12 +4904,68 @@ async def findDevices():
             else: # no stored parameters, use defaults
                 availableLights.append([device, "", customPrefs[0], [120, 135, 2, 20, 56, 157], customPrefs[1], customPrefs[2], True, ["---", "---"], prefID, rssi])
 
+    addNanoleafLights()
+
     if threadAction != "quit":
         return "" # once the device scan is over, set the threadAction to nothing
     else: # if we're requesting that we quit, then just quit
         return "quit"
 
+def syncNanoleafControllers():
+    """Make sure every saved Nanoleaf has its one NanoleafController, with the saved file's details."""
+    if nanoleaf is None:
+        return
+    for entry in nanoleaf.loadSaved():
+        controller = nanoleafControllers.get(entry["id"])
+        if controller is None:
+            nanoleafControllers[entry["id"]] = nanoleaf.NanoleafController(entry)
+        elif not controller._clients:
+            controller.update(entry) # paired again, or moved; leave a device in use alone
+
+def nanoleafLightEntry(device):
+    """An availableLights entry for a Nanoleaf device or panel, with its sidecar prefs."""
+    customPrefs = getCustomLightPrefs(device.address, device.name)
+    prefID = customPrefs[4] if len(customPrefs) > 4 else 0
+    lastParams = customPrefs[3] if isinstance(customPrefs[3], list) else [120, 135, 2, 20, 56, 157]
+    # [5] is always False: a Nanoleaf takes HSI and CCT in one command
+    return [device, "", customPrefs[0], lastParams, customPrefs[1], False, True, ["---", "---"], prefID, "LAN"]
+
+def addNanoleafLights():
+    """Add a row for every saved Nanoleaf device (or panel) not already in availableLights."""
+    if nanoleaf is None:
+        return
+    syncNanoleafControllers()
+    known = {light[0].address for light in availableLights}
+    for controller in nanoleafControllers.values():
+        for device in controller.devices():
+            if device.address in known:
+                continue
+            printDebugString("Adding Nanoleaf [" + device.name + "] " + device.address + " at " + controller.ip)
+            availableLights.append(nanoleafLightEntry(device))
+
+def findNanoleafDevice(address):
+    """The NanoleafDevice for an NL: address, from the saved devices, or None."""
+    if nanoleaf is None or not nanoleaf.isAddress(address):
+        return None
+    syncNanoleafControllers()
+    controller = nanoleafControllers.get(nanoleaf.deviceIdFromAddress(address))
+    if controller is None:
+        return None
+    for device in controller.devices() + [nanoleaf.NanoleafDevice(controller)]:
+        if device.address.upper() == address.upper():
+            return device
+    return None
+
+def makeClient(device):
+    """The connection object for availableLights[i][1]: a BleakClient, or a NanoleafClient for a Nanoleaf."""
+    if nanoleaf is not None and isinstance(device, nanoleaf.NanoleafDevice):
+        return nanoleaf.NanoleafClient(device)
+    return BleakClient(device)
+
 def getCustomLightPrefs(MACAddress, lightName = ""):
+    if nanoleaf is not None and nanoleaf.isAddress(MACAddress):
+        lightName = "Nanoleaf" # the device name is the user's own, so look the specs up by kind
+
     customPrefsPath = MACAddress.split(":")
     customPrefsPath = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "".join(customPrefsPath)
 
@@ -4909,7 +5058,8 @@ def getLightSpecs(lightName, returnParam = "all"):
         ["RGB650", 3200, 5600, False], ["RGB660PRO", 3200, 5600, False], ["RGB660", 3200, 5600, False],
         ["RGB960", 3200, 5600, False], ["RGB-P200", 3200, 5600, False], ["RGB-P280", 3200, 5600, False],
         ["SL70", 3200, 8500, False], ["SL80", 3200, 8500, False], ["TL60", 2500, 10000, False],
-        ["ZK-RY", 5600, 5600, False]
+        ["ZK-RY", 5600, 5600, False],
+        ["Nanoleaf", 1200, 6500, False] # the Open API's colour temperature range
     ]
     
     for a in range(len(masterNeewerLuxList)): # scan the list of preset specs above to find the current light in them
@@ -4964,7 +5114,7 @@ async def connectToLight(selectedLight, updateGUI=True):
         lightIdx = returnLightIndexesFromMacAddress(lightMAC)[0]
         device = availableLights[lightIdx][0]
         try:
-            availableLights[lightIdx][1] = BleakClient(device)
+            availableLights[lightIdx][1] = makeClient(device)
         except (AttributeError, TypeError):
             # BLEDevice.details may be None if re-discovered without advertisement data
             # Fall back to MAC address string
@@ -4984,7 +5134,7 @@ async def connectToLight(selectedLight, updateGUI=True):
                 else:
                     isConnected = True # the light is already connected, so mark it as being connected
             except Exception as e:
-                printDebugString("Error linking to light [" + lightName + "] " + returnMACname() + " " + lightMAC)
+                printDebugString("Error linking to light [" + lightName + "] " + returnMACname() + " " + lightMAC + (": " + str(e) if str(e) else ""))
               
                 if updateGUI == True:
                     if currentAttempt < maxNumOfAttempts:
@@ -5262,6 +5412,14 @@ async def writeToLight(selectedLights=0, updateGUI=True, useGlobalValue=True):
 async def connectToOneLight(MACAddress):
     global availableLights
 
+    if nanoleaf is not None and nanoleaf.isAddress(MACAddress):
+        device = findNanoleafDevice(MACAddress)
+        if device is None:
+            printDebugString("No paired Nanoleaf has the address " + MACAddress.upper() + " (pair it with --nanoleaf_pair)")
+        else:
+            availableLights = [nanoleafLightEntry(device)]
+        return
+
     try:
         currentLightToAdd = await BleakScanner.find_device_by_address(MACAddress)
         customLightPrefs = getCustomLightPrefs(currentLightToAdd.address, currentLightToAdd.name)
@@ -5521,6 +5679,12 @@ def processCommands(listToProcess=[]):
         listToProcess = sys.argv[1:] # the list to parse is the system args minus the first one
         inStartupMode = True
 
+    # "--nanoleaf_pair 10.0.0.5" -> "--nanoleaf_pair=10.0.0.5", so the address isn't mistaken for a switch below
+    if inStartupMode:
+        for a in range(len(listToProcess) - 2, -1, -1):
+            if listToProcess[a].lstrip("-").lower() == "nanoleaf_pair":
+                listToProcess[a:a + 2] = ["--nanoleaf_pair=" + listToProcess[a + 1]]
+
     # ADD DASHES TO ANY PARAMETERS THAT DON'T CURRENTLY HAVE THEM AS WELL AS
     # CONVERT ALL ARGUMENTS INTO lower case (to allow ALL CAPS arguments to parse correctly)
     for a in range(len(listToProcess)):
@@ -5541,7 +5705,7 @@ def processCommands(listToProcess=[]):
 
     # MODE-SPECIFIC ARGUMENTS
     if inStartupMode == True: # if we're using the GUI or CLI, then add these arguments to the list
-        acceptable_arguments.extend(["--http", "--cli", "--silent", "--help"])
+        acceptable_arguments.extend(["--http", "--cli", "--silent", "--help", "--nanoleaf_pair"])
     else: # if we're using the HTTP server, then add these arguments to the list
         acceptable_arguments.extend(["--custom_name", "--discover", "--nopage", "--link", "--use_preset", "--save_preset", "--add_preset", "--delete_preset", "--batch", "--animate", "--stop_animate", "--list_animations"])
 
@@ -5599,6 +5763,9 @@ def processCommands(listToProcess=[]):
     parser.add_argument("--cli", action="store_false", help="Don't show the GUI at all, just send command to one light and quit")
     parser.add_argument("--force_instance", action="store_false", help="Force a new instance of NeewerLux if another one is already running")
 
+    if inStartupMode == True:
+        parser.add_argument("--nanoleaf_pair", default="", help="Pair a Nanoleaf panel controller at this IP address (ip or ip:port), save it and quit")
+
     # HTML SERVER SPECIFIC PARAMETERS
     if inStartupMode == False:
         parser.add_argument("--custom_name", default=-1) # a new custom name for the light
@@ -5616,7 +5783,7 @@ def processCommands(listToProcess=[]):
 
     parser.add_argument("--on", action="store_true", help="Turn the light on")
     parser.add_argument("--off", action="store_true", help="Turn the light off")
-    parser.add_argument("--light", default="", help="The MAC Address (XX:XX:XX:XX:XX:XX) of the light you want to send a command to or ALL to find and control all lights (only valid when also using --cli switch)")
+    parser.add_argument("--light", default="", help="The MAC Address (XX:XX:XX:XX:XX:XX) or Nanoleaf address (NL:<id>) of the light you want to send a command to or ALL to find and control all lights (only valid when also using --cli switch)")
     parser.add_argument("--mode", default="CCT", help="[DEFAULT: CCT] The current control mode - options are HSI, CCT and either ANM or SCENE")
     parser.add_argument("--temp", "--temperature", default="56", help="[DEFAULT: 56(00)K] (CCT mode) - the color temperature (3200K+) to set the light to")
     parser.add_argument("--hue", default="240", help="[DEFAULT: 240] (HSI mode) - the hue (0-360 degrees) to set the light to")
@@ -5638,6 +5805,9 @@ def processCommands(listToProcess=[]):
             printDebugString("Processing HTTP arguments")
             args.cli = False # we're running the CLI, so don't initialize the GUI
             args.silent = printDebug # we're not changing the silent flag, pass on the current printDebug setting
+
+    if inStartupMode == True and args.nanoleaf_pair:
+        return ["NANOLEAF_PAIR", args.silent, args.nanoleaf_pair]
 
     if args.http == True:
         return ["HTTP", args.silent] # special mode - don't do any other mode/color/etc. processing, just jump into running the HTML server
@@ -5709,6 +5879,49 @@ def processCommands(listToProcess=[]):
         return [args.cli, args.silent, args.light, "CCT",
                 testValid("temp", args.temp, 56, 32, 85),
                 testValid("bri", args.bri, 100, 0, 100)]
+
+def pairNanoleafFromCLI(hostText, waitSeconds=60):
+    """--nanoleaf_pair: pair with the controller at hostText, save it, print its address, and quit.
+    Keeps trying for waitSeconds so there is time to put the controller into pairing mode.
+    Works while the app is running elsewhere: it only adds to nanoleaf.json, which the app reads on its next scan."""
+    def _finish(code):
+        if anotherInstance: # the lock file belongs to the running instance, leave it
+            sys.exit(code)
+        singleInstanceUnlockandQuit(code)
+
+    if nanoleaf is None:
+        print("The Nanoleaf module (neewerlux_nanoleaf.py) could not be loaded.")
+        _finish(1)
+    try:
+        ip, port = nanoleaf.parseHostPort(hostText)
+    except ValueError:
+        print("Not an IP address (or ip:port): " + hostText)
+        _finish(1)
+
+    print("Pairing with the Nanoleaf at " + ip + ":" + str(port) + ".")
+    print(nanoleaf.PAIRING_HINT)
+    print("Waiting up to " + str(waitSeconds) + " seconds (Ctrl+C to give up)...")
+    deadline = time.monotonic() + waitSeconds
+    entry = None
+    try:
+        while entry is None:
+            try:
+                entry = nanoleaf.pairAndDescribe(ip, port)
+            except nanoleaf.NanoleafError as e:
+                notInPairingMode = "pairing mode" in str(e)
+                if not notInPairingMode or time.monotonic() > deadline:
+                    print("Pairing failed: " + str(e))
+                    _finish(1)
+                time.sleep(2)
+    except KeyboardInterrupt:
+        print("Cancelled.")
+        _finish(1)
+
+    nanoleaf.addSaved(entry)
+    print("Paired " + entry["name"] + " (" + (entry["model"] or "Nanoleaf") + ").")
+    print("Its address is NL:" + entry["id"] + " - use it with --light, in batch strings and the HTTP API.")
+    print("Saved to " + nanoleaf.defaultSavedPath())
+    _finish(0)
 
 def processHTMLCommands(paramsList, loop):
     """Process HTTP commands by queuing work for the worker thread.
@@ -5973,6 +6186,7 @@ def parseBatchString(batchString):
     Examples:
         1:HSI:0:100:50;2:HSI:240:100:50     (two lights, HSI mode)
         1:CCT:56:80;2:OFF;3:ON              (mixed modes including on/off)
+        NL:S23220H3960:HSI:0:100:50         (a Nanoleaf, by address; NL:<id>-P<n> for one panel)
         *:CCT:56:80                          (all lights, same command)
 
     Returns a list of dicts: [{"light": "1", "mode": "HSI", "hue": 0, ...}, ...]
@@ -6000,7 +6214,14 @@ def parseBatchString(batchString):
             except ValueError:
                 pass
 
-        if isMac:
+        if parts[0].upper() == "NL":
+            # Nanoleaf: NL:<id>:MODE:params or NL:<id>-P<panel>:MODE:params
+            if len(parts) < 3:
+                printDebugString("Batch: skipping malformed segment '" + seg + "'")
+                continue
+            lightId = "NL:" + parts[1].upper()
+            modeParts = parts[2:]
+        elif isMac:
             lightId = ":".join(parts[0:6])  # reassemble the MAC address
             modeParts = parts[6:]
         else:
@@ -7120,9 +7341,9 @@ class NLPythonServer(BaseHTTPRequestHandler):
                         self.wfile.write(bytes("</script>\n\n", "utf-8"))
 
                         if totalLights == 0: # there are no lights available to you at the moment!
-                            self.wfile.write(bytes("NeewerLux is not currently set up with any Neewer lights.  To discover new lights, <A HREF='doAction?discover'>click here</a>.<BR>\n", "utf-8"))
+                            self.wfile.write(bytes("NeewerLux is not currently set up with any lights.  To discover new lights, <A HREF='doAction?discover'>click here</a>.<BR>\n", "utf-8"))
                         else:
-                            self.wfile.write(bytes("List of available Neewer lights:<BR><BR>\n", "utf-8"))
+                            self.wfile.write(bytes("List of available lights:<BR><BR>\n", "utf-8"))
                             self.wfile.write(bytes("<TABLE WIDTH='98%' BORDER='1'>\n", "utf-8"))
                             self.wfile.write(bytes("  <TR>\n", "utf-8"))
                             self.wfile.write(bytes("     <TH STYLE='width:2%; text-align:left'>ID #\n", "utf-8"))
@@ -7140,7 +7361,7 @@ class NLPythonServer(BaseHTTPRequestHandler):
                                 self.wfile.write(bytes("     <TD STYLE='background-color:rgb(240,248,255)'><button onclick='editLight(" + str(a) + ", \"" + availableLights[a][0].name + "\", \"" + availableLights[a][2] + "\")'>Edit</button>&nbsp;&nbsp;" + availableLights[a][2] + "</TD>\n", "utf-8")) # light custom name
                                 self.wfile.write(bytes("     <TD STYLE='background-color:rgb(240,248,255)'>" + availableLights[a][0].name + "</TD>\n", "utf-8")) # light type
                                 self.wfile.write(bytes("     <TD STYLE='background-color:rgb(240,248,255)'>" + availableLights[a][0].address + "</TD>\n", "utf-8")) # light MAC address
-                                self.wfile.write(bytes("     <TD STYLE='background-color:rgb(240,248,255)'>" + _get_light_rssi(availableLights[a]) + " dBm</TD>\n", "utf-8")) # light RSSI (signal quality)
+                                self.wfile.write(bytes("     <TD STYLE='background-color:rgb(240,248,255)'>" + _light_signal_text(availableLights[a]) + "</TD>\n", "utf-8")) # light RSSI (signal quality)
 
                                 try:
                                     if availableLights[a][1].is_connected:
@@ -7676,6 +7897,9 @@ if __name__ == '__main__':
         if cmdReturn[0] == False: # if we're trying to load the CLI, make sure we aren't already running another version of it
             doAnotherInstanceCheck() # check to see if another instance is running, and if it is, then error out and quit
 
+        if cmdReturn[0] == "NANOLEAF_PAIR":
+            pairNanoleafFromCLI(cmdReturn[2])
+
         # START HTTP SERVER HERE AND SIT IN THIS LOOP UNTIL THE END
         if cmdReturn[0] == "HTTP":
             doAnotherInstanceCheck() # check to see if another instance is running, and if it is, then error out and quit
@@ -7719,16 +7943,16 @@ if __name__ == '__main__':
             doAnotherInstanceCheck() # check to see if another instance is running, and if it is, then error out and quit
 
             print("NeewerLux " + NEEWERLUX_VERSION + ", based on NeewerLite-Python 0.12d by Zach Glenwright / NeewerLite by Xu Lian")
-            print("Searching for nearby Neewer lights...")
+            print("Searching for nearby lights...")
             asyncioEventLoop.run_until_complete(findDevices())
 
             if len(availableLights) > 0:
                 print()
 
                 if len(availableLights) == 1: # we only found one
-                    print("We found 1 Neewer light on the last search.")
+                    print("We found 1 light on the last search.")
                 else: # we found more than one
-                    print("We found " + str(len(availableLights)) + " Neewer lights on the last search.")
+                    print("We found " + str(len(availableLights)) + " lights on the last search.")
 
                 print()
 
@@ -7756,9 +7980,9 @@ if __name__ == '__main__':
                     print(formatStringForConsole(lightName, nameCharsAllowed) + " " + \
                           formatStringForConsole(availableLights[a][0].address, addressCharsAllowed))
 
-                    print(formatStringForConsole(" > RSSI: " + _get_light_rssi(availableLights[a]) + "dBm", nameCharsAllowed))
+                    print(formatStringForConsole((" > Network: " if isNanoleafLight(availableLights[a]) else " > RSSI: ") + _light_signal_text(availableLights[a]), nameCharsAllowed))
             else:
-                print("We did not find any Neewer lights on the last search.")
+                print("We did not find any lights on the last search.")
 
             singleInstanceUnlockandQuit(0) # delete the lock file and quit out
 
