@@ -4,6 +4,8 @@ Builds the widget tree and layouts. Widget attribute names are the
 contract with NeewerLux.py, which connects the signal handlers.
 """
 
+import json
+import os
 import re
 
 try:
@@ -18,7 +20,8 @@ try:
         QGraphicsView, QGraphicsScene, QScrollArea, QKeySequenceEdit,
         QListWidget, QListWidgetItem, QStatusBar, QHeaderView, QFrame, QProgressBar,
         QSystemTrayIcon, QMenu, QTextBrowser, QColorDialog, QDialog, QDialogButtonBox,
-        QApplication, QAbstractSlider, QAbstractSpinBox, QScrollBar, QTabBar, QStyle
+        QApplication, QAbstractSlider, QAbstractSpinBox, QScrollBar, QTabBar, QStyle,
+        QInputDialog, QMessageBox
     )
     customSignal = Signal
 except ImportError:
@@ -34,7 +37,8 @@ except ImportError:
             QGraphicsView, QGraphicsScene, QScrollArea, QKeySequenceEdit,
             QListWidget, QListWidgetItem, QStatusBar, QHeaderView, QFrame, QProgressBar,
             QSystemTrayIcon, QMenu, QTextBrowser, QColorDialog, QDialog, QDialogButtonBox,
-            QApplication, QAbstractSlider, QAbstractSpinBox, QScrollBar, QTabBar, QStyle
+            QApplication, QAbstractSlider, QAbstractSpinBox, QScrollBar, QTabBar, QStyle,
+            QInputDialog, QMessageBox
         )
         customSignal = Signal
     except ImportError:
@@ -600,9 +604,14 @@ class ColorPickDialog(QDialog):
         return self._hue, self._sat
 
 
-# Palettes for the Sound tab. None = each mode's own built-in colours.
-SOUND_PALETTES = [
+# Palettes for the Sound tab, as (group, [(name, colours), ...]). A named group is a submenu of the
+# Colours button; group None sits at the top level. Colours None = each mode's own built-in colours.
+# Names must be unique across groups: saved sound presets store the name alone.
+SOUND_PALETTE_GROUPS = [
+    (None, [
     ("Auto (built-in colours)", None),
+    ]),
+    ("Moods", [
     ("Rainbow", [(0, 100), (30, 100), (58, 100), (120, 100), (180, 100), (240, 100), (275, 100), (320, 100)]),
     ("Club", [(300, 100), (180, 100), (240, 100)]),
     ("Fire", [(0, 100), (18, 100), (35, 100), (52, 100)]),
@@ -612,8 +621,57 @@ SOUND_PALETTES = [
     ("Forest", [(60, 100), (90, 100), (120, 100), (150, 100)]),
     ("Red & blue", [(0, 100), (240, 100)]),
     ("Purple haze", [(260, 100), (290, 100), (320, 90)]),
+    ]),
+    ("Pride flags", [
+    # Pride flags, stripes in flag order. A palette has no brightness, so black, grey and brown stripes are
+    # left out and dark/light pairs differ in saturation. White (sat 0) takes a hue between its neighbours
+    # so the fades either side of it stay close to those colours.
+    # Trans loops like the flag: blue, pink, white, pink, back to blue.
+    ("Trans pride", [(197, 70), (345, 55), (345, 0), (345, 55)]),
+    ("Bi pride", [(328, 100), (280, 90), (225, 100)]),
+    ("Pan pride", [(330, 100), (51, 100), (200, 100)]),
+    ("Lesbian pride", [(12, 100), (26, 75), (355, 0), (325, 55), (322, 100)]),
+    ("Gay men's pride", [(165, 100), (155, 50), (183, 0), (211, 55), (250, 100)]),
+    ("Nonbinary pride", [(58, 100), (345, 0), (273, 85)]),
+    ("Genderfluid pride", [(340, 60), (316, 0), (293, 100), (235, 100)]),
+    ("Ace pride", [(280, 100), (280, 0)]),
+    ("Aro pride", [(125, 100), (95, 55), (95, 0)]),
+    ("Intersex pride", [(51, 100), (283, 100)]),
+    ("Agender pride", [(90, 0), (90, 75)]),
+    ("Polyamorous pride", [(200, 100), (340, 100), (280, 90), (45, 100)]),  # 2022 flag plus its gold heart
+    ("Polysexual pride", [(316, 100), (150, 100), (206, 100)]),
+    ("Aroace pride", [(30, 100), (52, 100), (203, 0), (203, 55), (220, 100)]),
+    ("Demigirl pride", [(330, 55), (330, 0)]),
+    ("Demiboy pride", [(200, 60), (200, 0)]),
+    ]),
+    ("Holidays", [
+    ("Christmas", [(0, 100), (0, 0), (120, 100), (120, 0)]),
+    ("Halloween", [(25, 100), (275, 100), (100, 100)]),
+    ("Valentine's", [(0, 100), (340, 60), (340, 0)]),
+    ("St Patrick's", [(120, 100), (140, 70), (48, 100)]),
+    ("Hanukkah", [(220, 100), (220, 0)]),
+    ]),
+    ("Looks", [
+    ("Teal & orange", [(180, 100), (28, 100)]),
+    ("Vaporwave", [(320, 80), (185, 90), (270, 50)]),
+    # color-hex.com "Cyberpunk Neon" (#711c91 #ea00d9 #0abdc6 #133e7c #091833) plus yellow
+    ("Cyberpunk", [(284, 81), (304, 100), (183, 95), (215, 85), (219, 82), (55, 100)]),
+    ("Neon noir", [(350, 100), (215, 100)]),
+    ("Pastel", [(0, 40), (45, 40), (120, 40), (190, 40), (260, 40), (310, 40)]),
+    ("Aurora", [(130, 100), (170, 100), (280, 90)]),
+    ]),
+    ("Seasons", [
+    ("Spring", [(100, 55), (330, 40), (55, 50), (160, 45)]),
+    ("Summer", [(50, 100), (25, 100), (180, 100), (330, 100)]),
+    ("Autumn", [(15, 100), (35, 100), (0, 90), (45, 100)]),
+    ("Winter", [(200, 60), (220, 100), (200, 0)]),
+    ]),
 ]
+SOUND_PALETTES = [p for _, items in SOUND_PALETTE_GROUPS for p in items]
+# The menu lists groups and their presets A-Z, except these groups, which keep the order above.
+SOUND_PALETTE_GROUPS_IN_ORDER = {"Seasons"}
 CUSTOM_PALETTE_NAME = "Custom"
+SAVED_PALETTES_GROUP = "My palettes"  # submenu for palettes the user saved
 
 
 class _PaletteChip(QPushButton):
@@ -659,20 +717,26 @@ class _PaletteChip(QPushButton):
 
 
 class PaletteEditor(QWidget):
-    """Preset dropdown plus a row of colour chips. Click a chip to change it, drag to reorder,
-    right-click to copy / paste, + / - to add or remove. Emits changed() whenever the palette changes."""
+    """Preset menu button plus a row of colour chips. Presets are grouped into submenus, with the
+    user's saved palettes under My palettes. Click a chip to change it, drag to reorder, right-click to
+    copy / paste, + / - to add or remove. Emits changed() whenever the palette changes."""
     changed = customSignal()
     MAX_COLOURS = 8
 
     def __init__(self, parent=None):
         super().__init__(parent)
         lay = QHBoxLayout(self); lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(4)
-        self.presetCombo = QComboBox()
-        for name, _ in SOUND_PALETTES:
-            self.presetCombo.addItem(name)
-        self.presetCombo.addItem(CUSTOM_PALETTE_NAME)
-        self.presetCombo.setToolTip("Colours the sound modes use. Auto keeps each mode's own colours.")
-        lay.addWidget(self.presetCombo)
+        self.presetButton = QPushButton()
+        self.presetButton.setObjectName("palettePresetBtn")  # theme: looks like the dropdowns around it
+        self.presetButton.setToolTip("Colours the sound modes use. Auto keeps each mode's own colours.")
+        self._presetActions = {}
+        self._saved = {}         # the user's saved palettes: name -> [(hue, sat), ...]
+        self._savedFile = None   # where they are kept; None = this session only
+        self._buildPresetMenu()
+        self._presetName = None
+        self._setPresetName(SOUND_PALETTES[0][0])
+        self._fitPresetButton()
+        lay.addWidget(self.presetButton)
         self.chipRow = QHBoxLayout(); self.chipRow.setSpacing(4)
         lay.addLayout(self.chipRow)
         self.addButton = QPushButton("+"); self.addButton.setFixedWidth(30)
@@ -686,32 +750,184 @@ class PaletteEditor(QWidget):
         self._colours = None
         self._custom = [(300, 100), (180, 100), (240, 100)]
         self._chips = []
-        self.presetCombo.currentIndexChanged.connect(self._presetChosen)
         self.addButton.clicked.connect(self._add)
         self.removeButton.clicked.connect(self._remove)
         self._rebuild()
+
+    def _buildPresetMenu(self):
+        """Top level: ungrouped presets, My palettes, one submenu per group, Custom, then save / delete."""
+        self._presetActions = {}
+        menu = QMenu(self.presetButton)
+
+        def add(target, name):
+            a = target.addAction(name, lambda: self._presetChosen(name))
+            a.setCheckable(True)
+            self._presetActions[name] = a
+
+        def key(s):
+            return s.casefold()
+
+        # Ungrouped first, then groups A-Z; presets A-Z within a group unless its order means something.
+        for group, items in sorted(SOUND_PALETTE_GROUPS, key=lambda g: (g[0] is not None, key(g[0] or ""))):
+            target = menu.addMenu(group) if group else menu
+            names = [n for n, _ in items]
+            for name in (names if group in SOUND_PALETTE_GROUPS_IN_ORDER else sorted(names, key=key)):
+                add(target, name)
+            if group is None and self._saved:
+                sub = menu.addMenu(SAVED_PALETTES_GROUP)
+                for name in sorted(self._saved, key=key):
+                    add(sub, name)
+        menu.addSeparator()
+        add(menu, CUSTOM_PALETTE_NAME)
+        menu.addSeparator()
+        self._saveAction = menu.addAction("Save palette as…", self._saveAs)
+        self._deleteAction = menu.addAction("Delete saved palette", self._deleteSaved)
+        menu.aboutToShow.connect(self._updateSaveActions)
+        old = self.presetButton.menu()
+        self.presetButton.setMenu(menu)
+        if old is not None:
+            old.deleteLater()
+
+    def _updateSaveActions(self):
+        self._saveAction.setEnabled(bool(self._colours))  # Auto has no colours to save
+        isSaved = self._presetName in self._saved
+        self._deleteAction.setEnabled(isSaved)
+        self._deleteAction.setText("Delete “%s”" % self._presetName if isSaved else "Delete saved palette")
+
+    def _setPresetName(self, name):
+        """Show name on the button and tick it in the menu."""
+        self._presetName = name
+        width = self.presetButton.minimumWidth() - 44
+        text = self.presetButton.fontMetrics().elidedText(name, Qt.ElideRight, width) if width > 0 else name
+        self.presetButton.setText(text)  # a long saved name is cut short rather than widening the row
+        self.presetButton.setToolTip("Colours the sound modes use. Auto keeps each mode's own colours."
+                                     + ("" if text == name else "\n" + name))
+        for n, a in self._presetActions.items():
+            a.setChecked(n == name)
+
+    def _fitPresetButton(self):
+        """Wide enough for the longest built-in name, so the chips don't shift when the preset changes."""
+        fm = self.presetButton.fontMetrics()
+        widest = max(fm.horizontalAdvance(n) for n in list(dict(SOUND_PALETTES)) + [CUSTOM_PALETTE_NAME])
+        self.presetButton.setMinimumWidth(widest + 44)  # padding plus the menu arrow
+        if getattr(self, "_presetName", None) is not None:
+            self._setPresetName(self._presetName)
+
+    # --- saved palettes ---
+
+    def setSavedFile(self, path):
+        """Keep saved palettes in path (JSON: {name: [[hue, sat], ...]}) and load what is there."""
+        self._savedFile = path
+        self._saved = {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:  # missing or unreadable: start with none
+            data = {}
+        if isinstance(data, dict):
+            for name, cols in data.items():
+                cols = self._clean(cols)
+                if cols and not self._reservedName(str(name)):
+                    self._saved[str(name)] = cols
+        self._refreshMenu()
+
+    def savedPalettes(self):
+        return {n: list(c) for n, c in self._saved.items()}
+
+    def isBuiltIn(self):
+        """True for Auto and the shipped presets, whose colours never change, so their name is enough to store."""
+        return self._presetName in dict(SOUND_PALETTES)
+
+    @classmethod
+    def _clean(cls, cols):
+        try:
+            return [(int(h) % 360, max(0, min(100, int(s)))) for h, s in cols][:cls.MAX_COLOURS]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _reservedName(name):
+        return name in dict(SOUND_PALETTES) or name in (CUSTOM_PALETTE_NAME, SAVED_PALETTES_GROUP)
+
+    def _refreshMenu(self):
+        self._buildPresetMenu()
+        if self._presetName is not None:
+            self._setPresetName(self._presetName)
+
+    def _writeSaved(self, saved):
+        if self._savedFile:
+            try:
+                os.makedirs(os.path.dirname(self._savedFile) or ".", exist_ok=True)
+                with open(self._savedFile, "w", encoding="utf-8") as f:
+                    json.dump({n: [list(c) for c in cols] for n, cols in saved.items()}, f, indent=1)
+            except Exception as e:
+                QMessageBox.warning(self, "Save Palette", "Couldn't save the palettes:\n" + str(e))
+                return False
+        self._saved = saved
+        self._refreshMenu()
+        return True
+
+    def _saveAs(self):
+        if not self._colours:
+            return
+        current = self._presetName if self._presetName in self._saved else ""
+        name, ok = QInputDialog.getText(self, "Save Palette", "Palette name:", text=current)
+        name = (name or "").strip()
+        if not ok or not name:
+            return
+        if self._reservedName(name):
+            QMessageBox.information(self, "Save Palette", "“%s” is already a built-in name. Choose another." % name)
+            return
+        if name in self._saved and name != current:
+            if QMessageBox.question(self, "Save Palette", "A palette called “%s” already exists. Replace it?" % name) != QMessageBox.Yes:
+                return
+        saved = dict(self._saved)
+        saved[name] = list(self._colours)
+        if self._writeSaved(saved):
+            self._presetChosen(name)
+
+    def _deleteSaved(self):
+        name = self._presetName
+        if name not in self._saved:
+            return
+        if QMessageBox.question(self, "Delete Palette", "Delete the saved palette “%s”?" % name) != QMessageBox.Yes:
+            return
+        saved = dict(self._saved)
+        del saved[name]
+        if self._writeSaved(saved):
+            # Its colours stay on the lights, now as Custom.
+            self._custom = list(self._colours or self._custom)
+            self._setPresetName(CUSTOM_PALETTE_NAME)
+            self.changed.emit()
+
+    def changeEvent(self, e):
+        if e.type() in (QEvent.FontChange, QEvent.StyleChange) and getattr(self, "_presetActions", None):
+            self._fitPresetButton()
+        super().changeEvent(e)
 
     def palette(self):
         return list(self._colours) if self._colours else None
 
     def presetName(self):
-        return self.presetCombo.currentText()
+        return self._presetName
 
     def setPalette(self, presetName, colours=None):
-        """Restore a saved palette. Custom needs colours; presets load their own."""
-        if presetName == CUSTOM_PALETTE_NAME and colours:
-            self._custom = [(int(h), int(sv)) for h, sv in colours][:self.MAX_COLOURS]
-        pos = self.presetCombo.findText(presetName)
-        if pos >= 0:
-            if pos == self.presetCombo.currentIndex():
-                self._presetChosen(pos)
-            else:
-                self.presetCombo.setCurrentIndex(pos)
+        """Restore a palette by name. Built-in and saved palettes load their own colours. Custom, or a
+        saved palette that has since been deleted, uses colours (stored alongside) as Custom."""
+        if presetName in self._presetActions and presetName != CUSTOM_PALETTE_NAME:
+            self._presetChosen(presetName)
+        elif presetName == CUSTOM_PALETTE_NAME or colours:
+            cols = self._clean(colours or [])
+            if cols:
+                self._custom = cols
+            self._presetChosen(CUSTOM_PALETTE_NAME)
 
-    def _presetChosen(self, i):
-        name = self.presetCombo.itemText(i)
+    def _presetChosen(self, name):
+        self._setPresetName(name)
         if name == CUSTOM_PALETTE_NAME:
             self._colours = list(self._custom)
+        elif name in self._saved:
+            self._colours = list(self._saved[name])
         else:
             cols = dict(SOUND_PALETTES).get(name)
             self._colours = list(cols) if cols else None
@@ -721,9 +937,7 @@ class PaletteEditor(QWidget):
     def _edited(self):
         """A chip was changed: the palette is now Custom."""
         self._custom = list(self._colours)
-        self.presetCombo.blockSignals(True)
-        self.presetCombo.setCurrentIndex(self.presetCombo.findText(CUSTOM_PALETTE_NAME))
-        self.presetCombo.blockSignals(False)
+        self._setPresetName(CUSTOM_PALETTE_NAME)
         self._rebuild()
         self.changed.emit()
 
@@ -815,6 +1029,9 @@ class PaletteEditor(QWidget):
         a.setEnabled(bool(self._colours))
         a = menu.addAction("Paste palette", lambda: self._paste(pasted, 0, replace=True, whole=True))
         a.setEnabled(bool(pasted))
+        menu.addSeparator()
+        a = menu.addAction("Save palette as…", self._saveAs)
+        a.setEnabled(bool(self._colours))
         return menu
 
     def _delete(self, at):

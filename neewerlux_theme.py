@@ -177,6 +177,12 @@ QLabel { color: $text; }
 QLabel[dim="true"] { color: $textDim; font-size: $fontSizeSm; }
 QPushButton#fontSizeBtn { padding: $padButtonSm; border: 1px solid $borderStrong; min-width: 26px; }
 QPushButton#paletteStepBtn { padding: 2px 0px; font-size: $fontSizeIcon; }
+/* The palette preset button opens a menu with submenus; it is styled to match the QComboBoxes around it. */
+QPushButton#palettePresetBtn {
+    background-color: $bg2; border-radius: $radiusSm; padding: $padInput; padding-right: 22px; text-align: left;
+}
+QPushButton#palettePresetBtn:hover, QPushButton#palettePresetBtn:pressed { background-color: $bg2; color: $text; border-color: $accent; }
+QPushButton#palettePresetBtn::menu-indicator { subcontrol-origin: padding; subcontrol-position: center right; right: 6px; }
 QProgressBar { background-color: $bg2; border: 1px solid $border; border-radius: $radiusSm; }
 QProgressBar::chunk { background-color: $accent; border-radius: $radiusSm; }
 QToolTip { background-color: $bg3; border: 1px solid $accent; color: $text; padding: $padTooltip; border-radius: $radiusMd; font-size: $fontSizeSm; }
