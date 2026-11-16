@@ -109,6 +109,20 @@ Each entry: what was tried, on which problem, and what the numbers showed.
   Apex 83.5, Feels Like Us only 84.2. Dropped.
   Open from (e): Strobe mic (not traced yet), Freestyler 210-230 s, light years 60-80 s, Feels Like Us' frozen
   wrong period.
+  Strobe mic traced (2026-11-16): all of the loss is 240-280 s, after the 3:59-4:05 roll. The hold froze 129.6 BPM
+  and drifted early (-25, -49 ms, then off the grid). The steady kicks were more than 45 ms off the held grid, so they
+  never refreshed lastOnGrid. The hold's "steady gaps that don't fit" exit cleared coast but not lastOnGrid, so the
+  restart check put the hold back on the next update, about every kick. Each restart reset coast, so the 4 s exit
+  (t - coast > 4) never came true: the hold never ended. (g) = (e) + that exit also sets lastOnGrid, and
+  `_startCoast` clears `self.gaps` (gaps left from an earlier hold had let a 3 s old hold exit on a fill), and
+  lastOnGrid is refreshed only when more than 6 s have passed since it (2 s to start + 4 s held). **Strobe mic 100.0,
+  extra 21** (base 99.6/25); synthetic on% all the same as base. Vs (e): Age of Love 93.4, Punctual 97.2, but
+  Desire 100→93.5 (base 89.3). (e)'s Desire 100 was the same never-ending hold carrying it through 130-160 s. Now
+  the 4 s exit fires at 132 s, trust is lost at 161.85 s and the window's 4/3 reading (167 BPM) takes over.
+  Feels Like Us 83.7, Freestyler 77.8, light years 91.5 are as in (e), so (g) isn't kept either. It is the base for
+  the next steps (scratchpad c52_audio.py).
+  Open from (g): Desire 160-180 s (trust lost after the hold exit), Feels Like Us' frozen wrong period, Freestyler
+  210-230 s, light years 60-80 s.
 
 **Kick timing**
 - Timing kicks from the start of their rise instead of the 0.7 × peak crossing (for Strobe g90): unguarded it made
