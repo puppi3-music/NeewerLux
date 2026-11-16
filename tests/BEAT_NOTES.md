@@ -160,6 +160,16 @@ Each entry: what was tried, on which problem, and what the numbers showed.
   100→96.7 (the comb sits on the off-beat for a reading or two, e.g. 216.9 and 218.9 s here). (l) = (k) but two
   kicks in a row on the comb: Freestyler gain gone (the kick before 219.84 s is an off-beat, so no pair forms), messy
   still 81.5 (not traced). Neither kept (scratchpad c61/c62_audio.py).
+  messy under (k) traced (2026-11-16): 30-40 s 96→65%, 130-140 s 100→41%. At 36.08 and 36.53 s the track has
+  real off-beat kicks (+222 ms vs Traktor) and the comb locks onto them, so (k) resnaps the held grid half a beat
+  off at 36.53 s ((j) and base make the same mistake 3 s later, at a window update at 39.69 s). Counting kicks on
+  the held grid vs on the comb can't tell this from Freestyler, which also has kicks on both during its hold. What
+  does: Freestyler's hold *began* half a beat off its own last kicks (-27 ms at 214 s, +132 ms at 216.9 s) and the
+  comb at 219.84 s is 16.02 beats from the last on-grid kick before the hold; messy's comb kick is 5.42 beats from
+  it. (r) = (k), but the resnap kick must also be a whole number of beats (within the kick gate) from the last
+  on-grid kick before the hold began: vs (j) only Freestyler changes (78.4→80.0); messy 83.7, Savana 91.6 back,
+  Sub Focus 47.9 ((k)'s +1.1 gone), synthetic and Strobe mic (100) the same as (j). Best variant so far, still not
+  kept: vs base Sub Focus -1.5, light years -1.6 (scratchpad c68_audio.py).
   light years 60-80 s traced (2026-11-16): base fails it too, just inside the tolerance. The trusted hold from
   57.8 s ends on a kick at 64.49 s (grid -6 ms vs Traktor); the window then reads 138.8-138.9 with its comb ~40 ms
   early, and its fits pull the phase -40, -28, -20, -10 ms (each under the 45 ms gate) and blend the period up from
@@ -252,3 +262,6 @@ Everything tried on a day, kept or dropped, in order. Numbers are on / g50 / g90
   (Freestyler, light years still behind base).
 - Comb-gated hold, light years 60-80 s traced: a window comb ~40 ms early right after a hold, plus two early hits,
   drag the grid in base too; (j) freezes the dragged period a reading sooner. Five variants (m)-(q) dropped, no fix.
+- Comb-gated hold, messy under (k): the comb locks onto real off-beat kicks at 36.5 s; (r) resnaps only to a kick a
+  whole number of beats from the last on-grid kick before the hold: Freestyler 80.0 kept, messy/Savana back to (j),
+  synthetic/Strobe mic the same. Best variant; not kept yet (Sub Focus, light years behind base).
