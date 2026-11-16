@@ -179,8 +179,11 @@ jobs:
           name: source-zip
           path: Puppi3sNeewerLux-*-Source.zip
 
+  # Runs even if a build failed or never got a machine (GitHub's macOS runners are sometimes all busy), so a
+  # slow Mac queue can't hold up a release: the draft gets whichever builds finished. Re-running a failed build
+  # later ("gh run rerun <id> --failed") runs this job again, which adds that build's file to the same draft.
   create-release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/v') && needs.build-source.result == 'success' }}
     needs: [build, build-source]
     runs-on: ubuntu-latest
     steps:
@@ -194,6 +197,7 @@ jobs:
         with:
           draft: true
           generate_release_notes: true
+          fail_on_unmatched_files: false
           files: |
             Puppi3sNeewerLux-*.zip
             Puppi3sNeewerLux-*.tar.gz
