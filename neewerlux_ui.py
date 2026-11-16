@@ -1632,7 +1632,23 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         self.soundPredictBeatsCheck.setToolTip("Without a MIDI clock: find the tempo in the sound (about 4 s after the kicks start)\n"
             "and fire each beat on time, early by the beat lead, instead of after each kick is heard.\n"
             "Off: every kick flashes as it is heard, about 30 ms late plus the Bluetooth delay.")
-        sg.addWidget(self.soundPredictBeatsCheck, 11, 1, 1, 3)
+        self.soundFlashOnCombo = QComboBox()
+        self.soundFlashOnCombo.addItems(["Beats", "Kicks"])
+        self.soundFlashOnCombo.setToolTip("What the beat flash follows, with a MIDI clock or a predicted tempo.\n"
+            "Beats: every beat of the grid, early by the beat lead, so the flash lands with the kick.\n"
+            "Kicks: each kick as it is heard, so broken and syncopated patterns (footwork, garage) show as played.\n"
+            "Kick flashes arrive without the beat lead: about 30 ms after the kick plus the Bluetooth delay,\n"
+            "which can be a whole 16th note at 160 BPM. The grid still counts the bar, so colours change on the beat.\n"
+            "The flash limit still applies: Standard thins fast kick runs, Show lets more through.")
+        flashOnL = QLabel("Flash on:")
+        flashOnL.setToolTip(self.soundFlashOnCombo.toolTip())
+        predictRow = QHBoxLayout()
+        predictRow.addWidget(self.soundPredictBeatsCheck)
+        predictRow.addSpacing(16)
+        predictRow.addWidget(flashOnL)
+        predictRow.addWidget(self.soundFlashOnCombo)
+        predictRow.addStretch(1)
+        sg.addLayout(predictRow, 11, 1, 1, 3)
         tempoL = QLabel("Tempo range:"); tempoL.setFont(mainFont); sg.addWidget(tempoL, 12, 0)
         self.soundTempoMinSpin = _spin(50, 240, 70, " BPM")
         self.soundTempoMaxSpin = _spin(50, 240, 180, " BPM")
