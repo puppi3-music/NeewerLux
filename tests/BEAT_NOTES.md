@@ -160,6 +160,22 @@ Each entry: what was tried, on which problem, and what the numbers showed.
   100→96.7 (the comb sits on the off-beat for a reading or two, e.g. 216.9 and 218.9 s here). (l) = (k) but two
   kicks in a row on the comb: Freestyler gain gone (the kick before 219.84 s is an off-beat, so no pair forms), messy
   still 81.5 (not traced). Neither kept (scratchpad c61/c62_audio.py).
+  light years 60-80 s traced (2026-11-16): base fails it too, just inside the tolerance. The trusted hold from
+  57.8 s ends on a kick at 64.49 s (grid -6 ms vs Traktor); the window then reads 138.8-138.9 with its comb ~40 ms
+  early, and its fits pull the phase -40, -28, -20, -10 ms (each under the 45 ms gate) and blend the period up from
+  the hold's fitted 138.01, while two detected hits at 64.90 and 66.18 s (-40, -64 ms from Traktor's beat) agree with
+  it. By 67 s the grid is ~48 ms early in base and (j) alike; the next kick (67.11 s, +5 ms) and the own-click kicks
+  either side (61.0, 79.7 s) sit on Traktor's grid. (j) then starts its hold at 68.18 s (no on-grid kick for 2 s)
+  and freezes 138.61; base coasts from 69.12 s, one window reading later, at 138.23, so it drifts early half as fast
+  (-36..-42 ms, inside the 54 ms tolerance; (j) -58..-73) and resnaps fully onto the on-beat kick at 77.98 s, where
+  (j)'s hold needs the kick within the gate of the held grid and lets go at 79.25 s. Tried on (j), all dropped:
+  (m) a hold that starts with too few kicks to fit takes the latest comb's period (the comb itself reads 138.55: no
+  gain); (n) + phase from the comb when the last kick sits on it but off the grid (never fires: the comb is ~48 ms
+  early too, on the dragged grid); (o) no window phase pull more than the gate off within TEMPO_WINDOW of a trusted
+  hold's end (no pull is that big); (p) TEMPO_EST_PULL_OWN 0.1 for the window's phase pull in that time (70-80 s
+  48→4%: the period still blends up to 139.8 and the early hits drag the phase anyway); (q) = (p) + no period blend
+  at all in that time (60-70 s 87→70%, 70-80 s 9%). The evidence here is split (window and two hits vs one kick and
+  the own-click kicks), so no fix (scratchpad c63-c67_audio.py).
 
 **Kick timing**
 - Timing kicks from the start of their rise instead of the 0.7 × peak crossing (for Strobe g90): unguarded it made
@@ -234,3 +250,5 @@ Everything tried on a day, kept or dropped, in order. Numbers are on / g50 / g90
 - Comb-gated hold, Feels Like Us 175-194 s: (j) right after a trusted hold, a window reading 2-4% off doesn't blend
   into the period: Feels Like Us 83.7→90.5, Sub Focus -1.1, rest/synthetic/Strobe mic the same; not kept yet
   (Freestyler, light years still behind base).
+- Comb-gated hold, light years 60-80 s traced: a window comb ~40 ms early right after a hold, plus two early hits,
+  drag the grid in base too; (j) freezes the dragged period a reading sooner. Five variants (m)-(q) dropped, no fix.
