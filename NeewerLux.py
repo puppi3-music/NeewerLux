@@ -505,6 +505,7 @@ try: # try to load the GUI
             self._fontScale = self._loadFontScale()
             QApplication.instance().setStyleSheet(getThemeQSS(True, self._fontScale))
             self.themeToggleBtn.setText("\u263E")  # moon symbol
+            self._fitToolbar()
 
             # Set window icon (shown in taskbar and title bar)
             for _iconName in ("com.github.poizenjam.NeewerLux.png", "com.github.poizenjam.NeewerLux.ico"):
@@ -2717,9 +2718,9 @@ try: # try to load the GUI
                     self.ColorModeTabWidget.setTabEnabled(5, True) # enable the "Preferences" tab for this light
 
                     # SWITCH THE TURN ON/OFF BUTTONS ON, AND CHANGE TEXT TO SINGLE BUTTON TEXT
-                    self.turnOffButton.setText("Turn Light Off")
+                    self.turnOffButton.setText("Light Off")
                     self.turnOffButton.setEnabled(True)
-                    self.turnOnButton.setText("Turn Light On")
+                    self.turnOnButton.setText("Light On")
                     self.turnOnButton.setEnabled(True)
 
                     self.ColorModeTabWidget.setTabEnabled(0, True)
@@ -2758,9 +2759,9 @@ try: # try to load the GUI
                         self.ColorModeTabWidget.setCurrentIndex(0) # switch to the CCT tab if there are no prior parameters
                 else: # we have multiple lights selected
                     # SWITCH THE TURN ON/OFF BUTTONS ON, AND CHANGE TEXT TO MULTIPLE LIGHTS TEXT
-                    self.turnOffButton.setText("Turn Light(s) Off")
+                    self.turnOffButton.setText("Lights Off")
                     self.turnOffButton.setEnabled(True)
-                    self.turnOnButton.setText("Turn Light(s) On")
+                    self.turnOnButton.setText("Lights On")
                     self.turnOnButton.setEnabled(True)
 
                     self.ColorModeTabWidget.setTabEnabled(0, True)
@@ -2772,9 +2773,9 @@ try: # try to load the GUI
                 self.tryConnectButton.setEnabled(False) # if we have no lights selected, disable the Connect button
 
                 # SWITCH THE TURN ON/OFF BUTTONS OFF, AND CHANGE TEXT TO GENERIC TEXT
-                self.turnOffButton.setText("Turn Light(s) Off")
+                self.turnOffButton.setText("Lights Off")
                 self.turnOffButton.setEnabled(False)
-                self.turnOnButton.setText("Turn Light(s) On")
+                self.turnOnButton.setText("Lights On")
                 self.turnOnButton.setEnabled(False)
 
                 self.ColorModeTabWidget.setTabEnabled(0, False) # disable the "CCT" mode tab
@@ -3329,6 +3330,12 @@ try: # try to load the GUI
             QApplication.instance().setStyleSheet(qss)
             self.themeToggleBtn.setText("\u263E" if self._isDarkTheme else "\u2600")
             self.themeToggleBtn.setToolTip("Switch to light theme" if self._isDarkTheme else "Switch to dark theme")
+            self._fitToolbar()
+
+        def _fitToolbar(self):
+            """Keep the window at least as wide as the toolbar, which otherwise squeezes its buttons and clips their text."""
+            margins = self.centralWidget().layout().contentsMargins()
+            self.setMinimumWidth(max(780, self.toolbarWidget.sizeHint().width() + margins.left() + margins.right()))
 
         # === TEXT SIZE ===
         # Default is larger on macOS, where Qt draws a point as one pixel and 10pt is tiny.
@@ -3345,6 +3352,7 @@ try: # try to load the GUI
             from neewerlux_theme import FONT_SCALE_MIN, FONT_SCALE_MAX
             self._fontScale = round(max(FONT_SCALE_MIN, min(FONT_SCALE_MAX, scale)), 2)
             QApplication.instance().setStyleSheet(getThemeQSS(self._isDarkTheme, self._fontScale))
+            self._fitToolbar()
             self.statusBar.showMessage("Text size " + str(int(round(self._fontScale * 100))) + "%", 2000)
             self.saveWindowGeometry()
 

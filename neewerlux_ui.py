@@ -1281,16 +1281,16 @@ class Ui_MainWindow(object):
         mainLayout.setSpacing(4)
 
         # === TOOLBAR ===
-        toolbarWidget = QWidget()
+        toolbarWidget = self.toolbarWidget = QWidget()
         toolbarWidget.setObjectName("toolbarWidget")
         toolbar = QHBoxLayout(toolbarWidget)
         toolbar.setContentsMargins(4, 4, 4, 4)
         toolbar.setSpacing(4)
 
-        self.turnOffButton = QPushButton("Turn Light(s) Off")
+        self.turnOffButton = QPushButton("Lights Off")
         self.turnOffButton.setEnabled(False)
         toolbar.addWidget(self.turnOffButton)
-        self.turnOnButton = QPushButton("Turn Light(s) On")
+        self.turnOnButton = QPushButton("Lights On")
         self.turnOnButton.setEnabled(False)
         toolbar.addWidget(self.turnOnButton)
         toolbar.addSpacing(10)
