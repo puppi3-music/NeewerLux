@@ -9,7 +9,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import neewerlux_audio as na  # noqa: E402
+import puppi3s_neewerlux_audio as na  # noqa: E402
 
 
 class Engine:

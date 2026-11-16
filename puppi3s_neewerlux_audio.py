@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Copyright (c) 2026 Puppi3
-"""Sound-reactive lighting for NeewerLux.
+# Copyright (c) 2026 puppi3-music
+"""Sound-reactive lighting for Puppi3's NeewerLux.
 
 Listens to an audio input device, analyses it a number of times per second and
 turns the result into a hue, saturation and brightness for each light.
@@ -20,7 +20,7 @@ This module has no Qt dependency. The GUI reads SoundEngine.state for meters and
 the engine calls sendFunc({lightIndex: (hue, sat, bri)}) to change the lights.
 sounddevice and numpy are optional: AUDIO_AVAILABLE is False without them.
 
-Times are time.perf_counter(), shared with neewerlux_midi: before Python 3.13,
+Times are time.perf_counter(), shared with puppi3s_neewerlux_midi: before Python 3.13,
 time.monotonic() only moves every 15.6 ms on Windows.
 """
 
@@ -1572,7 +1572,7 @@ class _LightShow:
     """Turns the analysis into light colours, frame by frame, using the engine's current settings."""
 
     def __init__(self, engine, analyser):
-        from neewerlux_midi import BeatTracker
+        from puppi3s_neewerlux_midi import BeatTracker
         self.engine = engine
         self.analyser = analyser
         self.gains = {k: _AutoGain() for k in LEVELS}
@@ -2312,7 +2312,7 @@ class SoundEngine:
         self.targets = []          # light indexes to drive
         self.lightInterval = None  # fn(light index) -> seconds that light takes per update (0 = quick): slow ones flash on every 2nd, 4th... beat
         self.lightGroup = None  # fn(light index) -> the group a light chases round in a Chase roll (a Nanoleaf's panels), or None
-        self.clock = None          # a neewerlux_midi.MidiClock: beats come from it while it has ticks
+        self.clock = None          # a puppi3s_neewerlux_midi.MidiClock: beats come from it while it has ticks
         self.clockLeadMs = 50      # fire clock beats this early, to make up for Bluetooth delay
         self.beatsPerColour = 8    # "Beat colour jump": change colour every this many beats
         self.clockNeedsSound = True  # MIDI clock beats only fire while kicks are heard (Traktor clocks on when stopped)

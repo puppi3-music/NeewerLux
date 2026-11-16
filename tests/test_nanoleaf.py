@@ -1,4 +1,4 @@
-"""Tests for neewerlux_nanoleaf. Run from the repo root:
+"""Tests for puppi3s_neewerlux_nanoleaf. Run from the repo root:
 
     uv run --no-sync python -m unittest tests.test_nanoleaf
 """
@@ -14,7 +14,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 
-import neewerlux_nanoleaf as nl  # noqa: E402
+import puppi3s_neewerlux_nanoleaf as nl  # noqa: E402
 from fake_nanoleaf import FakeNanoleaf, TOKEN  # noqa: E402
 
 UUID = "69400002-b5a3-f393-e0a9-e50e24dcca99"
@@ -559,15 +559,15 @@ class AddressTests(unittest.TestCase):
 
 
 class BatchStringTests(unittest.TestCase):
-    """parseBatchString in NeewerLux.py learns the NL: prefix."""
+    """parseBatchString in Puppi3sNeewerLux.py learns the NL: prefix."""
 
     @classmethod
     def setUpClass(cls):
         try:
-            import NeewerLux
+            import Puppi3sNeewerLux
         except Exception as e:  # bleak or PySide missing
-            raise unittest.SkipTest("NeewerLux.py could not be imported: %s" % e)
-        cls.app = NeewerLux
+            raise unittest.SkipTest("Puppi3sNeewerLux.py could not be imported: %s" % e)
+        cls.app = Puppi3sNeewerLux
 
     def parse(self, text):
         return self.app.parseBatchString(text)

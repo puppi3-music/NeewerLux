@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+
+Name=Puppi3's NeewerLux
+Comment=Control Neewer lights and Nanoleaf panels from your computer
+Categories=Utility;Amusement;
+
+Icon=io.github.puppi3_music.Puppi3sNeewerLux
+Exec=Puppi3sNeewerLux.py
+Terminal=false

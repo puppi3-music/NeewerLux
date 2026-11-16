@@ -1,11 +1,11 @@
-# NeewerLux changelog
+# Puppi3's NeewerLux changelog
 
 Changes relative to upstream [NeewerLite-Python v0.12d](https://github.com/taburineagle/NeewerLite-Python).
 
 ## v1.4.0 - 2026-11-16
 
 ### Licence
-- **This fork is now AGPL-3.0-only**, maintained by Puppi3. Code inherited from NeewerLite-Python and NeewerLux keeps its MIT notice in `LICENSE-MIT`. Puppi3 is credited in the About text, and source links point to this fork.
+- **This fork is now AGPL-3.0-only**, made by puppi3-music. Code inherited from NeewerLite-Python and NeewerLux keeps its MIT notice in `LICENSE-MIT`. puppi3-music is credited in the About text, and source links point to this fork.
 
 ### Added
 - **Nanoleaf panels.** Nanoleaf panel sets (Shapes, Canvas, Lines, Elements, Light Panels) on your Wi-Fi network now sit in the light table beside Neewer lights, and presets, animations, sound reactive mode, the HTTP API and the dashboard drive them. **Add Nanoleaf…** in the toolbar finds sets on this computer's subnet and pairs one (or type its IP address); `--nanoleaf_pair <ip>` does the same from the command line. Paired sets are saved in `light_prefs/nanoleaf.json`, appear with every scan without pairing again, and are found again if their IP address changes. A set is one light by default; **Show each panel as its own light** in Light Preferences gives each panel its own row, grouped under the set (collapse it, or select it to select every panel), with its own name and number, on the desktop and the dashboard. Panel colours, and quick changes to a whole set, go over Nanoleaf's UDP stream, so sound reactive mode flashes a Nanoleaf on every beat. Addresses look like `NL:S23220H3960` (`NL:<id>-P<panel id>` for one panel) and work with `--light`, in batch strings and in animation files. A set added only over Thread or Matter has no local API and must be put on Wi-Fi first. Known limits: the Scene tab does nothing on a Nanoleaf, there is no channel readout or signal strength, the search covers only this computer's /24, and a set left streaming when the app is killed keeps its last colours until an effect is chosen in the Nanoleaf app. A computer without Bluetooth now scans for Nanoleafs instead of failing.
@@ -31,6 +31,10 @@ Changes relative to upstream [NeewerLite-Python v0.12d](https://github.com/tabur
 - **More soft kicks picked up.** Where the MIDI clock or detected tempo expects a kick, a smaller rise in the bass now counts, as soft kicks and off-beat bass rise about as much as each other and only their timing tells them apart. With a clock this applies only while recent kicks agree on where the clock sits against the sound. On 13 tracks, about 15 more kicks in every 100 were caught (63% to 78% with no clock, 64% to 79% with one), with no track losing kicks; off-grid kicks rose 7-12% with no clock or a clock on time, and up to about 22% with a clock that is off or shifts. Not yet tried with live MIDI.
 - **Easier colour picking in HSI mode.** A colour wheel, 15 one-click swatches and a button for the system colour picker sit under the HSI sliders.
 - **Adjustable text size.** A− / A+ toolbar buttons and Ctrl/Cmd +, − and 0 scale all interface text from 80% to 250%. The setting is remembered, and the default on macOS is 130%.
+
+### Changed
+- **Renamed to Puppi3's NeewerLux.** The window, About text, web dashboard, HTTP pages and command-line output use the new name, and the credits name puppi3-music, then NeewerLux by PoizenJam, NeewerLite-Python and NeewerLite as before. Files, modules and URLs use `Puppi3sNeewerLux`, since an apostrophe causes trouble there: `Puppi3sNeewerLux.py` (and `puppi3s_neewerlux_*.py`), `Puppi3sNeewerLux.exe` in a `Puppi3sNeewerLux` folder, release zips named `Puppi3sNeewerLux-<version>-Windows.zip` and `-Source.zip`, and the package name `puppi3s-neewerlux`. Upgrading keeps your settings: on first launch, `NeewerLux.prefs`, `NeewerLux.geometry` and `NeewerLux.log` in `light_prefs` are renamed to `Puppi3sNeewerLux.*`, and presets, animations and per-light files keep their names. The HTTP API moves to `/Puppi3sNeewerLux/doAction`, `/batch` and `/animate`; the old `/NeewerLux/` (and `/NeewerLite-Python/`) URLs still work, so Stream Deck buttons don't need changing. A version up to 1.3 that is still running isn't detected as another instance, so close it before starting this one.
+- **Update checks and Releases links point to this fork** (github.com/puppi3-music/NeewerLux). They pointed at PoizenJam's NeewerLux, so the update banner compared this fork against upstream's releases.
 
 ### Fixed
 - A crash on macOS after scanning for or linking to lights. The background thread was rebuilding the light table itself; the main window now does that.

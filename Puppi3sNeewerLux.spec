@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
-# NeewerLux PyInstaller spec file
-# Build with:  pyinstaller NeewerLux.spec
-# Produces:    dist/NeewerLux/  (--onedir mode)
+# Puppi3's NeewerLux PyInstaller spec file
+# Build with:  pyinstaller Puppi3sNeewerLux.spec
+# Produces:    dist/Puppi3sNeewerLux/  (--onedir mode)
 
 import sys
 from PyInstaller.utils.hooks import collect_all
@@ -12,26 +12,26 @@ block_cipher = None
 bleak_datas, bleak_binaries, bleak_hiddenimports = collect_all('bleak')
 
 a = Analysis(
-    ['NeewerLux.py'],
+    ['Puppi3sNeewerLux.py'],
     pathex=[],
     binaries=bleak_binaries,
     datas=[
-        ('com.github.poizenjam.NeewerLux.ico', '.'),
-        ('com.github.poizenjam.NeewerLux.png', '.'),
+        ('io.github.puppi3_music.Puppi3sNeewerLux.ico', '.'),
+        ('io.github.puppi3_music.Puppi3sNeewerLux.png', '.'),
         ('LICENSE', '.'),
         ('LICENSE-MIT', '.'),
     ] + bleak_datas,
     hiddenimports=[
         'bleak',
         'bleak.backends.winrt',
-        'neewerlux_ui',
-        'neewerlux_theme',
-        'neewerlux_webui',
-        'neewerlux_anim_editor',
-        'neewerlux_audio',
+        'puppi3s_neewerlux_ui',
+        'puppi3s_neewerlux_theme',
+        'puppi3s_neewerlux_webui',
+        'puppi3s_neewerlux_anim_editor',
+        'puppi3s_neewerlux_audio',
         'sounddevice',
-        'neewerlux_midi',
-        'neewerlux_nanoleaf',
+        'puppi3s_neewerlux_midi',
+        'puppi3s_neewerlux_nanoleaf',
         'rtmidi',
         'numpy',
         'PySide6',
@@ -57,7 +57,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='NeewerLux',
+    name='Puppi3sNeewerLux',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -68,7 +68,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='com.github.poizenjam.NeewerLux.ico',
+    icon='io.github.puppi3_music.Puppi3sNeewerLux.ico',
 )
 
 coll = COLLECT(
@@ -79,5 +79,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='NeewerLux',
+    name='Puppi3sNeewerLux',
 )
