@@ -2,7 +2,7 @@
 
 Changes relative to upstream [NeewerLite-Python v0.12d](https://github.com/taburineagle/NeewerLite-Python).
 
-## Unreleased
+## v1.4.0 - 2026-11-16
 
 ### Licence
 - **This fork is now AGPL-3.0-only**, maintained by Puppi3. Code inherited from NeewerLite-Python and NeewerLux keeps its MIT notice in `LICENSE-MIT`. Puppi3 is credited in the About text, and source links point to this fork.
