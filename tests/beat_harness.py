@@ -1,7 +1,8 @@
 """Beat-tracking harness for sound mode: feeds known music through the real analyser and light show
 with a simulated clock, and scores how well the predicted beats line up with the real ones.
 
-A dev tool, not part of the app. Run from the repo root:
+A dev tool, not part of the app. Before changing the beat tracking, read tests/BEAT_NOTES.md: open problems
+and what was already tried and dropped. Add what you try to it. Run from the repo root:
 
     uv run python tests/beat_harness.py                   # every synthetic case: line, laptop-mic and digital input
     uv run python tests/beat_harness.py --case garage132  # one case

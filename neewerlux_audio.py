@@ -73,6 +73,7 @@ HIGH = (2000, 15000)
 FFT_SIZE = 2048
 QUIET_RATIO = 0.18  # level (fourth root of power) below this share of the music level counts as quiet, about -30 dB
 QUIET_HOLD = 1.5    # seconds of quiet before MIDI clock beats pause
+QUIET_TEMPO_HOLD = 4.0  # seconds of quiet the tempo found in the sound is kept through, as for a gap in a track; longer is a stop
 NOISE_MARGIN = 1.5  # music must be this far over the noise floor (fourth-root scale, about +7 dB) to count
 HOP = 512           # samples analysed per step, about 94 steps a second at 48 kHz
 ANALYSIS_RATE = 48000  # Hz: faster devices are brought down to about this, see _Decimator
@@ -136,15 +137,19 @@ TEMPO_RESNAP = 0.04     # seconds: two kicks this close to a whole number of bea
 TEMPO_KICK_GATE = 0.045  # seconds: only kicks this close to a grid beat steer the grid (16ths at 160 BPM are 94 ms apart)
 TEMPO_KICK_PHASE = 0.5  # share of a kick's error the grid moves by
 TEMPO_KICK_FREQ = 0.25   # ... and the share added to the beat period, so a new tempo is followed within a few beats
+TEMPO_KICK_SHARE = 0.5   # once trusted, share of the last 8 kicks that must be on the grid before kicks move the period (a fill's stray hits don't)
 TEMPO_KICK_SPAN = 0.035  # the most the kicks may move the period from the one locked on, under the 4% that locks again
 TEMPO_KICK_SOFT = 0.01   # seconds: errors smaller than this steer in proportion (jitter in when a kick is heard), larger ones fully
 TEMPO_KICK_OFFSET = 0.05  # how fast the usual offset of kicks from the grid is learned (a mic or the kick sound shifts it)
-TEMPO_ODD_RATIO = 0.005   # estimates this close to 3/4 or 4/3 of the period (now, or at the lock) are ignored, never relocked to
+TEMPO_ODD_RATIO = 0.01    # estimates this close to 3/4 or 4/3 of the period (now, or at the lock) are ignored, never relocked to
+                          # (through a laptop mic, Strobe's breakdown reads 0.4-0.6% off 4/3)
 TEMPO_TRIPLET_RATIO = 0.015  # estimates this close to 2/3 or 3/2 of the period: a riff of three notes over two beats (Freestyler) or two
 TEMPO_TRIPLET_KICKS = 4       # over three; ignored while at least this many kicks in the window fit the lock as well as they fit the estimate
 TEMPO_TRIPLET_HOLD = 0.85     # ... or while the locked tempo still repeats at least this share as strongly as the estimate
 TEMPO_TRIPLET_SHARE = 1.25    # a winning lag is taken as 1.5 beats (a riff of dotted quarters) when 4/3 of it repeats this much more than twice it
 TEMPO_EST_OFFSET = 0.1   # how fast, once clicks time the kicks, the window's beat's offset from them is learned
+TEMPO_EST_PULL = 0.4     # share of the window's beat error the grid moves by at each fit
+TEMPO_EST_PULL_OWN = 0.1  # ... while kicks timed from their own clicks steer it: they know better than the bass's rises
 TEMPO_EST_MAX = 0.035    # seconds: the most that offset may grow to (the bass's biggest rise comes 20-30 ms into a kick)
 TEMPO_KICK_LEARN = 8      # kicks after the first lock that only learn that offset (their mean) before any steering
 TEMPO_JUMP_KICKS = 4      # kicks in a row, evenly spaced at a new tempo past the 4% relock, that lock onto it at once
@@ -155,6 +160,8 @@ TEMPO_TRUST_BEATS = 12    # (a lock at 4/3 of the kicks' tempo gets one on every
 TEMPO_FIT_KICKS = 32      # kicks on the grid remembered to fit the period from when a hold begins
 TEMPO_FIT_MIN = 8         # ... and the least that will do
 TEMPO_FIT_RESID = 0.015   # seconds: the most a kick may sit off the fitted line to be counted
+TEMPO_FIT_STEP = 0.004    # seconds: a step in the kicks' phase this big or more is fitted as a step, not a tilt ...
+TEMPO_FIT_STEP_GAIN = 0.5  # ... when it leaves at most this share of the single line's squared error
 TEMPO_DENSE_KICKS = 2.5   # kicks per beat over the window that make a tempo up to half the range's top twice as fast:
                           # footwork's 3-3-2 kicks repeat only every two beats, and at half speed come 3.5 to a beat
 ONSET_DELAY = 0.025     # seconds the detected attack lags the real one, until clicks have been heard (measured on a kick with no click)
@@ -163,6 +170,7 @@ CLICK_JUMP = 4.0        # how many times the high-band energy of the 5 ms before
 CLICK_KEEP = 16         # recent clicks whose median lag moves the onset delay
 CLICK_MIN = 6           # ... and the fewest that will do, all within
 CLICK_CLUSTER = 0.006   # ... this many seconds of each other
+CLICK_OWN = 0.02        # seconds: once clicks are heard, a kick whose own click lags it by this close to the usual lag is timed from that click
 ROLL = (180, 1500)      # Hz: where snare rolls are looked for
 ROLL_WINDOW = 1.5       # seconds of that band each estimate looks at
 ROLL_HIT = (0.05, 0.18)  # seconds between hits that count as a roll: 16ths at 85-155 BPM, 32nds up to 150
@@ -224,7 +232,8 @@ GAP_DEPTH = 14.0         # dB under the median of that time that makes a stop: t
 GAP_EXIT = 7.0           # dB under it that ends one, close to the old level, so noise tails inside the stop don't
 GAP_LONGEST = 2.0        # seconds a stop lasts at most: quieter sound after that is just the new level
 GAP_RECENT = 0.3         # seconds after a stop that the next kick counts as the music coming back in
-GAP_BEAT_AGE = 0.12      # seconds into a stop before predicted beats are held back: a brief dip just before a kick still fires
+GAP_BEAT_AGE = 0.16      # seconds into a stop before predicted beats are held back: a brief dip just before a kick still fires
+                         # (2-step's dip before the bar's kick reaches 0.12 s)
 GAP_DROP = 0.25          # seconds a stop must have lasted for the kick after it to count as a drop
 HIT_RISE = 10.0          # dB the sound must jump within a few frames to count as a hit when no kicks are playing
 HIT_LOUD = 0.75          # ... and the share of the loudness with kicks it must reach (fourth-root scale)
@@ -645,6 +654,10 @@ class _TempoTracker:
         self.kickTimes.clear()
         self.period = 0.0
         self.refT = self.refPos = 0.0
+        self.lastOnGrid = None
+        self.comb = None
+        self.holdEnd = None
+        self.holdKick = None
         self.locked = False
         self.candidate = 0.0
         self.agree = self.doubt = 0
@@ -652,6 +665,7 @@ class _TempoTracker:
         self.nextFit = 0.0
         self.coast = None   # when the hold began, while the tempo is held with no clear beat
         self.lastKick = None
+        self.lastOwn = None  # when a kick timed from its own click last came
         self.basePeriod = 0.0  # the period at the lock, which the kicks may move it from by TEMPO_KICK_SPAN at most
         self.kickOffset = 0.0  # seconds kicks usually come after the grid beat they fit, learned while locked
         self.offsetN = 0       # kicks the offset has been learned from
@@ -660,6 +674,7 @@ class _TempoTracker:
         self.onGrid = deque(maxlen=TEMPO_FIT_KICKS)  # times of recent kicks that steered the grid, to fit the period when a hold begins
         self.flipped = None    # (when, by how much) the grid last moved to the off-beat
         self.jumped = None     # when the kicks last locked onto a new tempo: until the window has heard it, its estimates of the old one are ignored
+        self.onShare = deque(maxlen=8)  # whether each of the last kicks landed within the gate of a grid beat
         self.hits = deque(maxlen=TEMPO_TRUST_KICKS)  # grid beats the last kicks on the grid landed on, since the lock
         self.trusted = False   # enough kicks have landed on the grid that the lock is the beat, not a weak intro's guess
 
@@ -692,6 +707,8 @@ class _TempoTracker:
             return
         period, beatT = est
         beatT -= self.estOffset
+        if self.period and abs(period / self.period - 1.0) <= 0.04:
+            self.comb = (now, beatT)  # where the window's comb puts the beats, for a held grid's resnaps
         near = lambda ratios, tol: any(abs(period / q - r) < tol * r for r in ratios for q in (self.period, self.basePeriod))
         if self.locked and (self.trusted and near((0.75, 4.0 / 3.0), TEMPO_ODD_RATIO)
                             or near((2.0 / 3.0, 1.5), TEMPO_TRIPLET_RATIO)
@@ -720,6 +737,9 @@ class _TempoTracker:
             if self.locked and abs(period / self.period - 1.0) > 0.04:
                 self._unsure()
             return
+        if self.locked and self.trusted and self.lastKick is not None and now - self.lastKick > 2.0 * self.period \
+                and abs(period / self.period - 1.0) > 0.04:
+            return  # the kicks just stopped: a breakdown, not a new tempo (Desire at 161 s); the hold takes over
         if not self.locked or abs(period / self.period - 1.0) > 0.04:  # lock on, or a new tempo
             self.locked, self.period, self.refT, self.refPos = True, period, beatT, 0.0
             self.basePeriod = period
@@ -730,7 +750,11 @@ class _TempoTracker:
             return
         # Same tempo: follow small drifts gently, keeping the position continuous so no beat is skipped or doubled.
         self.refPos, self.refT = self.position(now), now
-        self.period += (period - self.period) * 0.3
+        if not (self.trusted and self.holdEnd is not None and now - self.holdEnd < TEMPO_WINDOW
+                and abs(period / self.period - 1.0) > 0.02):
+            # Just after a trusted hold, the window is still full of the breakdown: a reading 4% off (Feels Like Us at
+            # 173 s) says nothing about the kicks' tempo, so it doesn't pull the period the hold kept.
+            self.period += (period - self.period) * 0.3
         p = self.position(beatT)
         err = p - round(p)
         if abs(err) <= 0.25 and self.clicked and self.offsetN >= TEMPO_KICK_LEARN and self.lastKick is not None \
@@ -740,7 +764,8 @@ class _TempoTracker:
             # back kicks that drift off the beat.
             self.estOffset = min(max(self.estOffset + TEMPO_EST_OFFSET * err * self.period, -TEMPO_EST_MAX), TEMPO_EST_MAX)
         if abs(err) <= 0.25:
-            self.refPos -= err * 0.4
+            own = self.lastOwn is not None and now - self.lastOwn < 2.0 * self.period
+            self.refPos -= err * (TEMPO_EST_PULL_OWN if own else TEMPO_EST_PULL)
             self.flip = max(0, self.flip - 1)
         else:
             # An estimate on the off-beat: syncopated kicks and off-beat hats (2-step, footwork)
@@ -785,6 +810,9 @@ class _TempoTracker:
         if self.locked and self.coast is None and self.lastKick is not None and not rolling \
                 and now - lastKick > max(2.0, 4.0 * self.period):  # music with no kicks at all has no breakdown to hold through
             self._startCoast(now)
+        if self.locked and self.coast is None and self.trusted and self.lastOnGrid is not None and not rolling \
+                and now - self.lastOnGrid > max(2.0, 4.0 * self.period):
+            self._startCoast(now)
         if self.coast is not None and rolling:  # a roll keeps the track's tempo: the hold's time starts again when it ends
             self.coast = now
         if self.coast is not None and now - self.coast > TEMPO_COAST:
@@ -794,7 +822,10 @@ class _TempoTracker:
         """Hold the tempo from now. The kicks steer the phase every beat, which hides a period a fraction
         of a millisecond off; held for a long breakdown, that would add up to a late grid. So the period
         (and the phase at the last kick) are set from a straight line through the recent kicks first."""
+        self.flipped = None  # the fit below sets the phase from the kicks: an earlier flip is no longer there to undo
         self.coast = now
+        self.gaps.clear()  # gaps from an earlier hold say nothing about this one
+        self.holdKick = self.lastOnGrid  # the last kick on the grid before the hold
         k = np.asarray(self.onGrid)
         self.onGrid.clear()
         if len(k) < TEMPO_FIT_MIN:
@@ -806,20 +837,36 @@ class _TempoTracker:
         keep = np.abs(a + P * n - k) <= TEMPO_FIT_RESID  # leave out a soft kick in a fill, heard late
         if keep.sum() < TEMPO_FIT_MIN:
             return
-        P, a = np.polyfit(n[keep], k[keep], 1)
-        if abs(P / self.period - 1.0) > 0.01 or np.abs(a + P * n[keep] - k[keep]).max() > TEMPO_FIT_RESID:
+        n, k = n[keep], k[keep]
+        P, a = np.polyfit(n, k, 1)
+        if abs(P / self.period - 1.0) > 0.01 or np.abs(a + P * n - k).max() > TEMPO_FIT_RESID:
             return
+        # A step in the kicks (a new part, the kick heard a few ms later) tilts a single line, and the tilt adds up
+        # over a long hold. Fit one period with the phase free to step once; take it when it explains the kicks
+        # far better, and the phase from the kicks after the step.
+        sse = np.sum((a + P * n - k) ** 2)
+        best = None
+        for i in range(TEMPO_FIT_MIN // 2, len(n) - TEMPO_FIT_MIN // 2 + 1):
+            X = np.column_stack([n, n >= n[i], np.ones(len(n))])
+            c = np.linalg.lstsq(X, k, rcond=None)[0]
+            e = np.sum((X @ c - k) ** 2)
+            if best is None or e < best[0]:
+                best = (e, c)
+        if best is not None and abs(best[1][1]) >= TEMPO_FIT_STEP and best[0] < TEMPO_FIT_STEP_GAIN * sse:
+            P, a = best[1][0], best[1][2] + best[1][1]
         last = a + P * n[-1] - self.onsetDelay - self.kickOffset
         self.refPos, self.refT = round(self.position(last)), last
         self.period = P
 
-    def kick(self, t, weight=1.0, rolling=False):
+    def kick(self, t, weight=1.0, rolling=False, own=False):
         """A kick was heard at time t. While holding, two in a row that fit the tempo set where the beats fall.
         Otherwise a kick close to a grid beat moves the grid and the period a little towards it, so a change
         of tempo is followed within a few beats instead of waiting for the 8 s window to fill with it.
         weight is less than 1 for a kick that only cleared the lower bar for an expected beat."""
         if not rolling:
             self.kickTimes.append(t)
+        if own:
+            self.lastOwn = t
         if self.coast is None and self.locked and not rolling:
             self.recent.append(t)
             if self._jump(t):
@@ -836,6 +883,7 @@ class _TempoTracker:
             at = t - self.onsetDelay
             p = self.position(at)
             e = (p - round(p)) * self.period - self.kickOffset  # seconds the kick came after its grid beat, as usual
+            self.onShare.append(abs(e) <= TEMPO_KICK_GATE)
             if abs(e) <= TEMPO_KICK_GATE and (not self.hits or self.hits[-1] != round(p)):
                 self.hits.append(round(p))
                 if len(self.hits) == self.hits.maxlen and self.hits[-1] - self.hits[0] < TEMPO_TRUST_BEATS:
@@ -845,28 +893,74 @@ class _TempoTracker:
                 self.kickOffset += e / self.offsetN
             elif abs(e) <= TEMPO_KICK_GATE:
                 self.onGrid.append(t)
+                self.lastOnGrid = t
                 if not self.clicked:
                     self.kickOffset += TEMPO_KICK_OFFSET * weight * e
-                weight *= min(1.0, abs(e) / TEMPO_KICK_SOFT) if TEMPO_KICK_SOFT > 0 else 1.0
+                if not own:  # a kick timed from its own click has no hop of jitter to soften
+                    weight *= min(1.0, abs(e) / TEMPO_KICK_SOFT) if TEMPO_KICK_SOFT > 0 else 1.0
                 self.refPos, self.refT = p, at
                 self.refPos -= TEMPO_KICK_PHASE * weight * e / self.period
                 lo, hi = self.basePeriod * (1 - TEMPO_KICK_SPAN), self.basePeriod * (1 + TEMPO_KICK_SPAN)
-                new = self.period + TEMPO_KICK_FREQ * weight * e
+                steer = not self.trusted or sum(self.onShare) >= TEMPO_KICK_SHARE * len(self.onShare)
+                new = self.period + (TEMPO_KICK_FREQ * weight * e if steer else 0.0)
                 # Never past the span (so the 4% relock can't fire on our own correction), but don't pull back into it either.
                 self.period = min(max(new, min(lo, self.period)), max(hi, self.period))
         if self.coast is not None and self.locked and self.lastKick is not None:
             beats = (t - self.lastKick) / self.period
-            if 1 <= round(beats) <= 4 and abs(beats - round(beats)) * self.period < TEMPO_RESNAP:
-                p = self.position(t - self.onsetDelay)
-                self.refPos -= p - round(p)
+            p = self.position(t - self.onsetDelay)
+            if 1 <= round(beats) <= 4 and abs(beats - round(beats)) * self.period < TEMPO_RESNAP \
+                    and (not self.trusted or abs(p - round(p)) * self.period <= TEMPO_KICK_GATE and self._combAgrees(t)):
+                if self.trusted:  # a kick nudges a held trusted grid as it would a tracked one, not set it to itself
+                    self.refPos -= TEMPO_KICK_PHASE * (p - round(p) - self.kickOffset / self.period)
+                    self.lastOnGrid = t
+                    self.holdEnd = t
+                else:
+                    self.refPos -= p - round(p)
                 self.coast = None
                 self.doubt = 0
                 self.gaps.clear()
-            elif abs(beats - round(beats)) * self.period >= TEMPO_RESNAP:  # a whole number of beats apart (a sub note every two bars) fits the held tempo
+            elif self.trusted and 1 <= round(beats) <= 4 and abs(beats - round(beats)) * self.period < TEMPO_RESNAP \
+                    and self._combFresh(t) and self._combAgrees(t) and self._onPreHold(t):
+                # The held grid is off (Freestyler at 219 s: half a beat) but the window's comb and the kicks agree
+                # where the beats are: set the grid to them.
+                self.refPos -= p - round(p) - self.kickOffset / self.period
+                self.lastOnGrid = t
+                self.holdEnd = t
+                self.coast = None
+                self.doubt = 0
+                self.gaps.clear()
+            elif self.trusted and t - self.coast > 4.0 and self._kicksSince(t - 4.0) >= 6:
+                self.coast = None  # kicks keep coming and none fits the held grid: track them as usual again
+                self.lastOnGrid = t
+            elif abs(beats - round(beats)) * self.period >= TEMPO_RESNAP \
+                    and abs(4 * beats - round(4 * beats)) * self.period / 4 >= 0.010:
+                # A whole number of beats apart (a sub note every two bars) fits the held tempo, and so do a fill's
+                # 8ths and 16ths (Desire at 172 s): steady, but no new track.
                 self.gaps.append(t - self.lastKick)
                 if len(self.gaps) == self.gaps.maxlen and max(self.gaps) - min(self.gaps) < 2.0 * TEMPO_RESNAP:
                     self.coast = None  # steady kicks that don't fit: the next track has come in, so listen for its tempo as usual
+                    if self.lastOnGrid is not None and t - self.lastOnGrid > 6.0:
+                        self.lastOnGrid = t  # a hold that has run its course: don't start a new one on the stale mark
         self.lastKick = t
+
+    def _onPreHold(self, t):
+        # The comb can sit on an off-beat (messy at 36.5 s); only a hold that began off its own last kicks gets moved
+        if self.holdKick is None:
+            return False
+        b = (t - self.holdKick) / self.period
+        return abs(b - round(b)) * self.period <= TEMPO_KICK_GATE
+
+    def _kicksSince(self, t0):
+        return sum(1 for k in self.kickTimes if k >= t0)
+
+    def _combFresh(self, t):
+        return self.comb is not None and t - self.comb[0] <= 2.0 * TEMPO_FIT_EVERY + 1.0
+
+    def _combAgrees(self, t):
+        if not self._combFresh(t):
+            return True  # the window doesn't read the held tempo (a fill): the kicks alone decide
+        x = (t - self.onsetDelay - self.comb[1]) / self.period
+        return abs(x - round(x)) * self.period <= TEMPO_KICK_GATE
 
     def _jump(self, t):
         """Lock onto a new tempo at once when the last few kicks are evenly spaced a whole number of beats
@@ -1302,8 +1396,11 @@ class _Analyser:
         elif self.heard:
             if self.kicks.step(kr, t, sens, self.kickExpected) and lv["bass"] > 1e-6:
                 self.kickSeen = True
-                self._learnClick()
-                self.tempo.kick(t, 0.5 if self.kicks.guided else 1.0, self.roll.active)
+                lag = self._learnClick()
+                # A kick that swells in under the bass is detected a hop or two later than one that doesn't;
+                # its click isn't, so time it from that, shifted to where the tempo expects a detected kick.
+                tk = t - lag + self.tempo.onsetDelay if lag is not None else t
+                self.tempo.kick(tk, 0.5 if self.kicks.guided else 1.0, self.roll.active, lag is not None)
             self.tempo.add(t, kr, rr)
             self.roll.add(float(power[self._snare].mean()), float(kickPower.mean()))
             if self._hopCount % HARMONY_EVERY == 0:
@@ -1311,7 +1408,8 @@ class _Analyser:
 
     def _learnClick(self):
         """Time the click of the kick just detected in the recent samples, and move the tempo's onset delay by how
-        much later than usual most of the last few were heard. A kick with no click (an 808, a mic far off) leaves it alone."""
+        much later than usual most of the last few were heard. A kick with no click (an 808, a mic far off) leaves it alone.
+        Returns this kick's own lag when clicks are heard and it lags by about the usual, else None."""
         x = self._longHist.astype(float)
         hp = np.diff(x, 2)  # about 40 dB less at 50 Hz than at 3 kHz: the click stands, the body doesn't
         step = max(1, int(self.rate / 1000))
@@ -1319,13 +1417,14 @@ class _Analyser:
         n = len(e)
         lo, hi = n - int(CLICK_LOOK[1] * 1000), n - int(CLICK_LOOK[0] * 1000)
         if lo < 5:
-            return
+            return None
         before = np.convolve(e, np.ones(5) / 5.0)[4:n]  # before[k] = mean of e[k:k + 5], the 5 ms before k + 5
         ratio = e[lo:hi] / (before[lo - 5:hi - 5] + 1e-12)
         i = int(np.argmax(ratio))
         if ratio[i] < CLICK_JUMP:
-            return
-        self._clicks.append((n - (lo + i)) * step / self.rate)
+            return None
+        lag = (n - (lo + i)) * step / self.rate
+        self._clicks.append(lag)
         if len(self._clicks) >= CLICK_MIN:
             # The densest few ms of recent lags, not their median: a hat or the bass a little before some
             # kicks reads as an earlier click, and with a rolling bass that is a third of them.
@@ -1335,6 +1434,7 @@ class _Analyser:
             if ends[i] - i >= CLICK_MIN:
                 self.tempo.onsetDelay = float(np.median(lags[i:ends[i]]))
                 self.tempo.clicked = True
+        return lag if self.tempo.clicked and abs(lag - self.tempo.onsetDelay) <= CLICK_OWN else None
 
     def hasLevels(self):
         return self._peak is not None
@@ -1354,9 +1454,12 @@ class _Analyser:
         self.roll.update(now)
         self.tempo.checkCoast(now, self.kicks.lastBeat, self.roll.active)
 
-    def pause(self):
-        """No music: start the kick and tempo search afresh when it comes back."""
-        self.tempo.reset()
+    def pause(self, quietFor):
+        """No music: start the kick and tempo search afresh when it comes back. A short quiet (a gap
+        in the middle of a track) keeps a tempo the kicks have confirmed, held as through a breakdown until they
+        return; an unconfirmed lock (a sparse intro, as oddIntro136) is let go to be found afresh."""
+        if quietFor > QUIET_TEMPO_HOLD or not self.tempo.trusted:
+            self.tempo.reset()
         self.roll.reset()
         self.harmony.reset()
         self.kicks.reset()
@@ -1646,7 +1749,7 @@ class _LightShow:
         heard = self.gate.step(0.0 if silent else math.sqrt(math.sqrt(raw["power"])), now, dt)
         self.heard = a.heard = heard
         if not heard:
-            a.pause()
+            a.pause(now - self.gate.lastSound if self.gate.lastSound is not None else math.inf)
             self.rollPos = self.rollHit = None  # the pause has just cleared the beat these were worked out from
 
         stopped = self._updateGap(now, raw, heard, kick)
