@@ -149,6 +149,11 @@ QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QComboBox {
     color: $text; padding: $padInput; selection-background-color: $accent; selection-color: $onAccent;
 }
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QSpinBox:focus, QComboBox:focus { border-color: $accent; }
+/* Spin boxes with external +/- buttons: under the Windows 11 style a bordered QSpinBox with
+   NoButtons shrinks its text field to 1 px unless the hidden arrows get an explicit geometry. */
+QSpinBox[externalButtons="true"]::up-button, QSpinBox[externalButtons="true"]::down-button {
+    subcontrol-origin: border; width: 0px; height: 0px; border: none;
+}
 QComboBox::drop-down { border-left: 1px solid $border; width: 20px; subcontrol-origin: padding; subcontrol-position: center right; }
 QComboBox::down-arrow { width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid $textDim; }
 QComboBox QAbstractItemView {

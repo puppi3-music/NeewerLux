@@ -8,7 +8,7 @@ import re
 
 try:
     import PySide6
-    from PySide6.QtCore import Qt, Signal, QSize
+    from PySide6.QtCore import Qt, Signal, QSize, QObject, QEvent
     from PySide6.QtGui import QFont, QColor, QLinearGradient, QBrush, QKeySequence, QIcon, QPainter, QConicalGradient, QRadialGradient, QPen, QGuiApplication
     from PySide6.QtWidgets import (
         QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout,
@@ -17,13 +17,14 @@ try:
         QTabWidget, QCheckBox, QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QComboBox, QAbstractButton,
         QGraphicsView, QGraphicsScene, QScrollArea, QKeySequenceEdit,
         QListWidget, QListWidgetItem, QStatusBar, QHeaderView, QFrame, QProgressBar,
-        QSystemTrayIcon, QMenu, QTextBrowser, QColorDialog, QDialog, QDialogButtonBox
+        QSystemTrayIcon, QMenu, QTextBrowser, QColorDialog, QDialog, QDialogButtonBox,
+        QApplication, QAbstractSlider, QAbstractSpinBox, QScrollBar, QTabBar, QStyle
     )
     customSignal = Signal
 except ImportError:
     try:
         import PySide2
-        from PySide2.QtCore import Qt, Signal, QSize
+        from PySide2.QtCore import Qt, Signal, QSize, QObject, QEvent
         from PySide2.QtGui import QFont, QColor, QLinearGradient, QBrush, QKeySequence, QIcon, QPainter, QConicalGradient, QRadialGradient, QPen, QGuiApplication
         from PySide2.QtWidgets import (
             QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout,
@@ -32,11 +33,138 @@ except ImportError:
             QTabWidget, QCheckBox, QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QComboBox, QAbstractButton,
             QGraphicsView, QGraphicsScene, QScrollArea, QKeySequenceEdit,
             QListWidget, QListWidgetItem, QStatusBar, QHeaderView, QFrame, QProgressBar,
-            QSystemTrayIcon, QMenu, QTextBrowser, QColorDialog, QDialog, QDialogButtonBox
+            QSystemTrayIcon, QMenu, QTextBrowser, QColorDialog, QDialog, QDialogButtonBox,
+            QApplication, QAbstractSlider, QAbstractSpinBox, QScrollBar, QTabBar, QStyle
         )
         customSignal = Signal
     except ImportError:
         raise  # let it propagate, NeewerLux.py will handle the error
+
+
+# === INPUT GUARD (mouse wheel + touchscreen) ===
+
+def _globalPos(event):
+    return event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
+
+def _localPos(event):
+    return event.position().toPoint() if hasattr(event, "position") else event.pos()
+
+def _scrollAreaFor(w):
+    """Nearest enclosing scroll area of a widget (not counting the widget itself)."""
+    p = w.parentWidget() if w is not None else None
+    while p is not None:
+        if isinstance(p, QAbstractScrollArea):
+            return p
+        p = p.parentWidget()
+    return None
+
+
+class InputGuard(QObject):
+    """App-wide event filter.
+
+    Mouse wheel: sliders, spin boxes, dropdowns and tab bars never change value
+    on a wheel turn; the wheel scrolls the page they sit in instead, so scrolling
+    through the settings can't silently change a light.
+
+    Touch: dragging a finger on empty space or a label scrolls the page (Qt
+    turns touches into mouse events, which would otherwise do nothing there),
+    and tapping a slider's track jumps the handle to the finger so it can be
+    dragged from there instead of stepping one page at a time.
+    """
+    _WHEEL_BLOCKED = (QAbstractSlider, QAbstractSpinBox, QComboBox, QTabBar)
+    _INTERACTIVE = (QAbstractButton, QAbstractSlider, QAbstractSpinBox, QComboBox, QLineEdit,
+                    QTextEdit, QPlainTextEdit, QAbstractItemView, QKeySequenceEdit, QTabBar)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._drag = None  # [scrollArea, startGlobalPos, startH, startV, dragging, pressTimestamp]
+
+    @staticmethod
+    def _isTouch(event):
+        try:
+            return event.source() != Qt.MouseEventNotSynthesized
+        except Exception:
+            return False
+
+    def _isInteractive(self, w, stopAt):
+        while w is not None and w is not stopAt:
+            if isinstance(w, self._INTERACTIVE) or isinstance(w, ColorWheel):
+                return True
+            w = w.parentWidget()
+        return False
+
+    def eventFilter(self, obj, event):
+        et = event.type()
+        if et == QEvent.Wheel:
+            if isinstance(obj, self._WHEEL_BLOCKED) and not isinstance(obj, QScrollBar):
+                area = _scrollAreaFor(obj)
+                if area is not None:
+                    d = event.angleDelta()
+                    bar = area.horizontalScrollBar() if abs(d.x()) > abs(d.y()) else area.verticalScrollBar()
+                    if bar is not None and bar.isVisible():
+                        QApplication.sendEvent(bar, event)
+                return True  # never let the wheel change the value
+            return False
+
+        # Only act on events addressed to widgets (not the top-level QWindow), so Qt's
+        # own press/release bookkeeping at window level is never disturbed
+        if not isinstance(obj, QWidget):
+            return False
+
+        if et == QEvent.MouseButtonPress and self._isTouch(event) and event.button() == Qt.LeftButton:
+            # An unaccepted press is re-sent to each parent; only the first delivery counts
+            if self._drag is not None and self._drag[5] == event.timestamp():
+                return False
+            self._drag = None
+            if isinstance(obj, QSlider):
+                self._jumpSlider(obj, event)
+                return False
+            area = _scrollAreaFor(obj)
+            if isinstance(area, QScrollArea) and not self._isInteractive(obj, area):
+                self._drag = [area, _globalPos(event), area.horizontalScrollBar().value(),
+                              area.verticalScrollBar().value(), False, event.timestamp()]
+            return False
+
+        if et == QEvent.MouseMove and self._drag is not None:
+            area, start, h0, v0, dragging, _ = self._drag
+            delta = _globalPos(event) - start
+            if not dragging and delta.manhattanLength() >= QApplication.startDragDistance():
+                self._drag[4] = dragging = True
+            if dragging:
+                area.horizontalScrollBar().setValue(h0 - delta.x())
+                area.verticalScrollBar().setValue(v0 - delta.y())
+                return True
+            return False
+
+        if et == QEvent.MouseButtonRelease and self._drag is not None:
+            dragging = self._drag[4]
+            self._drag = None
+            return dragging
+        return False
+
+    @staticmethod
+    def _jumpSlider(slider, event):
+        """Move a slider's handle under a touch so the press grabs it."""
+        if slider.maximum() <= slider.minimum():
+            return
+        pos = _localPos(event)
+        handle = 20  # handle size in the theme (16px + 2px border each side)
+        if slider.orientation() == Qt.Horizontal:
+            p, span = pos.x() - handle // 2, slider.width() - handle
+        else:
+            p, span = pos.y() - handle // 2, slider.height() - handle
+        if span <= 0:
+            return
+        p = max(0, min(span, p))
+        upsideDown = slider.invertedAppearance() != (slider.orientation() == Qt.Vertical)
+        slider.setValue(QStyle.sliderValueFromPosition(slider.minimum(), slider.maximum(), p, span, upsideDown))
+
+
+def installInputGuard(app):
+    """Install the wheel/touch guard on the whole application (main window and dialogs)."""
+    guard = InputGuard(app)
+    app.installEventFilter(guard)
+    return guard
 
 
 # === HELPER WIDGETS ===
@@ -56,6 +184,7 @@ class SpinBoxWithButtons(QWidget):
         if suffix:
             self._spin.setSuffix(suffix)
         self._spin.setButtonSymbols(QSpinBox.NoButtons)
+        self._spin.setProperty("externalButtons", True)  # theme gives the hidden arrows a size, see neewerlux_theme
         self._spin.valueChanged.connect(self.valueChanged.emit)
 
         btnStyle = "QPushButton { font-size: 14px; font-weight: bold; min-width: 28px; }"
@@ -1617,7 +1746,7 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         leadL.setToolTip(self.soundClockLeadSpin.toolTip())
         sg.addWidget(self.soundClockLeadSpin, 9, 1)
         everyL = QLabel("Colour every:"); everyL.setFont(mainFont); sg.addWidget(everyL, 9, 2)
-        self.soundBeatsPerColourSpin = _spin(1, 16, 1, " beats")
+        self.soundBeatsPerColourSpin = _spin(1, 16, 8, " beats")
         self.soundBeatsPerColourSpin.setToolTip("Beat colour jump: change colour every this many beats (4 = once a bar).\n"
             "Brightness still flashes on every beat. With a MIDI clock, changes land on bar lines.")
         sg.addWidget(self.soundBeatsPerColourSpin, 9, 3)

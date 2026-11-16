@@ -313,6 +313,10 @@ defaultLightPresetsFile = customLightPresetsFile + ".default"
 presetsSeededMarkerFile = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + ".presets_seeded"
 geometryPrefsFile = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "NeewerLux.geometry"
 soundPresetsFile = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "sound_presets.json"
+# Shipped Sound presets, shown until the user first saves, updates or deletes one. That
+# writes the whole list to soundPresetsFile, which is read from then on, so deleting
+# every preset leaves an empty file and the shipped ones don't come back.
+defaultSoundPresetsFile = soundPresetsFile + ".default"
 logFilePath = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "NeewerLux.log"
 
 # FILE LOCKING FOR SINGLE INSTANCE
@@ -388,6 +392,43 @@ def singleInstanceUnlockandQuit(exitCode):
 
     sys.exit(exitCode) # quit out, with the specified exitCode
     # If sys.exit was somehow caught, force-kill the process
+    os._exit(exitCode)
+
+def hardExit(exitCode=0):
+    """Flush logs, remove the lockfile, and kill the process immediately.
+    On Windows, os._exit() goes through ExitProcess, which runs every DLL's detach
+    routine while native threads (audio, BLE/WinRT, MIDI, Qt) may still be alive;
+    one of those can fault and faulthandler reports an access violation.
+    TerminateProcess skips DLL teardown entirely."""
+    if _logBuffer:
+        try:
+            with open(logFilePath, "a", encoding="utf-8") as f:
+                f.write("\n".join(_logBuffer) + "\n")
+            _logBuffer.clear()
+        except Exception:
+            pass
+    try:
+        os.remove(lockFile)
+    except OSError:
+        pass
+    try:
+        faulthandler.disable()
+    except Exception:
+        pass
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:
+            pass
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            k32 = ctypes.windll.kernel32
+            k32.GetCurrentProcess.restype = ctypes.c_void_p
+            k32.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+            k32.TerminateProcess(k32.GetCurrentProcess(), exitCode)
+        except Exception:
+            pass
     os._exit(exitCode)
 
 def doAnotherInstanceCheck():
@@ -3203,8 +3244,9 @@ try: # try to load the GUI
                 self.soundPalette.setPalette(snd["palettePreset"], snd.get("palette"))
 
         def _soundPresetsRead(self):
+            path = soundPresetsFile if os.path.exists(soundPresetsFile) else defaultSoundPresetsFile
             try:
-                with open(soundPresetsFile, "r", encoding="utf-8") as f:
+                with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 return data if isinstance(data, dict) else {}
             except Exception:
@@ -3840,9 +3882,9 @@ try: # try to load the GUI
             event.accept()
 
             # Force-kill the process so the CMD window closes too
-            # (background threads like HTTP server would keep it alive otherwise)
-            import os as _os
-            _os._exit(0)
+            # (background threads like HTTP server would keep it alive otherwise).
+            # hardExit uses TerminateProcess on Windows to avoid DLL-teardown crashes.
+            hardExit(0)
 
         def saveCustomPresetDialog(self, numOfPreset):
             if (QApplication.keyboardModifiers() & Qt.AltModifier) == Qt.AltModifier: # if you have the ALT key held down
@@ -7710,7 +7752,14 @@ if __name__ == '__main__':
                     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
                     
                 app = QApplication(sys.argv)
-                
+
+                # Mouse wheel scrolls the page instead of changing sliders/dropdowns; touch drag-to-scroll
+                try:
+                    from neewerlux_ui import installInputGuard
+                    app._inputGuard = installInputGuard(app)
+                except Exception as e:
+                    print(f"  [DEBUG] Input guard not installed: {type(e).__name__}: {e}")
+
                 if anotherInstance == True: # different than the CLI handling, the GUI needs to show a dialog box asking to quit or launch
                     errDlg = QMessageBox()
                     errDlg.setWindowTitle("Another Instance Running!")

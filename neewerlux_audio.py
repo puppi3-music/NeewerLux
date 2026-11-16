@@ -330,6 +330,27 @@ def _windowsHostApi(devices):
     return None
 
 
+def _windowsFallbacks(device):
+    """The same input on DirectSound, then MME, for a WASAPI device that won't open. Some drivers
+    (VB-Cable here) fail WASAPI with "Invalid device" yet record fine through the older APIs,
+    which deliver in 30-50 ms bursts rather than every 10 ms. MME cuts names to 31 characters."""
+    if sys.platform != "win32" or not isinstance(device, int):
+        return []
+    apis = sd.query_hostapis()
+    devices = sd.query_devices()
+    if apis[devices[device]["hostapi"]]["name"] != "Windows WASAPI":
+        return []
+    name = devices[device]["name"]
+    out = []
+    for api in ("Windows DirectSound", "MME"):
+        for i, d in enumerate(devices):
+            n = d["name"]
+            if (apis[d["hostapi"]]["name"] == api and d["max_input_channels"] > 0
+                    and (n == name or (len(n) >= 31 and name.startswith(n)))):
+                out.append(i)
+    return out
+
+
 def listInputDevices(rescan=False):
     """Return [(id, name, channels, defaultRate)] for every device that can record. The id is what
     start() takes: PortAudio's device index, or on Linux a monitor's source name.
@@ -360,7 +381,7 @@ def listInputDevices(rescan=False):
 
 def preferredDeviceIndex(devices):
     """Pick the device most likely to carry system output (a loopback device), else the first."""
-    keys = ("blackhole", "loopback", "stereo mix", "monitor of", "cable output", "soundflower")
+    keys = ("blackhole", "loopback", "stereo mix", "monitor of", "cable output", "voicemeeter out b1", "soundflower")
     for i, name, _, _ in devices:
         if isinstance(i, str) or any(k in name.lower() for k in keys):
             return i
@@ -2121,7 +2142,7 @@ class SoundEngine:
         self.targets = []          # light indexes to drive
         self.clock = None          # a neewerlux_midi.MidiClock: beats come from it while it has ticks
         self.clockLeadMs = 50      # fire clock beats this early, to make up for Bluetooth delay
-        self.beatsPerColour = 1    # "Beat colour jump": change colour every this many beats
+        self.beatsPerColour = 8    # "Beat colour jump": change colour every this many beats
         self.clockNeedsSound = True  # MIDI clock beats only fire while kicks are heard (Traktor clocks on when stopped)
         self.predictBeats = True   # without a clock, find the tempo in the sound and fire beats on time
         self.flashOn = "Beats"     # "Beats": flash on the beat grid, ahead by the lead; "Kicks": on each kick as heard, the grid still counting
@@ -2189,7 +2210,21 @@ class SoundEngine:
             self._rate = ANALYSIS_RATE if pulseSource else int(info.get("default_samplerate", 48000))
             self._decim = max(1, int(round(self._rate / float(ANALYSIS_RATE))))
             self._queue.clear()
-            stream = _openInput(deviceIndex, self._rate, HOP * self._decim, self._onAudio, pulseSource)
+            try:
+                stream = _openInput(deviceIndex, self._rate, HOP * self._decim, self._onAudio, pulseSource)
+            except sd.PortAudioError as wasapiError:
+                stream = None
+                for alt in _windowsFallbacks(deviceIndex):
+                    try:
+                        stream = _openInput(alt, self._rate, HOP * self._decim, self._onAudio)
+                    except sd.PortAudioError:
+                        continue
+                    self.log("WASAPI could not open '" + str(info.get("name")) + "' (" + str(wasapiError) + "), using "
+                             + sd.query_hostapis(sd.query_devices(alt)["hostapi"])["name"] + " instead")
+                    info = sd.query_devices(alt)
+                    break
+                if stream is None:
+                    raise wasapiError
         except Exception as e:
             if stopEvent is self._stop:
                 self.state["error"] = "Could not open audio device: " + str(e)
