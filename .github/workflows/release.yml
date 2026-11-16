@@ -1,7 +1,7 @@
-# Build NeewerLux Windows EXE on release tag push
+# Build the Puppi3's NeewerLux Windows EXE on release tag push
 # Creates a GitHub Release with:
-#   - NeewerLux-<version>-Windows.zip  (PyInstaller --onedir EXE + light_prefs/)
-#   - NeewerLux-<version>-Source.zip   (Python source distribution)
+#   - Puppi3sNeewerLux-<version>-Windows.zip  (PyInstaller --onedir EXE + light_prefs/)
+#   - Puppi3sNeewerLux-<version>-Source.zip   (Python source distribution)
 
 name: Build Release
 
@@ -35,24 +35,24 @@ jobs:
         run: uv sync --locked --group build
 
       - name: Build EXE with PyInstaller
-        run: uv run --locked --group build pyinstaller NeewerLux.spec
+        run: uv run --locked --group build pyinstaller Puppi3sNeewerLux.spec
 
       - name: Copy light_prefs into dist
         run: |
-          Copy-Item -Path "light_prefs" -Destination "dist/NeewerLux/light_prefs" -Recurse
-          Copy-Item -Path "README.md" -Destination "dist/NeewerLux/"
-          Copy-Item -Path "CHANGELOG.md" -Destination "dist/NeewerLux/"
+          Copy-Item -Path "light_prefs" -Destination "dist/Puppi3sNeewerLux/light_prefs" -Recurse
+          Copy-Item -Path "README.md" -Destination "dist/Puppi3sNeewerLux/"
+          Copy-Item -Path "CHANGELOG.md" -Destination "dist/Puppi3sNeewerLux/"
 
       - name: Create EXE zip
         run: |
           $version = "${{ github.ref_name }}" -replace '^v', ''
-          Compress-Archive -Path "dist/NeewerLux/*" -DestinationPath "NeewerLux-${version}-Windows.zip"
+          Compress-Archive -Path "dist/Puppi3sNeewerLux/*" -DestinationPath "Puppi3sNeewerLux-${version}-Windows.zip"
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-exe
-          path: NeewerLux-*-Windows.zip
+          path: Puppi3sNeewerLux-*-Windows.zip
 
   build-source:
     runs-on: ubuntu-latest
@@ -63,19 +63,22 @@ jobs:
       - name: Create source zip
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          zip -r "NeewerLux-${VERSION}-Source.zip" \
-            NeewerLux.py \
-            neewerlux_ui.py \
-            neewerlux_theme.py \
-            neewerlux_webui.py \
-            neewerlux_anim_editor.py \
-            NeewerLux.bat \
-            NeewerLux-HTTP.bat \
+          zip -r "Puppi3sNeewerLux-${VERSION}-Source.zip" \
+            Puppi3sNeewerLux.py \
+            puppi3s_neewerlux_ui.py \
+            puppi3s_neewerlux_theme.py \
+            puppi3s_neewerlux_webui.py \
+            puppi3s_neewerlux_anim_editor.py \
+            puppi3s_neewerlux_audio.py \
+            puppi3s_neewerlux_midi.py \
+            puppi3s_neewerlux_nanoleaf.py \
+            Puppi3sNeewerLux.bat \
+            Puppi3sNeewerLux-HTTP.bat \
             pyproject.toml \
             uv.lock \
-            com.github.poizenjam.NeewerLux.desktop \
-            com.github.poizenjam.NeewerLux.ico \
-            com.github.poizenjam.NeewerLux.png \
+            io.github.puppi3_music.Puppi3sNeewerLux.desktop \
+            io.github.puppi3_music.Puppi3sNeewerLux.ico \
+            io.github.puppi3_music.Puppi3sNeewerLux.png \
             README.md \
             CHANGELOG.md \
             light_prefs/
@@ -84,7 +87,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: source-zip
-          path: NeewerLux-*-Source.zip
+          path: Puppi3sNeewerLux-*-Source.zip
 
   create-release:
     needs: [build-windows-exe, build-source]
@@ -101,5 +104,5 @@ jobs:
           draft: true
           generate_release_notes: true
           files: |
-            NeewerLux-*-Windows.zip
-            NeewerLux-*-Source.zip
+            Puppi3sNeewerLux-*-Windows.zip
+            Puppi3sNeewerLux-*-Source.zip

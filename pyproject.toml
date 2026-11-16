@@ -1,12 +1,12 @@
 [project]
-name = "neewerlux"
-version = "1.3.0"
-description = "Cross-platform Neewer LED light control with a keyframe animation engine, preset system, and HTTP/web dashboard"
+name = "puppi3s-neewerlux"
+version = "1.4.0"
+description = "Cross-platform control of Neewer Bluetooth LED lights and Nanoleaf panels, with a keyframe animation engine, sound reactive mode, preset system, and HTTP/web dashboard"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "AGPL-3.0-only" }
-authors = [{ name = "poizenjam" }, { name = "Puppi3" }]
-keywords = ["neewer", "bluetooth", "ble", "lighting", "streaming"]
+authors = [{ name = "puppi3-music" }, { name = "poizenjam" }]
+keywords = ["neewer", "nanoleaf", "bluetooth", "ble", "lighting", "led", "sound-reactive", "streaming"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: X11 Applications :: Qt",
@@ -41,7 +41,7 @@ audio = [
 ]
 
 [tool.uv]
-# NeewerLux is a flat-layout script application, not an installable package.
+# Puppi3's NeewerLux is a flat-layout script application, not an installable package.
 # This keeps uv from trying to build a wheel for the project itself while
 # still resolving and locking its dependencies.
 package = false

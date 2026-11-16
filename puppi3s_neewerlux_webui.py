@@ -1,4 +1,4 @@
-"""Web dashboard served by the NeewerLux HTTP server.
+"""Web dashboard served by the Puppi3's NeewerLux HTTP server.
 
 Light control, animation playback, preset recall, and status monitoring.
 """
@@ -13,7 +13,7 @@ WEB_DASHBOARD_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NeewerLux Control Panel</title>
+<title>Puppi3's NeewerLux Control Panel</title>
 <style>
 :root {
     --bg: #1e1e2e;
@@ -135,6 +135,10 @@ a:hover { text-decoration: underline; }
 .light-table tr:hover td { background: rgba(145, 0, 255, 0.08); }
 .light-table .linked { color: var(--green); font-weight: 600; }
 .light-table .not-linked { color: var(--muted); }
+.light-table .group-row { cursor: pointer; font-weight: 600; }
+.light-table .group-row td { background: rgba(145, 0, 255, 0.05); }
+.light-table .group-arrow { display: inline-block; width: 1em; text-align: center; }
+.light-table .tree-branch { color: var(--muted); font-family: monospace; white-space: pre; }
 .light-table .light-id {
     color: var(--accent);
     font-weight: 700;
@@ -330,7 +334,7 @@ select:focus, input:focus { border-color: var(--accent); outline: none; }
 <body>
 
 <div class="header">
-    <h1><span>Neewer</span>Lux <small style="color:#888;font-size:12px">{NLVERSION}</small></h1>
+    <h1>Puppi3's <span>Neewer</span>Lux <small style="color:#888;font-size:12px">{NLVERSION}</small></h1>
     <div class="spacer"></div>
     <span class="status-pill" id="connStatus">Loading...</span>
     <button class="refresh-btn" onclick="scanForLights()" title="Scan for new Bluetooth lights">Scan</button>
@@ -469,6 +473,13 @@ select:focus, input:focus { border-color: var(--accent); outline: none; }
                 </div>
             </div>
             <div class="control-group">
+                <label>Offset / Colour spread (%)</label>
+                <div style="display:flex;gap:6px">
+                    <input type="number" id="animOffset" value="0" min="0" max="100" style="width:60px" title="Staggers the lights through the loop: 0 = all in step, 100 = spread evenly over the whole loop (a chase)">
+                    <input type="number" id="animSpread" value="0" min="0" max="100" style="width:60px" title="Turns each light's colour further round the colour wheel: 0 = all the same, 100 = spread evenly over the whole wheel">
+                </div>
+            </div>
+            <div class="control-group">
                 <label style="display:flex;align-items:center;gap:6px;text-transform:none;color:var(--text)">
                     <input type="checkbox" id="animLoop"> Loop animation
                 </label>
@@ -501,10 +512,10 @@ select:focus, input:focus { border-color: var(--accent); outline: none; }
     <!-- INFO (collapsible) -->
     <div class="card full-width">
         <div class="card-header" style="cursor:pointer" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">
-            About NeewerLux
+            About Puppi3's NeewerLux
         </div>
         <div class="card-body" style="display:none">
-            <h3 style="color:var(--accent);margin-top:0">NeewerLux {NLVERSION}</h3>
+            <h3 style="color:var(--accent);margin-top:0">Puppi3's NeewerLux {NLVERSION}</h3>
             <p>This dashboard controls the same lights as the desktop app, over HTTP.
             Anything here can also be driven by a plain URL, which is how hardware like a
             Stream Deck talks to it. See the API Reference below for the full list.</p>
@@ -518,9 +529,9 @@ select:focus, input:focus { border-color: var(--accent); outline: none; }
             <hr style="border-color:var(--border)">
             <p style="color:var(--muted);font-size:0.9em;">
                 <b>Repository:</b> <a href="https://github.com/puppi3-music/NeewerLux/" style="color:var(--accent)">github.com/puppi3-music/NeewerLux</a><br>
-                <b>Releases:</b> <a href="https://github.com/poizenjam/NeewerLux/releases" style="color:var(--accent)">github.com/poizenjam/NeewerLux/releases</a><br><br>
-                Fork with sound reactive mode by Puppi3. Licensed under AGPL-3.0.<br>
-                NeewerLux by <a href="https://github.com/poizenjam/NeewerLux/" style="color:var(--accent)">PoizenJam</a>.
+                <b>Releases:</b> <a href="https://github.com/puppi3-music/NeewerLux/releases" style="color:var(--accent)">github.com/puppi3-music/NeewerLux/releases</a><br><br>
+                Puppi3's NeewerLux by puppi3-music. Licensed under AGPL-3.0.<br>
+                Fork of NeewerLux by <a href="https://github.com/poizenjam/NeewerLux/" style="color:var(--accent)">PoizenJam</a>.
                 Based on <a href="https://github.com/taburineagle/NeewerLite-Python/" style="color:var(--accent)">NeewerLite-Python</a> (v0.12d) by Zach Glenwright.
                 Originally from <a href="https://github.com/keefo/NeewerLite" style="color:var(--accent)">NeewerLite</a> by Xu Lian
             </p>
@@ -536,41 +547,41 @@ select:focus, input:focus { border-color: var(--accent); outline: none; }
             <div class="api-section">
                 <h3>Light Control</h3>
                 <div class="api-desc">Set CCT mode</div>
-                <div class="api-code">GET /NeewerLux/doAction?light=1&amp;mode=CCT&amp;temp=5600&amp;bri=80</div>
+                <div class="api-code">GET /Puppi3sNeewerLux/doAction?light=1&amp;mode=CCT&amp;temp=5600&amp;bri=80</div>
                 <div class="api-desc">Set HSI mode</div>
-                <div class="api-code">GET /NeewerLux/doAction?light=1&amp;mode=HSI&amp;hue=240&amp;sat=100&amp;bri=50</div>
+                <div class="api-code">GET /Puppi3sNeewerLux/doAction?light=1&amp;mode=HSI&amp;hue=240&amp;sat=100&amp;bri=50</div>
                 <div class="api-desc">Set Scene mode</div>
-                <div class="api-code">GET /NeewerLux/doAction?light=1&amp;mode=SCENE&amp;scene=3&amp;bri=80</div>
+                <div class="api-code">GET /Puppi3sNeewerLux/doAction?light=1&amp;mode=SCENE&amp;scene=3&amp;bri=80</div>
             </div>
             <div class="api-section">
                 <h3>Batch Commands</h3>
                 <div class="api-desc">Different settings per light in one request</div>
-                <div class="api-code">GET /NeewerLux/doAction?batch=Key:HSI:0:100:50;Fill:CCT:56:80</div>
+                <div class="api-code">GET /Puppi3sNeewerLux/doAction?batch=Key:HSI:0:100:50;Fill:CCT:56:80</div>
                 <div class="api-desc">Lights can be addressed by index, alias name, or MAC address</div>
             </div>
             <div class="api-section">
                 <h3>Animations</h3>
-                <div class="api-desc">Play by name (GET). Format: <code>Name|speed|rate|bri|loop|maxLoops|revert</code></div>
-                <div class="api-code">GET /NeewerLux/doAction?animate=Concert%20Sweep|1.0|10|80</div>
+                <div class="api-desc">Play by name (GET). Format: <code>Name|speed|rate|bri|loop|maxLoops|revert|offset|spread</code> (offset, spread: 0-100%, staggering the lights through the loop and round the colour wheel)</div>
+                <div class="api-code">GET /Puppi3sNeewerLux/doAction?animate=Concert%20Sweep|1.0|10|80</div>
                 <div class="api-desc">With loop control: play twice then revert</div>
-                <div class="api-code">GET /NeewerLux/doAction?animate=Halloween|1.0|10|50|true|2|true</div>
+                <div class="api-code">GET /Puppi3sNeewerLux/doAction?animate=Halloween|1.0|10|50|true|2|true</div>
                 <div class="api-desc">Play/stop/list (POST JSON)</div>
-                <div class="api-code">POST /NeewerLux/animate {"action":"play","name":"Concert Sweep","loop":true,"maxLoops":3,"revert":true}</div>
-                <div class="api-code">POST /NeewerLux/animate {"action":"stop"}</div>
+                <div class="api-code">POST /Puppi3sNeewerLux/animate {"action":"play","name":"Concert Sweep","loop":true,"maxLoops":3,"revert":true}</div>
+                <div class="api-code">POST /Puppi3sNeewerLux/animate {"action":"stop"}</div>
             </div>
             <div class="api-section">
                 <h3>Utility</h3>
-                <div class="api-code">GET /NeewerLux/doAction?list</div>
-                <div class="api-code">GET /NeewerLux/doAction?discover</div>
-                <div class="api-code">GET /NeewerLux/doAction?link=1</div>
-                <div class="api-code">GET /NeewerLux/doAction?nopage (suppress HTML response)</div>
+                <div class="api-code">GET /Puppi3sNeewerLux/doAction?list</div>
+                <div class="api-code">GET /Puppi3sNeewerLux/doAction?discover</div>
+                <div class="api-code">GET /Puppi3sNeewerLux/doAction?link=1</div>
+                <div class="api-code">GET /Puppi3sNeewerLux/doAction?nopage (suppress HTML response)</div>
             </div>
         </div>
     </div>
 </div>
 
 <script>
-const BASE = '/NeewerLux/doAction?';
+const BASE = '/Puppi3sNeewerLux/doAction?';
 let selectedAnim = '';
 let activeSceneBtn = null;
 
@@ -663,11 +674,13 @@ function playAnimation() {
     const loop = document.getElementById('animLoop').checked;
     const maxLoops = parseInt(document.getElementById('animLoopCount').value) || 0;
     const revert = document.getElementById('animRevert').checked;
+    const offset = parseFloat(document.getElementById('animOffset').value) || 0;
+    const spread = parseFloat(document.getElementById('animSpread').value) || 0;
 
-    fetch('/NeewerLux/animate', {
+    fetch('/Puppi3sNeewerLux/animate', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({action:'play', name:selectedAnim, speed:parseFloat(speed), rate:parseInt(rate), brightness:parseInt(bri), loop:loop, maxLoops:maxLoops, revert:revert})
+        body: JSON.stringify({action:'play', name:selectedAnim, speed:parseFloat(speed), rate:parseInt(rate), brightness:parseInt(bri), loop:loop, maxLoops:maxLoops, revert:revert, offset:offset, spread:spread})
     }).then(r => r.json()).then(d => {
         let msg = '▶ Playing: ' + selectedAnim;
         if (loop) msg += maxLoops > 0 ? ' (' + maxLoops + ' loops)' : ' (looping)';
@@ -675,7 +688,7 @@ function playAnimation() {
     }).catch(e => logMsg('Animation error: ' + e.message, 'err'));
 }
 function stopAnimation() {
-    fetch('/NeewerLux/animate', {
+    fetch('/Puppi3sNeewerLux/animate', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({action:'stop'})
@@ -741,14 +754,22 @@ function renderLightsJSON(data) {
         return;
     }
 
-    let html2 = '', linkedCount = 0;
+    // Panels of one device (a Nanoleaf shown one row per panel) go under a row for the device, which
+    // collapses like a folder. Which devices are collapsed is remembered in this browser only.
+    let collapsed = {};
+    try { collapsed = JSON.parse(localStorage.getItem('nlCollapsedGroups') || '{}') || {}; } catch(e) {}
+    const order = [], groups = {};
     lights.forEach(l => {
-        if (l.linked) linkedCount++;
+        if (!l.group) { order.push(l); return; }
+        if (!groups[l.group]) { groups[l.group] = {mac: l.group, name: l.groupName || l.group, panels: []}; order.push(groups[l.group]); }
+        groups[l.group].panels.push(l);
+    });
+
+    const lightRow = (l, branch, group) => {
         const displayName = l.name || l.model || l.mac;
-        select.innerHTML += `<option value="${l.id}">${l.id} - ${displayName}</option>`;
-        html2 += `<tr>
+        return `<tr${group ? ' class="panel-row" data-group="' + group.mac + '"' + (collapsed[group.mac] ? ' hidden' : '') : ''}>
             <td class="light-id">${l.id}</td>
-            <td>${displayName}${l.model && l.name !== l.model ? ' <span style="color:var(--muted);font-size:11px">(' + l.model + ')</span>' : ''}</td>
+            <td>${branch ? '<span class="tree-branch">' + branch + '</span>' : ''}${displayName}${l.model && l.name !== l.model ? ' <span style="color:var(--muted);font-size:11px">(' + l.model + ')</span>' : ''}</td>
             <td style="font-family:monospace;font-size:11px">${l.mac}</td>
             <td class="${l.linked ? 'linked' : 'not-linked'}">${l.linked ? '● LINKED' : '○ Not linked'}</td>
             <td style="font-size:11px">${l.status}</td>
@@ -757,11 +778,53 @@ function renderLightsJSON(data) {
                 : '<button class="btn success" style="padding:3px 8px;font-size:11px" onclick="apiCall(\''+BASE+'link='+l.id+'&nopage\',\'Link: light '+l.id+'\');setTimeout(refreshAll,3000)">Link</button>'
             }</td>
         </tr>`;
+    };
+
+    let html2 = '', linkedCount = 0;
+    order.forEach(item => {
+        if (!item.panels) {
+            if (item.linked) linkedCount++;
+            select.innerHTML += `<option value="${item.id}">${item.id} - ${item.name || item.model || item.mac}</option>`;
+            html2 += lightRow(item, '', null);
+            return;
+        }
+        const linked = item.panels.filter(p => p.linked).length;
+        linkedCount += linked;
+        const isCollapsed = !!collapsed[item.mac];
+        html2 += `<tr class="group-row" onclick="toggleLightGroup('${item.mac}')" title="Click to ${isCollapsed ? 'show' : 'hide'} its panels">
+            <td class="light-id"><span class="group-arrow">${isCollapsed ? '&#9656;' : '&#9662;'}</span></td>
+            <td>${item.name} <span style="color:var(--muted);font-size:11px">&middot; ${item.panels.length} panels</span></td>
+            <td style="font-family:monospace;font-size:11px">${item.mac}</td>
+            <td class="${linked ? 'linked' : 'not-linked'}">${linked === item.panels.length ? '● LINKED' : linked ? '◐ ' + linked + ' of ' + item.panels.length + ' linked' : '○ Not linked'}</td>
+            <td></td><td></td>
+        </tr>`;
+        let options = '';
+        item.panels.forEach((p, n) => {
+            html2 += lightRow(p, n === item.panels.length - 1 ? '└─ ' : '├─ ', item);
+            options += `<option value="${p.id}">${p.id} - ${p.name || p.model || p.mac}</option>`;
+        });
+        select.innerHTML += `<optgroup label="${item.name}">${options}</optgroup>`;
     });
     document.getElementById('lightTableBody').innerHTML = html2;
     document.getElementById('connStatus').textContent = linkedCount + '/' + lights.length + ' linked';
     if (linkedCount > 0) document.getElementById('connStatus').classList.add('connected');
     if (!window._lightsLoadedOnce) { logMsg('Loaded ' + lights.length + ' light(s)', 'ok'); window._lightsLoadedOnce = true; }
+}
+
+function toggleLightGroup(mac) {
+    let collapsed = {};
+    try { collapsed = JSON.parse(localStorage.getItem('nlCollapsedGroups') || '{}') || {}; } catch(e) {}
+    if (collapsed[mac]) delete collapsed[mac]; else collapsed[mac] = true;
+    try { localStorage.setItem('nlCollapsedGroups', JSON.stringify(collapsed)); } catch(e) {}
+    document.querySelectorAll('#lightTableBody tr.panel-row').forEach(tr => {
+        if (tr.dataset.group === mac) tr.hidden = !!collapsed[mac];
+    });
+    document.querySelectorAll('#lightTableBody tr.group-row').forEach(tr => {
+        if (tr.getAttribute('onclick') === "toggleLightGroup('" + mac + "')") {
+            tr.querySelector('.group-arrow').innerHTML = collapsed[mac] ? '&#9656;' : '&#9662;';
+            tr.title = 'Click to ' + (collapsed[mac] ? 'show' : 'hide') + ' its panels';
+        }
+    });
 }
 
 function renderPresetsJSON(data) {
@@ -816,12 +879,12 @@ async function checkForUpdates() {
     el.textContent = 'Checking...';
     el.style.color = 'var(--muted)';
     try {
-        const r = await fetch('https://api.github.com/repos/poizenjam/NeewerLux/releases/latest',
+        const r = await fetch('https://api.github.com/repos/puppi3-music/NeewerLux/releases/latest',
             {headers: {'Accept': 'application/vnd.github.v3+json'}});
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const data = await r.json();
         const tag = (data.tag_name || '').replace(/^[vV]/, '');
-        const url = data.html_url || 'https://github.com/poizenjam/NeewerLux/releases';
+        const url = data.html_url || 'https://github.com/puppi3-music/NeewerLux/releases';
         const local = '{NLVERSION}';
         if (tag && tag !== local) {
             const rv = tag.split('.').map(Number);
@@ -914,10 +977,10 @@ window.addEventListener('load', () => {
 });
 </script>
 <div style="text-align:center;padding:16px 0 8px;font-size:11px;color:var(--muted);">
-    NeewerLux {NLVERSION}<br>
+    Puppi3's NeewerLux {NLVERSION}<br>
     <a href="https://github.com/puppi3-music/NeewerLux/" style="color:var(--accent)">github.com/puppi3-music/NeewerLux</a><br>
-    Fork with sound reactive mode by Puppi3. Licensed under AGPL-3.0.<br>
-    NeewerLux by <a href="https://github.com/poizenjam/NeewerLux/" style="color:var(--accent)">PoizenJam</a>.
+    Puppi3's NeewerLux by puppi3-music. Licensed under AGPL-3.0.<br>
+    Fork of NeewerLux by <a href="https://github.com/poizenjam/NeewerLux/" style="color:var(--accent)">PoizenJam</a>.
     Based on <a href="https://github.com/taburineagle/NeewerLite-Python/" style="color:var(--accent)">NeewerLite-Python</a> (v0.12d) by Zach Glenwright.
     Originally from <a href="https://github.com/keefo/NeewerLite" style="color:var(--accent)">NeewerLite</a> by Xu Lian
 </div>

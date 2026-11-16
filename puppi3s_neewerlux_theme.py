@@ -1,4 +1,4 @@
-"""Theme tokens and stylesheet generation for NeewerLux.
+"""Theme tokens and stylesheet generation for Puppi3's NeewerLux.
 
 Both themes come from one template, so a styling change is made once.
 To restyle, edit the token tables below rather than the template.

@@ -1,7 +1,7 @@
-"""NeewerLux main window UI.
+"""Puppi3's NeewerLux main window UI.
 
 Builds the widget tree and layouts. Widget attribute names are the
-contract with NeewerLux.py, which connects the signal handlers.
+contract with Puppi3sNeewerLux.py, which connects the signal handlers.
 """
 
 import json
@@ -42,7 +42,7 @@ except ImportError:
         )
         customSignal = Signal
     except ImportError:
-        raise  # let it propagate, NeewerLux.py will handle the error
+        raise  # let it propagate, Puppi3sNeewerLux.py will handle the error
 
 
 # === INPUT GUARD (mouse wheel + touchscreen) ===
@@ -188,7 +188,7 @@ class SpinBoxWithButtons(QWidget):
         if suffix:
             self._spin.setSuffix(suffix)
         self._spin.setButtonSymbols(QSpinBox.NoButtons)
-        self._spin.setProperty("externalButtons", True)  # theme gives the hidden arrows a size, see neewerlux_theme
+        self._spin.setProperty("externalButtons", True)  # theme gives the hidden arrows a size, see puppi3s_neewerlux_theme
         self._spin.valueChanged.connect(self.valueChanged.emit)
 
         btnStyle = "QPushButton { font-size: 14px; font-weight: bold; min-width: 28px; }"
@@ -602,6 +602,91 @@ class ColorPickDialog(QDialog):
 
     def color(self):
         return self._hue, self._sat
+
+
+class NanoleafPairDialog(QDialog):
+    """Find and pair a Nanoleaf panel controller. Does no networking itself: it asks for a search
+    or a pairing through its signals, and the caller reports back with setFound / setStatus / setBusy."""
+
+    searchRequested = customSignal()
+    pairRequested = customSignal(str)  # "ip" or "ip:port"
+
+    def __init__(self, hint, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add Nanoleaf")
+        self.setMinimumWidth(420)
+        lay = QVBoxLayout(self)
+
+        intro = QLabel("The controller must be on Wi-Fi (a set added only over Thread has no local API). "
+                       "Pick it from the list or type its IP address.\n\n" + hint)
+        intro.setWordWrap(True)
+        lay.addWidget(intro)
+
+        listRow = QHBoxLayout()
+        listRow.addWidget(QLabel("Found on this network:"), 1)
+        self.searchButton = QPushButton("Search again")
+        self.searchButton.clicked.connect(self.searchRequested.emit)
+        listRow.addWidget(self.searchButton)
+        lay.addLayout(listRow)
+
+        self.foundList = QListWidget()
+        self.foundList.setMinimumHeight(110)
+        self.foundList.currentItemChanged.connect(self._picked)
+        self.foundList.itemDoubleClicked.connect(lambda _item: self._pair())
+        lay.addWidget(self.foundList)
+
+        form = QFormLayout()
+        self.addressField = QLineEdit()
+        self.addressField.setPlaceholderText("e.g. 192.168.1.50 or 192.168.1.50:16021")
+        self.addressField.returnPressed.connect(self._pair)
+        form.addRow("IP address:", self.addressField)
+        lay.addLayout(form)
+
+        self.statusLabel = QLabel("")
+        self.statusLabel.setWordWrap(True)
+        lay.addWidget(self.statusLabel)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Close)
+        self.pairButton = bb.addButton("Pair", QDialogButtonBox.AcceptRole)
+        self.pairButton.clicked.connect(self._pair)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    def _picked(self, item, _previous=None):
+        if item is not None and item.data(Qt.UserRole):
+            self.addressField.setText(item.data(Qt.UserRole))
+
+    def _pair(self):
+        text = self.addressField.text().strip()
+        if not text:
+            self.setStatus("Pick a device from the list or type its IP address.")
+            return
+        self.pairRequested.emit(text)
+
+    def setBusy(self, busy, message=None):
+        self.searchButton.setEnabled(not busy)
+        self.pairButton.setEnabled(not busy)
+        if message is not None:
+            self.setStatus(message)
+
+    def setStatus(self, text):
+        self.statusLabel.setText(text)
+
+    def setFound(self, devices):
+        """devices: dicts with ip, port, name and an optional 'paired' flag."""
+        self.foundList.clear()
+        for d in devices:
+            hostPort = "%s:%d" % (d["ip"], d["port"])
+            label = "%s  (%s)" % (d.get("name") or "Nanoleaf", hostPort)
+            if d.get("paired"):
+                label += "  - already added"
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, hostPort)
+            self.foundList.addItem(item)
+        if not devices:
+            item = QListWidgetItem("Nothing found. Type the IP address below (see the Nanoleaf app's device settings).")
+            item.setFlags(Qt.NoItemFlags)
+            self.foundList.addItem(item)
 
 
 # Palettes for the Sound tab, as (group, [(name, colours), ...]). A named group is a submenu of the
@@ -1187,7 +1272,7 @@ class Ui_MainWindow(object):
         # === WINDOW ===
         MainWindow.setMinimumSize(780, 620)
         MainWindow.resize(900, 800)
-        MainWindow.setWindowTitle("NeewerLux")
+        MainWindow.setWindowTitle("Puppi3's NeewerLux")
 
         self.centralwidget = QWidget(MainWindow)
         MainWindow.setCentralWidget(self.centralwidget)
@@ -1196,21 +1281,24 @@ class Ui_MainWindow(object):
         mainLayout.setSpacing(4)
 
         # === TOOLBAR ===
-        toolbarWidget = QWidget()
+        toolbarWidget = self.toolbarWidget = QWidget()
         toolbarWidget.setObjectName("toolbarWidget")
         toolbar = QHBoxLayout(toolbarWidget)
         toolbar.setContentsMargins(4, 4, 4, 4)
         toolbar.setSpacing(4)
 
-        self.turnOffButton = QPushButton("Turn Light(s) Off")
+        self.turnOffButton = QPushButton("Lights Off")
         self.turnOffButton.setEnabled(False)
         toolbar.addWidget(self.turnOffButton)
-        self.turnOnButton = QPushButton("Turn Light(s) On")
+        self.turnOnButton = QPushButton("Lights On")
         self.turnOnButton.setEnabled(False)
         toolbar.addWidget(self.turnOnButton)
         toolbar.addSpacing(10)
         self.scanCommandButton = QPushButton("Scan")
         toolbar.addWidget(self.scanCommandButton)
+        self.addNanoleafButton = QPushButton("Add Nanoleaf\u2026")
+        self.addNanoleafButton.setToolTip("Pair a Nanoleaf panel set on this network")
+        toolbar.addWidget(self.addNanoleafButton)
         self.tryConnectButton = QPushButton("Connect")
         self.tryConnectButton.setEnabled(False)
         toolbar.addWidget(self.tryConnectButton)
@@ -1508,6 +1596,17 @@ class Ui_MainWindow(object):
         briL = QLabel("Brightness:"); briL.setFont(mainFont); cg.addWidget(briL, 4, 0)
         self.animBriSpin = SpinBoxWithButtons(minVal=5, maxVal=100, value=100, suffix="%")
         cg.addWidget(self.animBriSpin, 4, 1)
+        offL = QLabel("Offset:"); offL.setFont(mainFont); cg.addWidget(offL, 5, 0)
+        self.animOffsetSpin = SpinBoxWithButtons(minVal=0, maxVal=100, value=0, suffix="%")
+        self.animOffsetSpin.setToolTip("Staggers the lights through the animation, in light order.\n"
+            "0% = every light in step. 100% = spread evenly over the whole loop, so it chases from light to light.")
+        cg.addWidget(self.animOffsetSpin, 5, 1)
+        sprL = QLabel("Colour spread:"); sprL.setFont(mainFont); cg.addWidget(sprL, 6, 0)
+        self.animSpreadSpin = SpinBoxWithButtons(minVal=0, maxVal=100, value=0, suffix="%")
+        self.animSpreadSpin.setToolTip("Turns each light's colour further round the colour wheel than the one before.\n"
+            "0% = the colours the animation sets. 100% = spread evenly over the whole wheel.\n"
+            "White (CCT) keyframes are left as they are.")
+        cg.addWidget(self.animSpreadSpin, 6, 1)
         animCtrl.addLayout(cg)
 
         self.animStatusLabel = QLabel("Stopped")
@@ -1562,6 +1661,15 @@ class Ui_MainWindow(object):
         self.onlyCCTModeCheck = QCheckBox("This light can only use CCT mode\n(for Neewer lights without HSI mode)")
         self.onlyCCTModeCheck.setFont(mainFont)
         lpLay.addWidget(self.onlyCCTModeCheck)
+
+        # Nanoleaf rows only (setupLightPrefsTab shows it); applies at once, not on Save
+        self.nanoleafPerPanelCheck = QCheckBox("Show each panel as its own light")
+        self.nanoleafPerPanelCheck.setFont(mainFont)
+        self.nanoleafPerPanelCheck.setToolTip("Lists every panel of this Nanoleaf as a separate light, with its own\n"
+            "colour, name and preferred ID. Panels are driven over the Nanoleaf's streaming mode.\n"
+            "Changing this stops any animation or sound reactive session and re-links the device.")
+        self.nanoleafPerPanelCheck.setVisible(False)
+        lpLay.addWidget(self.nanoleafPerPanelCheck)
         lpLay.addStretch(1)
         self.saveLightPrefsButton = QPushButton("Save Preferences")
         lpLay.addWidget(self.saveLightPrefsButton, alignment=Qt.AlignRight)
@@ -1716,7 +1824,7 @@ class Ui_MainWindow(object):
         self.globalPrefsLay.addRow(QLabel("<br><strong>Logging</strong>"))
         self.enableLogTab_check = QCheckBox("Enable Log tab (show debug output in GUI)")
         self.enableLogTab_check.setChecked(True)
-        self.logToFile_check = QCheckBox("Also write log to file (light_prefs/NeewerLux.log)")
+        self.logToFile_check = QCheckBox("Also write log to file (light_prefs/Puppi3sNeewerLux.log)")
         self.logHeartbeat_check = QCheckBox("Log a background heartbeat every 30 seconds")
         self.globalPrefsLay.addRow(self.enableLogTab_check)
         self.globalPrefsLay.addRow(self.logToFile_check)
@@ -1751,14 +1859,14 @@ class Ui_MainWindow(object):
         infoLay.addWidget(self.updateBanner)
 
         self.checkUpdateButton = QPushButton("Check for Updates")
-        self.checkUpdateButton.setToolTip("Check GitHub for a newer version of NeewerLux")
+        self.checkUpdateButton.setToolTip("Check GitHub for a newer version of Puppi3's NeewerLux")
         infoLay.addWidget(self.checkUpdateButton)
 
         self.infoText = QTextBrowser()
         self.infoText.setReadOnly(True)
         self.infoText.setOpenExternalLinks(True)
         self.infoText.setHtml("""
-<h2>NeewerLux {VERSION}</h2>
+<h2>Puppi3's NeewerLux {VERSION}</h2>
 
 <h3>Lights</h3>
 <p>Scan for Neewer lights over Bluetooth and control them in CCT, HSI, or Scene mode.
@@ -1801,7 +1909,7 @@ copied between installations.</p>
 <hr>
 
 <h3>HTTP reference</h3>
-<p><b>Base URL:</b> <code>http://localhost:8080/NeewerLux/doAction?</code></p>
+<p><b>Base URL:</b> <code>http://localhost:8080/Puppi3sNeewerLux/doAction?</code></p>
 <table cellpadding="4">
 <tr><td><b>discover</b></td><td>Scan for new lights</td></tr>
 <tr><td><b>link=N</b></td><td>Connect to light N, or <code>all</code></td></tr>
@@ -1817,16 +1925,16 @@ copied between installations.</p>
 <tr><td><b>stop_animate</b></td><td>Stop the running animation</td></tr>
 <tr><td><b>list / list_json</b></td><td>List lights, presets, and animations</td></tr>
 </table>
-<p>POST to <code>/NeewerLux/batch</code> for multi-light JSON commands, or to
-<code>/NeewerLux/animate</code> for JSON animation control.</p>
+<p>POST to <code>/Puppi3sNeewerLux/batch</code> for multi-light JSON commands, or to
+<code>/Puppi3sNeewerLux/animate</code> for JSON animation control.</p>
 
 <hr>
 
 <p style="color:#888; font-size:0.9em;">
 <b>Repository:</b> <a href="https://github.com/puppi3-music/NeewerLux/">github.com/puppi3-music/NeewerLux</a><br>
-<b>Releases:</b> <a href="https://github.com/poizenjam/NeewerLux/releases">github.com/poizenjam/NeewerLux/releases</a><br><br>
-Fork with sound reactive mode by Puppi3. Licensed under AGPL-3.0.<br>
-NeewerLux by <a href="https://github.com/poizenjam/NeewerLux/">PoizenJam</a>.
+<b>Releases:</b> <a href="https://github.com/puppi3-music/NeewerLux/releases">github.com/puppi3-music/NeewerLux/releases</a><br><br>
+Puppi3's NeewerLux by puppi3-music. Licensed under AGPL-3.0.<br>
+Fork of NeewerLux by <a href="https://github.com/poizenjam/NeewerLux/">PoizenJam</a>.
 Based on <a href="https://github.com/taburineagle/NeewerLite-Python/">NeewerLite-Python</a> (v0.12d) by Zach Glenwright.
 Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by Xu Lian.
 </p>
@@ -1857,7 +1965,7 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         self.ColorModeTabWidget.addTab(self.logTab, "Log")
 
         # --- SOUND REACTIVE ---
-        # Added last so the indexes of the tabs above (used throughout NeewerLux.py) stay the same.
+        # Added last so the indexes of the tabs above (used throughout Puppi3sNeewerLux.py) stay the same.
         self.soundTab = QWidget()
         sndLay = QVBoxLayout(self.soundTab)
         sndLay.setContentsMargins(10, 10, 10, 10)
@@ -1935,10 +2043,21 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         self.soundAllLightsCheck = QCheckBox("All lights (else the selected ones)")
         self.soundAllLightsCheck.setChecked(True)
         sg.addWidget(self.soundAllLightsCheck, 6, 1, 1, 3)
-        colL = QLabel("Colours:"); colL.setFont(mainFont); sg.addWidget(colL, 7, 0)
+        offL = QLabel("Offset:"); offL.setFont(mainFont); sg.addWidget(offL, 7, 0)
+        self.soundOffsetSpin = _spin(0, 100, 0, "%")
+        self.soundOffsetSpin.setToolTip("Ripples changes across the lights, in light order: each light shows them a little later than the one before.\n"
+            "0% = every light in step. 100% = the last light trails the first by nearly a beat.")
+        sg.addWidget(self.soundOffsetSpin, 7, 1)
+        sprL = QLabel("Colour spread:"); sprL.setFont(mainFont); sg.addWidget(sprL, 7, 2)
+        self.soundSpreadSpin = _spin(0, 100, 0, "%")
+        self.soundSpreadSpin.setToolTip("Gives each light its own colour, moved further round the colour wheel (or along the palette) than the one before.\n"
+            "0% = every light the same colour. 100% = spread evenly over the whole wheel or palette.\n"
+            "For Spectrum colour, Beat colour jump and Bass pulse. Frequency bands and Rainbow drift already give each light its own colour.")
+        sg.addWidget(self.soundSpreadSpin, 7, 3)
+        colL = QLabel("Colours:"); colL.setFont(mainFont); sg.addWidget(colL, 8, 0)
         self.soundPalette = PaletteEditor()
-        sg.addWidget(self.soundPalette, 7, 1, 1, 3)
-        beatL = QLabel("Beats from:"); beatL.setFont(mainFont); sg.addWidget(beatL, 8, 0)
+        sg.addWidget(self.soundPalette, 8, 1, 1, 3)
+        beatL = QLabel("Beats from:"); beatL.setFont(mainFont); sg.addWidget(beatL, 9, 0)
         self.soundBeatSourceCombo = QComboBox()
         self.soundBeatSourceCombo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.soundBeatSourceCombo.setToolTip("Where beats come from. A MIDI clock input (Traktor Virtual Output, say)\n"
@@ -1950,29 +2069,29 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         beatRow = QHBoxLayout()
         beatRow.addWidget(self.soundBeatSourceCombo, 1)
         beatRow.addWidget(self.soundMidiRefreshButton)
-        sg.addLayout(beatRow, 8, 1, 1, 2)
+        sg.addLayout(beatRow, 9, 1, 1, 2)
         self.soundClockBadge = QLabel("")
         self.soundClockBadge.setToolTip("MIDI clock link: green when beats come from the clock")
-        sg.addWidget(self.soundClockBadge, 8, 3)
-        leadL = QLabel("Beat lead:"); leadL.setFont(mainFont); sg.addWidget(leadL, 9, 0)
+        sg.addWidget(self.soundClockBadge, 9, 3)
+        leadL = QLabel("Beat lead:"); leadL.setFont(mainFont); sg.addWidget(leadL, 10, 0)
         self.soundClockLeadSpin = _spin(0, 300, 50, " ms")
         self.soundClockLeadSpin.setToolTip("Fire MIDI clock beats, and beats predicted from the tempo, this much early,\nto make up for the time "
             "Bluetooth takes to reach the lights.\n\nStart around 50 ms.\n"
             "Then adjust in 10 ms steps: raise it if the lights land after the kick, lower it if they land before.\n"
             "Has no effect on beats taken straight from detected kicks.")
         leadL.setToolTip(self.soundClockLeadSpin.toolTip())
-        sg.addWidget(self.soundClockLeadSpin, 9, 1)
-        everyL = QLabel("Colour every:"); everyL.setFont(mainFont); sg.addWidget(everyL, 9, 2)
+        sg.addWidget(self.soundClockLeadSpin, 10, 1)
+        everyL = QLabel("Colour every:"); everyL.setFont(mainFont); sg.addWidget(everyL, 10, 2)
         self.soundBeatsPerColourSpin = _spin(1, 16, 8, " beats")
         self.soundBeatsPerColourSpin.setToolTip("Beat colour jump: change colour every this many beats (4 = once a bar).\n"
             "Brightness still flashes on every beat. With a MIDI clock, changes land on bar lines.")
-        sg.addWidget(self.soundBeatsPerColourSpin, 9, 3)
+        sg.addWidget(self.soundBeatsPerColourSpin, 10, 3)
         self.soundClockNeedsSoundCheck = QCheckBox("Clock beats only while kicks play")
         self.soundClockNeedsSoundCheck.setChecked(True)
         self.soundClockNeedsSoundCheck.setToolTip("Traktor keeps sending MIDI clock after the decks stop. With this on,\n"
             "clock beats pause when no kicks are heard, for example after the decks\n"
             "stop or in an off-beat bassline, and come back with the first kick on a beat.")
-        sg.addWidget(self.soundClockNeedsSoundCheck, 10, 1, 1, 3)
+        sg.addWidget(self.soundClockNeedsSoundCheck, 11, 1, 1, 3)
         self.soundPredictBeatsCheck = QCheckBox("Predict beats from the tempo")
         self.soundPredictBeatsCheck.setChecked(True)
         self.soundPredictBeatsCheck.setToolTip("Without a MIDI clock: find the tempo in the sound (about 4 s after the kicks start)\n"
@@ -1994,8 +2113,8 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         predictRow.addWidget(flashOnL)
         predictRow.addWidget(self.soundFlashOnCombo)
         predictRow.addStretch(1)
-        sg.addLayout(predictRow, 11, 1, 1, 3)
-        tempoL = QLabel("Tempo range:"); tempoL.setFont(mainFont); sg.addWidget(tempoL, 12, 0)
+        sg.addLayout(predictRow, 12, 1, 1, 3)
+        tempoL = QLabel("Tempo range:"); tempoL.setFont(mainFont); sg.addWidget(tempoL, 13, 0)
         self.soundTempoMinSpin = _spin(50, 240, 70, " BPM")
         self.soundTempoMaxSpin = _spin(50, 240, 180, " BPM")
         tempoTip = ("Without a MIDI clock: the tempos looked for in the sound. Outside 70 to 180 BPM,\n"
@@ -2009,16 +2128,18 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         tempoRow.addWidget(QLabel("to"))
         tempoRow.addWidget(self.soundTempoMaxSpin)
         tempoRow.addStretch(1)
-        sg.addLayout(tempoRow, 12, 1, 1, 3)
-        rollL = QLabel("Drum rolls:"); rollL.setFont(mainFont); sg.addWidget(rollL, 13, 0)
+        sg.addLayout(tempoRow, 13, 1, 1, 3)
+        rollL = QLabel("Drum rolls:"); rollL.setFont(mainFont); sg.addWidget(rollL, 14, 0)
         self.soundRollStyleCombo = QComboBox()
-        self.soundRollStyleCombo.addItems(["Strobe", "Swell", "Strobe + Swell"])
+        self.soundRollStyleCombo.addItems(["Strobe", "Swell", "Strobe + Swell", "Chase"])
         self.soundRollStyleCombo.setToolTip("How drum rolls show in Beat colour jump, Bass pulse and Rainbow drift.\n"
             "Strobe: a deep flash from Max down to Min bright on the beat, with a shallow ripple on the hits between.\n"
             "Swell: brightness climbs smoothly to Max bright over about 8 s, with no pulsing.\n"
-            "Strobe + Swell: the same pulses, on a brightness that climbs to Max bright over about 8 s.")
+            "Strobe + Swell: the same pulses, on a brightness that climbs to Max bright over about 8 s.\n"
+            "Chase: on a Nanoleaf shown one light per panel, the deep flashes go across its panels, one at a time;\n"
+            "other lights keep the Strobe. The flash limit counts the panels together, so the chase goes no faster than a strobe.")
         rollL.setToolTip(self.soundRollStyleCombo.toolTip())
-        sg.addWidget(self.soundRollStyleCombo, 13, 1)
+        sg.addWidget(self.soundRollStyleCombo, 14, 1)
         self.soundFlashLevelCombo = QComboBox()
         self.soundFlashLevelCombo.addItem("Standard (4 a second)", "Standard")
         self.soundFlashLevelCombo.addItem("Show (10 a second)", "Show")
@@ -2027,9 +2148,9 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
             "Standard: at most 4. A flashing-lights notice is still recommended.\n"
             "Show: at most 10 in bursts of about 4 s, then 4 until about 8 s below that have passed. Only with a notice posted.\n"
             "Off: no limit at all, only with a notice posted.\n"
-            "Show and Off go back to Standard each time NeewerLux starts.")
-        flashL = QLabel("Flash limit:"); flashL.setFont(mainFont); flashL.setToolTip(self.soundFlashLevelCombo.toolTip()); sg.addWidget(flashL, 13, 2)
-        sg.addWidget(self.soundFlashLevelCombo, 13, 3)
+            "Show and Off go back to Standard each time Puppi3's NeewerLux starts.")
+        flashL = QLabel("Flash limit:"); flashL.setFont(mainFont); flashL.setToolTip(self.soundFlashLevelCombo.toolTip()); sg.addWidget(flashL, 14, 2)
+        sg.addWidget(self.soundFlashLevelCombo, 14, 3)
         sndLay.addLayout(sg)
 
         meterRow = QHBoxLayout()
@@ -2084,4 +2205,4 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         # === STATUS BAR ===
         self.statusBar = QStatusBar()
         MainWindow.setStatusBar(self.statusBar)
-        self.statusBar.showMessage("Welcome to NeewerLux!")
+        self.statusBar.showMessage("Welcome to Puppi3's NeewerLux!")

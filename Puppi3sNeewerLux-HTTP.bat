@@ -1,17 +1,17 @@
 @echo off
-REM NeewerLux - HTTP Server Only (no GUI)
+REM Puppi3's NeewerLux - HTTP Server Only (no GUI)
 
-title NeewerLux HTTP Server
+title Puppi3's NeewerLux HTTP Server
 cd /d "%~dp0"
 
 echo ====================================================
-echo   NeewerLux - HTTP Server Mode
+echo   Puppi3's NeewerLux - HTTP Server Mode
 echo   Web dashboard: http://localhost:8080/
-echo   API endpoint:  http://localhost:8080/NeewerLux/doAction?
+echo   API endpoint:  http://localhost:8080/Puppi3sNeewerLux/doAction?
 echo   (8080 is the default; use your own port if you changed it
 echo   in Global Preferences)
 echo   Press Ctrl+C to stop
 echo ====================================================
 echo.
 
-python NeewerLux.py --http %*
+python Puppi3sNeewerLux.py --http %*
