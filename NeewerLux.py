@@ -6858,12 +6858,23 @@ def soundLightInterval(lightIdx):
     return getattr(availableLights[lightIdx][1], "updateInterval", 0.0)
 
 
+def soundLightGroup(lightIdx):
+    """The group a light chases round in a Chase drum roll: a Nanoleaf panel's device. Other lights keep the Strobe."""
+    if lightIdx >= len(availableLights):
+        return None
+    device = availableLights[lightIdx][0]
+    if nanoleaf is not None and isinstance(device, nanoleaf.NanoleafDevice) and device.panelId is not None:
+        return device.controller.id
+    return None
+
+
 def getSoundEngine():
     global soundEngine
     if soundEngine is None:
         from neewerlux_audio import SoundEngine
         soundEngine = SoundEngine(soundSendFrame, printDebugString)
         soundEngine.lightInterval = soundLightInterval
+        soundEngine.lightGroup = soundLightGroup
     return soundEngine
 
 

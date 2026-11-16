@@ -2131,11 +2131,13 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         sg.addLayout(tempoRow, 13, 1, 1, 3)
         rollL = QLabel("Drum rolls:"); rollL.setFont(mainFont); sg.addWidget(rollL, 14, 0)
         self.soundRollStyleCombo = QComboBox()
-        self.soundRollStyleCombo.addItems(["Strobe", "Swell", "Strobe + Swell"])
+        self.soundRollStyleCombo.addItems(["Strobe", "Swell", "Strobe + Swell", "Chase"])
         self.soundRollStyleCombo.setToolTip("How drum rolls show in Beat colour jump, Bass pulse and Rainbow drift.\n"
             "Strobe: a deep flash from Max down to Min bright on the beat, with a shallow ripple on the hits between.\n"
             "Swell: brightness climbs smoothly to Max bright over about 8 s, with no pulsing.\n"
-            "Strobe + Swell: the same pulses, on a brightness that climbs to Max bright over about 8 s.")
+            "Strobe + Swell: the same pulses, on a brightness that climbs to Max bright over about 8 s.\n"
+            "Chase: on a Nanoleaf shown one light per panel, the deep flashes go across its panels, one at a time;\n"
+            "other lights keep the Strobe. The flash limit counts the panels together, so the chase goes no faster than a strobe.")
         rollL.setToolTip(self.soundRollStyleCombo.toolTip())
         sg.addWidget(self.soundRollStyleCombo, 14, 1)
         self.soundFlashLevelCombo = QComboBox()

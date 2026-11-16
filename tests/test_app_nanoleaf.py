@@ -198,6 +198,12 @@ class PerPanelTests(AppTestCase):
         self.assertEqual(len(self.fake.frames), 2)
         self.assertEqual({pid: rgb for pid, rgb, _ in self.fake.frames[1]}[5002], nl.hsiToRGB(45, 100, 100))
 
+    def test_panels_chase_together_in_a_roll(self):
+        self.assertIsNone(app.soundLightGroup(0))  # the whole device is one light: it strobes
+        app.setNanoleafPerPanel(self.loop, "S12345", True, False)
+        self.assertEqual({app.soundLightGroup(i) for i in range(4)}, {self.controller.id})
+        self.assertIsNone(app.soundLightGroup(4))  # past the end
+
     def test_turning_it_off_restores_the_effect_and_one_row(self):
         self.assertIs(self.run_(app.connectToLight(0, False)), True)
         rows = app.setNanoleafPerPanel(self.loop, "S12345", True, False)
