@@ -20,28 +20,38 @@ Add to it when you try something, whether it is kept or dropped.
 Columns used below: **on** = % of the track the predicted grid is on the beat; **g50 / g90** = median / 90th
 percentile grid error in ms; **extra** = flashes with no beat.
 
-## Open problems (as of 2026-11-16)
+## Open problems (as of 2026-11-16, after the comb-gated hold (r))
+
+Numbers re-run on the current module (f31ea92) for Love, Strobe, Strobe mic, Savana, Freestyler and I Found You;
+the rest are from the (r) entry in Tried and dropped. Refresh this section whenever a change is kept.
 
 - **Love is Gonna Save Us (Benny Benassi, ARTBAT) 150-190 s.** A long fill: hits at ±117 / ±234 ms from the beat,
   few on it. The tempo window reads 4/3 (171 BPM) there and the 3/4-4/3 guard holds it off, but 102.5 (4/5) and
-  then 171 still get through around 157 s. On 89.2→90.8 after the 2026-11-16 fixes, 92.8 with the comb-gated hold;
-  150-190 s is still mostly off.
+  then 171 still got through around 157 s (traced before (r); not re-traced). On 89.2→90.8 after the 2026-11-16
+  fixes, 92.8 with the comb-gated hold (g50 1.8, g90 8.5, extra 77).
 - **Savana (Chris Lake) 203-239 s:** the kicks stop and an off-beat bass plays alone (hits at +213 ms, first every
   two beats, then every beat, plus a sound at +45..+65 ms). Its hits are taken as kicks, so no breakdown hold
   starts; at 208.5 s the off-beat flip (TEMPO_FLIP) moves the trusted grid half a beat, and it stays there until the
-  kicks return at 239 s (on 90.3; 210-240 s is 0-14%). See Tried and dropped (Off-beat flips) for three attempts.
+  kicks return at 239 s (on 90.3 before (r), 210-240 s 0-14%; 91.6 under (r), not re-traced). See Tried and
+  dropped (Off-beat flips) for three attempts.
   Its steady g50 13.6 is not the tracker: the kicks timed from their own click land 13.7 ms before Traktor's beats
   all track long (±2 ms on the other tracks), and the decoder offset is right (Info frame + 529 samples, a kind of
   MP3 dj-tools checked to the sample; this file's header, written by ffmpeg, gives no encoder delay). Traktor's grid
   on this file sits late; don't tune for it.
-- **Freestyler (Bomfunk MC's):** ~81% on; phase off under the off-beat bass in places.
-- **I Found You (GVN, Elliot Vast):** ~41% on; kickless sections with a 16th off-beat bass.
-- **Go Back (Sub Focus):** switches 136→174 at ~144 s and is scored against one 174 grid, so its on% means little.
-- **Falling Up (Anabel Englund, Punctual) g90 9.4→19.1, extra 21→45** since the comb-gated hold (kept 2026-11-16,
-  see Off-beat flips (r)); on% 97.2, not traced yet.
+- **Freestyler (Bomfunk MC's):** 80.0% on (g90 36.4, extra 291); phase off under the off-beat bass in places.
+- **I Found You (GVN, Elliot Vast):** 43.6% on (g90 33.7, extra 366); kickless sections with a 16th off-beat bass.
+- **Go Back (Sub Focus):** switches 136→174 at ~144 s and is scored against one 174 grid, so its on% means little
+  (47.9 under (r), 49.4 base). Scored by detected kicks on the tracker's own grid, 90-140 s is even: base 43 of 99,
+  (r) 44 of 98.
+- **Desire (HUMAN404) 160-170 s:** 99.8% on, but the grid sits +31 ms there: the hold's fit takes in a -71 ms fill
+  hit at 159.84 s (from (i)).
+- **g90 and extras since the comb-gated hold (r)** (accepted when it was kept, none traced yet): Falling Up (Anabel
+  Englund, Punctual) g90 9.4→19.1, extra 21→45 (on% 97.2); Feels Like Us 13.6→17.9; Desire 4.5→10.8; synthetic
+  houseFillBreak/clean 5.8→15.1.
 - **light years (Inez, John Summit) 60-80 s:** 91.5 (93.1 before the comb-gated hold); traced, no fix (Off-beat
   flips).
-- **Strobe g90 ~11-12 ms:** kick detection lateness moves by section (the kick's rise swells longer under the bass).
+- **Strobe g90 11.5 ms (mic 12.2, on 100.0, extra 27):** kick detection lateness moves by section (the kick's rise
+  swells longer under the bass).
 
 ## Tried and dropped
 
