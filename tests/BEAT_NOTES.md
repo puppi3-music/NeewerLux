@@ -73,8 +73,19 @@ Each entry: what was tried, on which problem, and what the numbers showed.
   Afterparty 98.5, messy 95.2, but Strobe 36.7, DURO 46.9, Age of Love 47.8. Fixed: Savana 91.8 (the +45 ms hits
   resnap the hold at 211 s), DURO 68.5, Strobe 82.6, I Found You 35.1. With 25 ms: Savana 95.1, messy 90.8, Desire
   100, but DURO 55.4, Strobe 61.9, Feels Like Us 56.2, Love 72.7. The trigger fires in ordinary sections too.
-  The buggy run suggests that holding a fitted grid and snapping only on kicks right on it helps a lot where the
-  kicks are clear; what breaks the others was not looked at.
+  Why the buggy run breaks Strobe, DURO and Age of Love (traced 2026-11-16): the resnap didn't set lastOnGrid, so
+  from the first hold (DURO 28 s, Age of Love 30 s) the tracker never left it: period fixed from one fit, no window
+  estimate, no flip, and every kick within ±0.25 beat (~115 ms) set the whole phase to itself. Fill hits walk the
+  grid in one or two snaps (DURO 133-135 s: -110 then -169 ms; Strobe 98-99 s: -92 then -113 ms); from there the
+  real kicks are too far to snap back, and on DURO the off-beat hits (+236 ms) then hold it on the off-beat to the
+  end. Age of Love has steady own-click "kicks" a 16th early (-115 ms vs Traktor, every beat); the hold snaps to them
+  and stays, where the base tracker's comb keeps the phase right.
+  Then tried the buggy hold with the snap only within TEMPO_KICK_GATE 45 ms, and leaving the hold when ≥ 6 kicks in
+  4 s come and none has fit for 4 s: Strobe, Love, Falling Up, Desire 100, Afterparty 98.5, Apex 90.5, Feels Like
+  Us 90.8; but Age of Love 46.8 (still the 16th: it fits the gate once held), messy 75.0, GHOST DATA 71.5, light
+  years 85.2, DURO 84.8 (130-180 s), Savana 90.7 (gain lost), and g90 much worse (Falling Up 9.4→29.5: whole-phase
+  snaps to jittery kicks, no kick offset). Lesson: a hold snapped by kicks alone trusts the kick picker's phase,
+  which is a 16th off on some tracks. Untested lead: snap a held grid only where the window comb's phase agrees.
 
 **Kick timing**
 - Timing kicks from the start of their rise instead of the 0.7 × peak crossing (for Strobe g90): unguarded it made
@@ -140,3 +151,6 @@ Everything tried on a day, kept or dropped, in order. Numbers are on / g50 / g90
 - Savana: offset traced to Traktor's grid on that file (see Open problems); the 0% section is an off-beat flip in a
   kickless off-beat-bass part. Dropped: no flip when trusted; anchor-directed flip; trusted hold on missing on-grid
   kicks (see Off-beat flips).
+- Traced why the buggy "trusted hold" run (Savana/Love/Feels Like Us 100) broke Strobe, DURO, Age of Love: a
+  permanent hold whose ±0.25-beat full resnaps let fill hits and a 16th-early kick walk the grid (see Off-beat
+  flips). A tight-gate + exit version dropped: Age of Love 46.8, messy 75, g90 worse.
