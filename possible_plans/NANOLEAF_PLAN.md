@@ -18,8 +18,8 @@ Decisions already made:
 |---|---|
 | 1. Module, fake controller, tests | Done, committed as `af1ae59`, verified on the Shapes set |
 | 2. Whole-device integration | Done, committed as `3c7bbcb` (CI: `e839dd0`), plus whole-device streaming and slow-light flashes. App checks 2, 3, 6 and 7 by hand still to do |
-| 3. Per-panel mode | Done, checked in the app on the Shapes set (sound reactive per panel looks right). Not committed yet |
-| 4. Docs and packaging | Not started |
+| 3. Per-panel mode | Done, committed (latest `27f432f`), checked in the app on the Shapes set (sound reactive per panel looks right) |
+| 4. Docs and packaging | Done |
 
 ## Approach: Nanoleaf objects that stand in for Bleak objects
 
@@ -89,7 +89,7 @@ Follow-up after `3c7bbcb` (sound reactive on a whole device):
 - Tests: `test_nanoleaf.py` now 35 (a slow device doesn't hold the write, quick colours stream, a refused PUT raises on the next write, a whole-device colour joins a panel stream). New `tests/test_slow_lights.py` (9). The fake gained `stateDelay` and `refuseState`. 50 tests in all.
 
 Not done here:
-- `release.yml`'s source zip lists files by name and is missing `neewerlux_nanoleaf.py` (and the existing `neewerlux_audio.py` / `neewerlux_midi.py`). This belongs with Phase 4 packaging.
+- `release.yml`'s source zip lists files by name and was missing `neewerlux_nanoleaf.py` (and the existing `neewerlux_audio.py` / `neewerlux_midi.py`). Fixed in Phase 4.
 
 ## Phase 3: per-panel mode — DONE
 
@@ -107,7 +107,7 @@ As planned:
 - Panel rows are listed under a group row for their device, like a directory tree (`_light_groups()` in [NeewerLux.py](NeewerLux.py)). Table rows no longer equal `availableLights` indexes: `MainWindow._tableRows` / `_lightRow` map between them, and `setTheTable`, `returnTableInfo`, `selectRows` and `selectedLights` all take and return light indexes. Double-clicking the group row (or clicking its ▾/▸ row number) collapses it; selecting it selects every panel; its Linked column counts linked panels. Collapsed state lasts for the session. The web UI does the same (`group` / `groupName` in `list_json`, collapsed state in the browser's `localStorage`) and puts the panels in an `<optgroup>` in the light picker.
 - Measure the real frame rate under sound-reactive on the Shapes set. (Done, see above.)
 
-## Phase 4: docs and packaging
+## Phase 4: docs and packaging — DONE
 
 - [README.md](README.md): Nanoleaf section covering Wi-Fi setup (not Thread-only), pairing, per-panel mode and the limits below.
 - [CHANGELOG.md](CHANGELOG.md) entry; update the description and keywords in [pyproject.toml](pyproject.toml).
@@ -126,7 +126,7 @@ As planned:
 
 Run tests with `uv run --no-sync python ...` or the activated `.venv`'s `python`: a plain `uv run` syncs the `audio` group, and `python-rtmidi` fails to build on this machine (no C++ compiler).
 
-1. `python -m unittest discover -s tests -p "test_*.py"` passes (88 tests on 2026-11-16; CI runs the same).
+1. `python -m unittest discover -s tests -p "test_*.py"` passes (89 tests on 2026-11-16; CI runs the same).
 2. Start `tests/fake_nanoleaf.py`, run `NeewerLux.py`, add `127.0.0.1:<port>` through "Add Nanoleaf…": pairing fails until the fake's button state is set, then succeeds and the row links.
 3. Whole-device: CCT and HSI sliders, on/off, a preset, an animation and sound-reactive each produce the expected `/state` requests in the fake's log; the table shows `LINKED ON` / `STBY`.
 4. Per-panel: enable the checkbox, confirm one row per panel, run "Rainbow Chase" and sound-reactive, and confirm the fake logs one UDP datagram per frame with distinct panel colours. Disable it and confirm the effect is restored and a single row returns.

@@ -31,6 +31,7 @@ a = Analysis(
         'neewerlux_audio',
         'sounddevice',
         'neewerlux_midi',
+        'neewerlux_nanoleaf',
         'rtmidi',
         'numpy',
         'PySide6',

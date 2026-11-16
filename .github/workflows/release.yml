@@ -69,6 +69,9 @@ jobs:
             neewerlux_theme.py \
             neewerlux_webui.py \
             neewerlux_anim_editor.py \
+            neewerlux_audio.py \
+            neewerlux_midi.py \
+            neewerlux_nanoleaf.py \
             NeewerLux.bat \
             NeewerLux-HTTP.bat \
             pyproject.toml \

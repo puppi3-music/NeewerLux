@@ -1,12 +1,12 @@
 # NeewerLux
 
-Control Neewer Bluetooth LED lights from your computer, with presets, keyframe animations, and an HTTP server for driving it all from a browser or a Stream Deck.
+Control Neewer Bluetooth LED lights and Nanoleaf panels from your computer, with presets, keyframe animations, sound reactive mode, and an HTTP server for driving it all from a browser or a Stream Deck.
 
 NeewerLux is a fork of [NeewerLite-Python](https://github.com/taburineagle/NeewerLite-Python) (v0.12d) by Zach Glenwright ([@taburineagle](https://github.com/taburineagle)), which grew out of [NeewerLite](https://github.com/keefo/NeewerLite) by Xu Lian ([@keefo](https://github.com/keefo)).
 
 This fork of [NeewerLux](https://github.com/poizenjam/NeewerLux) by PoizenJam adds sound reactive mode and is maintained by Puppi3.
 
-NeewerLux is not affiliated with or endorsed by Neewer.
+NeewerLux is not affiliated with or endorsed by Neewer or Nanoleaf.
 
 ## Supported lights
 
@@ -15,6 +15,8 @@ Lights are detected by their Bluetooth name. Anything advertising as `NEEWER`, `
 GL1, NL140, SNL1320, SNL1920, SNL480, SNL530, SNL660, SNL960, SRP16, SRP18, WRP18, ZRP16, BH30S, CB60, CL124, RGB C80, RGB CB60, RGB1000, RGB1200, RGB140, RGB168, RGB176, RGB176 A1, RGB512, RGB800, RGB1, RGB18, RGB190, RGB450, RGB480, RGB530, RGB530 PRO, RGB650, RGB660, RGB660 PRO, RGB960, RGB-P200, RGB-P280, SL-70, SL-80, SL-90, TL60 RGB, ZK-RY, Apollo.
 
 A model that isn't on the list still connects; it just gets a default colour range, which you can override per light in Light Preferences.
+
+Nanoleaf panel sets (Shapes, Canvas, Lines, Elements, Light Panels) are controlled over your network instead; see [Nanoleaf panels](#nanoleaf-panels). Nanoleaf Essentials bulbs and strips are not supported.
 
 ## Installation
 
@@ -131,6 +133,32 @@ To follow what your computer is playing rather than a microphone, send the outpu
 ### Text size
 
 **A−** and **A+** in the toolbar change the size of all text, as do Ctrl/Cmd + and −. Ctrl/Cmd 0 resets it. The size is remembered. On macOS the default is 130%.
+
+## Nanoleaf panels
+
+Nanoleaf panel sets (Shapes, Canvas, Lines, Elements and Light Panels) sit in the light table next to your Neewer lights, and presets, animations, sound reactive mode, the HTTP server and the dashboard all drive them. NeewerLux talks to the controller over your local network with Nanoleaf's Open API, so no extra software is needed.
+
+**Wi-Fi first.** The controller must be on your Wi-Fi network. A set added only over Thread or Matter (for example straight to Apple Home) has no local API: add it to Wi-Fi in the Nanoleaf app first. The computer running NeewerLux must be able to reach it on port 16021 (TCP) and 60222 (UDP).
+
+**Pairing.** Click **Add Nanoleaf…** in the toolbar. NeewerLux searches the network and lists what it finds; pick the set, or type its IP address (shown in the Nanoleaf app's device settings), then hold the power button on the controller for 5-7 seconds until the lights flash and click **Pair** within 30 seconds. The set then appears after a scan, marked `[LAN]`, and links like any other light. Without the window, pair from the command line:
+
+```
+python NeewerLux.py --nanoleaf_pair 192.168.1.50
+```
+
+It waits up to a minute for the controller to enter pairing mode, saves the set and prints its address, such as `NL:S23220H3960`. That address works with `--light`, in batch strings, in animations and in the HTTP API. Paired sets are kept in `light_prefs/nanoleaf.json`, and if a set's IP address changes, NeewerLux finds it again on this network and updates the file.
+
+**One light, or one per panel.** A set is one light by default: every panel shows the same colour. Select it and tick **Show each panel as its own light** in Light Preferences to give every panel a row of its own, numbered left to right. The panel rows sit under a row for the set, like folders: double-click that row (or click its ▾ / ▸) to collapse or expand it, and select it to select every panel. Each panel can have its own name and fixed number, animations and presets can set panels to different colours, and Offset and Colour spread run across them. The dashboard groups panels the same way. Per-panel colours are sent as a fast stream, so sound reactive mode and animations can update every panel many times a second. Untick the box to go back to one light; the set returns to the effect it was showing before.
+
+**Chase drum rolls.** In sound reactive mode, set **Drum rolls** to **Chase** to run a drum roll round a set shown one light per panel: each deep flash goes to the next panel, left to right. Other lights keep the Strobe. See [Sound reactive](#sound-reactive) for the flash limit, which counts a set's panels together as one area.
+
+**Known limits.**
+
+- The Scene tab (Neewer's built-in effects) does nothing on a Nanoleaf.
+- Nanoleaf rows have no channel readout and no signal strength; the table shows `LAN` instead.
+- The search only covers this computer's own subnet (the /24 it is on). For a set on another subnet, type its IP address.
+- Sending one colour to the whole set while its panels are being driven one by one stops the panel stream for a moment; it starts again with the next panel colour.
+- If NeewerLux is killed while streaming panel colours, the panels keep their last colours at full brightness until you choose an effect in the Nanoleaf app.
 
 ## Remote control
 
