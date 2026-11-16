@@ -150,6 +150,16 @@ Each entry: what was tried, on which problem, and what the numbers showed.
   on the dotted claps escapes only by the blend walking it to a reading 4% off). (j) is still not kept: Freestyler
   80.2→78.4 and light years 93.1→91.5 are behind base (scratchpad c60_audio.py).
   Open from (j): Freestyler 210-230 s, light years 60-80 s.
+  Freestyler 216-225 s traced (2026-11-16): the kicks stop at 214 s and the trusted hold starts at 216.0 s with the
+  grid ~150 ms (half a beat) off the kicks, the same in base. Base ends the hold on the next fitting kick (an
+  off-beat, 217.09 s) and the kicks then steer it back by 219 s. Under (j) a kick has to fit the held grid *and* the
+  window's comb, and they disagree here: from 218.7 s the comb's beats sit on the real kicks (0-5 ms), the held grid
+  ~150 ms off, so the hold runs until the gaps exit at 225 s. (k) = (j) + in a trusted hold, a kick a whole number
+  of beats from the last one that sits on a fresh comb (but not on the held grid) resnaps the grid to it: Freestyler
+  78.4→80.0 (base 80.2), Sub Focus 47.9→49.0, synthetic same, but messy 83.7→81.2, Savana 91.6→90.0, Strobe mic
+  100→96.7 (the comb sits on the off-beat for a reading or two, e.g. 216.9 and 218.9 s here). (l) = (k) but two
+  kicks in a row on the comb: Freestyler gain gone (the kick before 219.84 s is an off-beat, so no pair forms), messy
+  still 81.5 (not traced). Neither kept (scratchpad c61/c62_audio.py).
 
 **Kick timing**
 - Timing kicks from the start of their rise instead of the 0.7 × peak crossing (for Strobe g90): unguarded it made
