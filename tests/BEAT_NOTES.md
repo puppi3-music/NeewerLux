@@ -85,7 +85,30 @@ Each entry: what was tried, on which problem, and what the numbers showed.
   Us 90.8; but Age of Love 46.8 (still the 16th: it fits the gate once held), messy 75.0, GHOST DATA 71.5, light
   years 85.2, DURO 84.8 (130-180 s), Savana 90.7 (gain lost), and g90 much worse (Falling Up 9.4→29.5: whole-phase
   snaps to jittery kicks, no kick offset). Lesson: a hold snapped by kicks alone trusts the kick picker's phase,
-  which is a 16th off on some tracks. Untested lead: snap a held grid only where the window comb's phase agrees.
+  which is a 16th off on some tracks.
+  Then (2026-11-16) the 45 ms hold with a second gate: a trusted hold resnaps on a kick only if the window comb's
+  latest beat at the held tempo (update()'s estimate, less estOffset) is also within 45 ms of it. Step by step:
+  (a) comb gate alone: Age of Love 93.4 (fixed: the comb ignores the 16th-early kicks), but Love 70.5, Apex 59.1:
+  in a fill the window reads 4/3, no comb at the held tempo is stored, so no kick can resnap. (b) No fresh comb
+  (none at the held tempo in the last 1.5 s): the kicks alone decide. Love and Desire 100, Strobe 99.9, Apex 90.2,
+  but messy 75.3, GHOST DATA 70.9, DURO 86.2, light years 87.9, g90 about doubled (Punctual 9.4→21, Feels Like Us
+  13.6→28). (c) Resnap by TEMPO_KICK_PHASE of the error instead of all of it: g90 partly back (Desire 3.9, Strobe
+  16.3), on% the same. Subtracting kickOffset changes nothing (with click timing it is already in the phase).
+  (d) Messy 40-60 s sat on the off-beat because the resnap didn't set lastOnGrid: the hold restarted on the next
+  check, and each restart's line fit took in the off-beat kicks. With the resnap setting lastOnGrid, most tracks
+  are back near base, but Strobe 75.5: at 181 s a flip moved the grid -134 ms, the hold's fit at 182.3 s put it
+  back, then the 3/4 guard undid the flip on top (+131 ms) and no kick was in the gate again until 270 s.
+  (e) = (d) + `_startCoast` clears `self.flipped` (the fit sets the phase, so there's nothing left to undo). Vs base:
+  Desire 89.3→100, Apex 85.4→88.8, Love 90.8→92.8, Savana 91.6, messy 83.7, Age of Love 93.4, Strobe 99.6, DURO
+  91.8; but Feels Like Us 87.4→83.7, Freestyler 80.2→77.8, light years 93.1→91.5, Punctual g90 9.4→19.1;
+  synthetic the same except houseFillBreak/clean g90 5.8→15.1; **Strobe mic on 99.6→95.5, extra 25→84, g90 12.3→13.6**. Not kept.
+  Feels Like Us 175-194 s: the window's 137 reading pulled the period to 134.4 just before an off-grid-trigger hold
+  froze it; the kicks after the quiet are ~200 ms off the held grid, so the 45 ms gate never lets them resnap
+  (base resnaps on any kick pair a whole number of beats apart, and recovers at 182 s). (f) = (e), but a hold that
+  sees a real quiet (no kicks for max(2 s, 4 beats)) resnaps as base does: I Found You 43.4→36.2, messy 80.1,
+  Apex 83.5, Feels Like Us only 84.2. Dropped.
+  Open from (e): Strobe mic (not traced yet), Freestyler 210-230 s, light years 60-80 s, Feels Like Us' frozen
+  wrong period.
 
 **Kick timing**
 - Timing kicks from the start of their rise instead of the 0.7 × peak crossing (for Strobe g90): unguarded it made
