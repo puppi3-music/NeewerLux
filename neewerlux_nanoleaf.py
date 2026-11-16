@@ -21,12 +21,19 @@ import json
 import os
 import socket
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
 
 API_PORT = 16021
 STREAM_PORT = 60222  # extControl v2 always streams to this port
+
+# Whole-device colours that come quickly (sound reactive, animations, a dragged slider) are streamed over UDP
+# instead of one HTTP PUT each, which takes 70-600 ms on a Shapes set; the stream keeps up with 20+ frames a second.
+STREAM_AFTER = 0.5  # a colour this soon after the last one starts the stream, seconds
+STREAM_IDLE = 5.0  # with no colour for this long the stream ends and the last colour is PUT, seconds
+STREAM_RETRY = 30.0  # after the device refused to stream, PUT for this long before asking again, seconds
 
 CCT_MIN = 1200  # the Open API's colour temperature range
 CCT_MAX = 6500
@@ -503,13 +510,27 @@ class NanoleafController:
         self._relocating = None  # future while a search runs, shared by rows connecting at once
         self.transition = 1  # stream transition time, in 100 ms steps
         self.streamPort = STREAM_PORT  # tests point this at the fake
+        self.streamAfter = STREAM_AFTER  # tests change these
+        self.streamIdle = STREAM_IDLE
 
         self._clients = set()
         self._layoutLoaded = False
 
-        # whole-device state, latest-wins: while one PUT is in flight later bodies merge into _pendingState
-        self._stateBusy = False
-        self._pendingState = None
+        # Whole-device state, latest-wins, sent from a thread of its own: a PUT takes 70-600 ms on real
+        # hardware, and a write that waited for it would hold every other light in the same frame.
+        self._stateLock = threading.Condition()
+        self._pendingState = None  # body waiting for the sender; later writes merge into it
+        self._stateThread = None  # the sender, while it has something to do
+        self._stateIdle = threading.Event()
+        self._stateIdle.set()
+        self._stateError = None  # a failed PUT, raised from the next write so the app still hears of it
+        self.putTime = 0.25  # seconds a PUT /state takes, averaged
+        self._lastWhole = None  # when the last whole-device colour came
+        self._wholeBody = {}  # that colour as a PUT /state body, sent when the stream ends
+        self._wantStream = False  # the sender should start the whole-device stream
+        self.wholeStreaming = False  # whole-device colours go out over the stream
+        self._finishWhole = False  # end the whole-device stream now, not after STREAM_IDLE
+        self._noStreamUntil = 0.0
 
         # per-panel streaming
         self.streaming = False
@@ -622,32 +643,142 @@ class NanoleafController:
     async def close(self, client):
         self._clients.discard(client)
         if not self._clients:
+            with self._stateLock:
+                self._finishWhole = True
+                self._stateLock.notify_all()
+            await self.settle()  # a last colour or power-off still goes out
             await self.stopStreaming()
 
     # -- whole device ---------------------------------------------------------
 
+    @property
+    def updateInterval(self):
+        """Seconds between colour updates this device can show, for the sound engine."""
+        if self.streaming:
+            return max(1, self.transition) * 0.1
+        return self.putTime
+
     async def putState(self, body):
-        """PUT /state, latest-wins. If a PUT is in flight this merges body into the next one and returns."""
-        if any(k in body for k in ("hue", "sat", "ct")) and self.streaming:
-            # a colour sent to the whole device ends the stream on the controller
-            self._endStream(restore=False)
-        if self._stateBusy:
-            if self._pendingState is None:
-                self._pendingState = {}
-            self._pendingState.update(body)
-            return
-        self._stateBusy = True
-        try:
-            while body:
-                status, _ = await self.http("PUT", "/state", body)
+        """PUT /state, latest-wins, without waiting for the device: the body merges into the one waiting to
+        go and a sender thread sends it. Raises the failure of an earlier PUT, if one failed since."""
+        with self._stateLock:
+            if self.wholeStreaming:  # power while streaming: end the stream, then send it with the last colour
+                self._wholeBody.update(body)
+                self._finishWhole = True
+                body = None
+            elif any(k in body for k in ("hue", "sat", "ct")) and self.streaming:
+                # a colour sent to the whole device ends the per-panel stream on the controller
+                self._endStream(restore=False)
+            if body:
+                self._pendingState = dict(self._pendingState or {}, **body)
+            error = self._wake()
+        if error is not None:
+            raise error
+
+    def setWhole(self, body, rgb):
+        """A whole-device colour: body for PUT /state, rgb for the stream. Never waits for the device.
+        Raises the failure of an earlier PUT, if one failed since."""
+        with self._stateLock:
+            now = time.monotonic()
+            quick = self._lastWhole is not None and now - self._lastWhole < self.streamAfter
+            self._lastWhole = now
+            self._wholeBody = dict(body)
+            if self.streaming and not self.wholeStreaming:  # the panels are streaming already: join in
+                self.wholeStreaming = True
+                self._saved = None
+            if self.wholeStreaming:
+                for pid in self.panels:
+                    self.panelColours[pid] = tuple(rgb)
+                    self.panelOn[pid] = True
+                self._sendFrame()
+            else:
+                if quick and self.panels and now >= self._noStreamUntil:
+                    self._wantStream = True
+                self._pendingState = dict(self._pendingState or {}, **body)
+            error = self._wake()
+        if error is not None:
+            raise error
+
+    def _wake(self):
+        """Start the sender, or wake it. Called holding _stateLock; returns the error to raise, if any."""
+        error, self._stateError = self._stateError, None
+        if self._stateThread is None:
+            self._stateIdle.clear()
+            self._stateThread = threading.Thread(target=self._sender, name="nanoleafState", daemon=True)
+            self._stateThread.start()
+        else:
+            self._stateLock.notify_all()
+        return error
+
+    def _sender(self):
+        """Sends whole-device PUTs one at a time, newest only, and starts and ends the whole-device stream."""
+        while True:
+            with self._stateLock:
+                while True:
+                    if self._wantStream and not self.streaming:
+                        self._wantStream = False
+                        self._pendingState = None  # the stream carries the colour from here
+                        action = "enter"
+                        break
+                    self._wantStream = False
+                    if self._pendingState:
+                        action, body, self._pendingState = "put", self._pendingState, None
+                        break
+                    if self.wholeStreaming:
+                        idle = time.monotonic() - (self._lastWhole or 0.0)
+                        if self._finishWhole or idle >= self.streamIdle:
+                            self._endStream(restore=False)
+                            self.wholeStreaming = False
+                            action, body = "put", self._wholeBody  # also takes the device out of stream mode
+                            break
+                        self._stateLock.wait(self.streamIdle - idle)
+                        continue
+                    self._finishWhole = False
+                    self._stateThread = None
+                    self._stateIdle.set()
+                    return
+            if action == "enter":
+                self._enterWholeStream()
+                continue
+            try:
+                t = time.monotonic()
+                status, _ = _request("PUT", self._url("/state"), body)
+                self.putTime += (time.monotonic() - t - self.putTime) * 0.3
                 if status >= 400:
                     raise NanoleafError("The Nanoleaf refused the state change (HTTP %s)" % status)
-                body, self._pendingState = self._pendingState, None
-        finally:
-            self._stateBusy = False
-            self._pendingState = None
+            except NanoleafError as e:
+                with self._stateLock:
+                    self._stateError = e
+
+    def _enterWholeStream(self):
+        try:
+            self._startStreamingSync()
+        except NanoleafError:
+            with self._stateLock:
+                self._noStreamUntil = time.monotonic() + STREAM_RETRY
+                self._pendingState = dict(self._wholeBody)  # the colour the stream would have shown
+            return
+        with self._stateLock:
+            self.wholeStreaming = True
+            self._saved = None  # it ends on the last colour, not on what ran before
+            body = self._wholeBody
+            if "ct" in body:
+                rgb = cctToRGB(body["ct"]["value"], body.get("brightness", {}).get("value", 100))
+            else:
+                rgb = hsiToRGB(body.get("hue", {}).get("value", 0), body.get("sat", {}).get("value", 0),
+                               body.get("brightness", {}).get("value", 100))
+            for pid in self.panels:
+                self.panelColours[pid] = rgb
+                self.panelOn[pid] = True
+            self._sendFrame()
+
+    async def settle(self, timeout=10.0):
+        """Wait until every whole-device state write has been sent."""
+        if not self._stateIdle.is_set():
+            await asyncio.to_thread(self._stateIdle.wait, timeout)
 
     async def getPower(self):
+        await self.settle()  # a power change still on its way would otherwise read as the old state
         status, body = await self.http("GET", "/state/on")
         if status != 200 or not isinstance(body, dict):
             raise NanoleafError("Could not read the power state (HTTP %s)" % status)
@@ -688,6 +819,9 @@ class NanoleafController:
 
     def _flush(self):
         self._flushHandle = None
+        self._sendFrame()
+
+    def _sendFrame(self):
         if not self.streaming or self._sock is None:
             return
         colours = self.frameColours()
@@ -717,20 +851,26 @@ class NanoleafController:
             await asyncio.shield(self._entering)
 
     async def _startStreaming(self):
+        await asyncio.to_thread(self._startStreamingSync)
+
+    def _startStreamingSync(self):
+        def http(method, path, body=None):
+            return _request(method, self._url(path), body)
+
         if self._saved is None:
-            status, effect = await self.http("GET", "/effects/select")
-            status2, state = await self.http("GET", "/state")
+            status, effect = http("GET", "/effects/select")
+            status2, state = http("GET", "/state")
             self._saved = (effect if isinstance(effect, str) else None,
                            state if isinstance(state, dict) else {})
         # stream colours are scaled by the global brightness, so stream at full brightness
-        await self.http("PUT", "/state", {"on": {"value": True}, "brightness": {"value": 100, "duration": 0}})
-        status, body = await self.http("PUT", "/effects", {"write": {
+        http("PUT", "/state", {"on": {"value": True}, "brightness": {"value": 100, "duration": 0}})
+        status, body = http("PUT", "/effects", {"write": {
             "command": "display", "animType": "extControl", "extControlVersion": "v2"}})
         if status < 300:
             self._streamVersion = "v2"
             self._streamAddr = (self.ip, self.streamPort)
         else:
-            status, body = await self.http("PUT", "/effects", {"write": {
+            status, body = http("PUT", "/effects", {"write": {
                 "command": "display", "animType": "extControl"}})
             if status >= 300 or not isinstance(body, dict):
                 raise NanoleafError("The Nanoleaf would not enter streaming mode (HTTP %s)" % status)
@@ -827,6 +967,11 @@ class NanoleafClient:
     def is_connected(self):
         return self._connected
 
+    @property
+    def updateInterval(self):
+        """Seconds between colour updates the device can show (read by the sound engine)."""
+        return self.controller.updateInterval
+
     async def connect(self, **kwargs):
         await self.controller.open(self)
         self._connected = True
@@ -859,6 +1004,8 @@ class NanoleafClient:
             pid = self.device.panelId
             if pid is not None and pid in self.controller.panelOn:
                 on = self.controller.panelOn[pid]
+            elif pid is None and self.controller.wholeStreaming:
+                on = True
             else:
                 on = await self.controller.getPower()
             self._reply(powerReply(on))
@@ -869,7 +1016,11 @@ class NanoleafClient:
 
         if self.device.panelId is None:
             body = stateBodyFor(command)
-            if body is not None:
+            if kind == "hsi":
+                self.controller.setWhole(body, hsiToRGB(command[1], command[2], command[3]))
+            elif kind == "cct":
+                self.controller.setWhole(body, cctToRGB(command[1], command[2]))
+            elif body is not None:
                 await self.controller.putState(body)
             return
 

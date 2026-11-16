@@ -2774,7 +2774,10 @@ try: # try to load the GUI
                 if rowToChange == -1 or (rowToChange != -1 and infoArray[1] != self.returnTableInfo(rowToChange, 1)):
                     self.lightTable.item(currentRow, 1).setText(infoArray[1])
             if infoArray[2] != "": # the Linked status of the light
-                if rowToChange == -1 or (rowToChange != -1 and infoArray[2] != self.returnTableInfo(rowToChange, 2)):
+                currentLinked = self.returnTableInfo(rowToChange, 2) if rowToChange != -1 else ""
+                # a plain "LINKED" doesn't overwrite a "LINKED\nON / ch. 1" that already says more
+                keepDetail = infoArray[2] == "LINKED" and currentLinked.startswith("LINKED")
+                if rowToChange == -1 or (infoArray[2] != currentLinked and not keepDetail):
                     self.lightTable.item(currentRow, 2).setText(infoArray[2])
                     self.lightTable.item(currentRow, 2).setTextAlignment(Qt.AlignCenter) # align the light status info to be center-justified
             if infoArray[3] != "": # the current status message of the light
@@ -5516,7 +5519,9 @@ def workerThread(_loop):
                                 anyConnected = True
                                 reconnectCooldown.pop(a, None)  # light is connected, clear any cooldown
                                 if soundEngine is not None and soundEngine.running:
-                                    pass # these reads take a second or two, and the sound frames would have to wait for them
+                                    # skip the power/channel read (a second or two the sound frames would wait for),
+                                    # but still correct a stale "NOT LINKED" now that the light is connected
+                                    if hasGUI: mainWindow._tableUpdateSignal.emit(["", "", "LINKED", ""], a)
                                 elif not availableLights[a][0].name in lightsToNotCheckPower: # if the name of the current light is not in the list to skip checking
                                     try:
                                         _loop.run_until_complete(getLightChannelandPower(a)) # then check the power and light status of that light
@@ -6560,11 +6565,19 @@ def soundSendFrame(frame):
     return True
 
 
+def soundLightInterval(lightIdx):
+    """Seconds a light takes per update, for the sound engine: a Nanoleaf says, a Bluetooth light is quick (0)."""
+    if lightIdx >= len(availableLights):
+        return 0.0
+    return getattr(availableLights[lightIdx][1], "updateInterval", 0.0)
+
+
 def getSoundEngine():
     global soundEngine
     if soundEngine is None:
         from neewerlux_audio import SoundEngine
         soundEngine = SoundEngine(soundSendFrame, printDebugString)
+        soundEngine.lightInterval = soundLightInterval
     return soundEngine
 
 

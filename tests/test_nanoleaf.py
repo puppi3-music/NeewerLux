@@ -7,6 +7,7 @@ import asyncio
 import os
 import sys
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -160,6 +161,7 @@ class FakeControllerTests(unittest.TestCase):
         nl.saveSaved([entry], self.savedPath)
         c = nl.NanoleafController(entry, savedPath=self.savedPath)
         c.streamPort = self.fake.streamPort
+        c.streamAfter = 0  # every whole-device colour is a PUT, unless a test turns streaming on
         return c
 
     def test_pairing(self):
@@ -241,11 +243,14 @@ class FakeControllerTests(unittest.TestCase):
             self.assertTrue(client.is_connected)
 
             await client.write_gatt_char(UUID, hsiBytes(200, 90, 40), False)
+            await c.settle()
             self.assertEqual(self.fake.lastStatePut(),
                              {"hue": {"value": 200}, "sat": {"value": 90}, "brightness": {"value": 40, "duration": 0}})
             await client.write_gatt_char(UUID, cctBytes(70, 85), False)
+            await c.settle()
             self.assertEqual(self.fake.state["ct"]["value"], 6500)
             await client.write_gatt_char(UUID, OFF, False)
+            await c.settle()
             self.assertFalse(self.fake.state["on"]["value"])
 
             received = []
@@ -273,12 +278,79 @@ class FakeControllerTests(unittest.TestCase):
             await client.connect()
             before = len(self.fake.requests)
             await asyncio.gather(*[client.write_gatt_char(UUID, hsiBytes(h, 100, 50)) for h in (10, 20, 30, 40)])
+            await c.settle()
             return before
 
         before = asyncio.run(run())
         puts = [b for m, p, b in self.fake.requests[before:] if m == "PUT"]
         self.assertLessEqual(len(puts), 2)  # the first, then everything that arrived meanwhile merged into one
         self.assertEqual(self.fake.state["hue"]["value"], 40)
+
+    def test_slow_device_does_not_hold_the_write(self):
+        # a whole-device PUT takes hundreds of ms on real hardware; the other lights in the frame must not wait for it
+        self.fake.stateDelay = 0.3
+        c = self.makeController()
+
+        async def run():
+            client = nl.NanoleafClient(c.devices()[0])
+            await client.connect()
+            t = time.perf_counter()
+            for h in (10, 20, 30, 40, 50):
+                await client.write_gatt_char(UUID, hsiBytes(h, 100, 50))
+            took = time.perf_counter() - t
+            await c.settle()
+            return took
+
+        self.assertLess(asyncio.run(run()), 0.1)
+        self.assertEqual(self.fake.state["hue"]["value"], 50)
+        puts = [b for m, p, b in self.fake.requests if m == "PUT" and p.endswith("/state")]
+        self.assertLessEqual(len(puts), 2)  # the first, then the newest
+
+    def test_quick_colours_stream(self):
+        # a whole-device row: colours that come quickly go out over UDP, then the last one is PUT when they stop
+        c = self.makeController()
+        c.streamAfter, c.streamIdle = 0.5, 0.3
+
+        async def run():
+            client = nl.NanoleafClient(c.devices()[0])
+            await client.connect()
+            self.assertEqual(c.panels, [5002, 5003, 5004, 5001])
+            self.assertGreater(client.updateInterval, 0.2)  # HTTP: one PUT at a time
+            await client.write_gatt_char(UUID, hsiBytes(0, 100, 100))
+            await client.write_gatt_char(UUID, hsiBytes(120, 100, 100))
+            for _ in range(100):
+                if c.wholeStreaming:
+                    break
+                await asyncio.sleep(0.01)
+            self.assertTrue(c.wholeStreaming)
+            self.assertLessEqual(client.updateInterval, 0.1)
+            await client.write_gatt_char(UUID, hsiBytes(240, 100, 50))
+            frames = await asyncio.to_thread(self.fake.waitForFrames, 2)
+            self.assertEqual({rgb for pid, rgb, tr in frames[-1]}, {(0, 0, 128)})
+            self.assertEqual(len(frames[-1]), 4)
+            await c.settle()  # idle: the stream ends on a PUT of the last colour
+            self.assertFalse(c.streaming or c.wholeStreaming)
+            await client.disconnect()
+
+        asyncio.run(run())
+        self.assertEqual(self.fake.lastStatePut(),
+                         {"hue": {"value": 240}, "sat": {"value": 100}, "brightness": {"value": 50, "duration": 0}})
+        self.assertEqual(self.fake.state["hue"]["value"], 240)
+
+    def test_refused_state_raises_on_next_write(self):
+        self.fake.refuseState = True
+        c = self.makeController()
+
+        async def run():
+            client = nl.NanoleafClient(c.devices()[0])
+            await client.connect()
+            await client.write_gatt_char(UUID, hsiBytes(10, 100, 50))
+            await c.settle()
+            with self.assertRaises(nl.NanoleafError):
+                await client.write_gatt_char(UUID, hsiBytes(20, 100, 50))
+            await c.settle()
+
+        asyncio.run(run())
 
     def test_per_panel_streaming(self):
         nl.setKelvinConverter(lambda k: (255, 200, 100))
@@ -353,7 +425,7 @@ class FakeControllerTests(unittest.TestCase):
         self.assertEqual(self.fake.lastStatePut()["hue"], {"value": 123})
         self.assertEqual(self.fake.state["brightness"]["value"], 60)
 
-    def test_whole_device_colour_ends_stream(self):
+    def test_whole_device_colour_joins_stream(self):
         c = self.makeController(perPanel=True)
 
         async def run():
@@ -365,19 +437,18 @@ class FakeControllerTests(unittest.TestCase):
             await panel.write_gatt_char(UUID, hsiBytes(0, 100, 100))
             self.assertTrue(c.streaming)
             await asyncio.to_thread(self.fake.waitForFrames, 1)
-            await whole.write_gatt_char(UUID, hsiBytes(100, 100, 100))
-            self.assertFalse(c.streaming)
-            await panel.write_gatt_char(UUID, hsiBytes(200, 100, 100))  # re-enters streaming
-            self.assertTrue(c.streaming)
+            await whole.write_gatt_char(UUID, hsiBytes(120, 100, 100))
+            self.assertTrue(c.streaming and c.wholeStreaming)
             frames = await asyncio.to_thread(self.fake.waitForFrames, 2)
-            self.assertEqual(len(frames), 2)
-            self.assertEqual(frames[1][0][1], (0, 170, 255))
+            self.assertEqual({rgb for pid, rgb, tr in frames[1]}, {(0, 255, 0)})  # every panel
             await panel.disconnect()
             await whole.disconnect()
 
         asyncio.run(run())
         streamStarts = [b for m, p, b in self.fake.requests if m == "PUT" and p.endswith("/effects") and "write" in b]
-        self.assertEqual(len(streamStarts), 2)
+        self.assertEqual(len(streamStarts), 1)
+        self.assertEqual(self.fake.state["hue"]["value"], 120)  # left on the last colour, as a normal state
+        self.assertEqual(self.fake.state["brightness"]["value"], 100)
 
     def test_v1_fallback(self):
         self.fake.supportsV2 = False

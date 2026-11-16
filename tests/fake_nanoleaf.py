@@ -18,6 +18,7 @@ import os
 import socket
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -58,6 +59,8 @@ class FakeNanoleaf:
             "colorMode": "effect",
         }
         self.effect = "Northern Lights"
+        self.stateDelay = 0.0  # seconds each PUT /state takes, like real hardware (70-600 ms)
+        self.refuseState = False  # answer PUT /state with HTTP 400
         self.requests = []  # (method, path, body)
         self.frames = []  # decoded UDP frames: list of (panelId, (r, g, b), transition)
         self.lock = threading.Lock()
@@ -86,6 +89,11 @@ class FakeNanoleaf:
                     try:
                         body = json.loads(self.rfile.read(length).decode("utf-8"))
                     except ValueError:
+                        return self._send(400)
+                if method == "PUT" and self.path.endswith("/state"):
+                    if fake.stateDelay:
+                        time.sleep(fake.stateDelay)
+                    if fake.refuseState:
                         return self._send(400)
                 status, reply = fake.route(method, self.path, body)
                 self._send(status, reply)

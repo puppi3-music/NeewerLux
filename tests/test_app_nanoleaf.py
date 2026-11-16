@@ -92,11 +92,13 @@ class AppPathTests(AppTestCase):
 
         app.calculateByteString(colorMode="HSI", HSI_H=200, HSI_S=90, HSI_I=40)
         self.run_(app.writeToLight([0], False))
+        self.run_(app.availableLights[0][0].controller.settle())  # state PUTs go out from a thread
         self.assertEqual(self.fake.lastStatePut(),
                          {"hue": {"value": 200}, "sat": {"value": 90}, "brightness": {"value": 40, "duration": 0}})
 
         app.calculateByteString(colorMode="CCT", temp=32, brightness=70)
         self.run_(app.writeToLight([0], False))
+        self.run_(app.availableLights[0][0].controller.settle())  # state PUTs go out from a thread
         self.assertEqual(self.fake.lastStatePut(), {"ct": {"value": 3200}, "brightness": {"value": 70, "duration": 0}})
 
         app.setPowerBytestring("OFF")

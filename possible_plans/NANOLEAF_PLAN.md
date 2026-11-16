@@ -17,7 +17,7 @@ Decisions already made:
 | Phase | State |
 |---|---|
 | 1. Module, fake controller, tests | Done, committed as `af1ae59`, verified on the Shapes set |
-| 2. Whole-device integration | Done, committed as `3c7bbcb` (CI: `e839dd0`). App checks 2, 3, 6 and 7 by hand still to do |
+| 2. Whole-device integration | Done, committed as `3c7bbcb` (CI: `e839dd0`), plus whole-device streaming and slow-light flashes. App checks 2, 3, 6 and 7 by hand still to do |
 | 3. Per-panel mode | Next |
 | 4. Docs and packaging | Not started |
 
@@ -79,6 +79,14 @@ What exists, for Phase 3 to build on:
 - The worker thread's power poll works unchanged; the status reads `LINKED ON / ᴄʜ. ---` (no channel on Nanoleaf).
 - Tests: `tests/test_nanoleaf.py` now has 32 (moved device, IP recovery, search throttle, address helpers, `updateSaved`, batch strings). New `tests/test_app_nanoleaf.py` (6) drives `NeewerLux.py` against the fake: a scan with Bluetooth failing, connect/HSI/CCT/off/power readback, IP recovery, CLI lookup, `--nanoleaf_pair` parsing, and the pairing dialog offscreen. `.github/workflows/tests.yml` runs `unittest discover` on Windows for pull requests and pushes to `main`.
 - Checked on the Shapes set (2026-11-16, app code run headless): recovery from a wrong saved IP, HSI, CCT 2700 K, off with the `STBY` readback, and `NL:` batch resolution.
+
+Follow-up after `3c7bbcb` (sound reactive on a whole device):
+- Whole-device colours that come quickly (sound reactive, animations, a dragged slider) go over the UDP stream instead of one `PUT /state` each (70–600 ms on the Shapes set). `setWhole(body, rgb)`: a colour within `STREAM_AFTER` (0.5 s) of the last one enters the stream with every panel set to that colour; after `STREAM_IDLE` (5 s) with no colour, or on close or a power change, the stream ends and the last colour is PUT. If the device refuses to stream, it PUTs for `STREAM_RETRY` (30 s) before asking again. A whole-device colour while panels already stream joins the stream.
+- PUTs run on a sender thread of their own (latest-wins, newest body only), so a write never holds the other lights in the same frame. A failed PUT is raised from the next write. `settle()` waits for pending PUTs; `getPower()` and `close()` call it.
+- `updateInterval` on the controller and `NanoleafClient`: the stream's transition time while streaming, else a running average of PUT time (`putTime`).
+- Sound engine ([neewerlux_audio.py](neewerlux_audio.py)): `SoundEngine.lightInterval` (set to `soundLightInterval` in `getSoundEngine()`) gives each light's seconds per update. A light slower than `SLOW_LIGHT` (60 ms) flashes on every beat only if three updates fit between beats, else every 2nd, 4th… beat (counted the same on every light so they stay in step); during rolls it strobes on every Nth hit on the quick lights' accents. Its bass is smoothed over a flash.
+- Table: while sound reactive runs, the worker's skipped power poll still emits `LINKED`, which corrects a stale `NOT LINKED`. In `setTheTable`, a plain `LINKED` no longer overwrites `LINKED\nON / ch. N`.
+- Tests: `test_nanoleaf.py` now 35 (a slow device doesn't hold the write, quick colours stream, a refused PUT raises on the next write, a whole-device colour joins a panel stream). New `tests/test_slow_lights.py` (9). The fake gained `stateDelay` and `refuseState`. 50 tests in all.
 
 Not done here:
 - `release.yml`'s source zip lists files by name and is missing `neewerlux_nanoleaf.py` (and the existing `neewerlux_audio.py` / `neewerlux_midi.py`). This belongs with Phase 4 packaging.
