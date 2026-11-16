@@ -129,7 +129,7 @@ TEMPO_MIN_CONF = 0.15   # autocorrelation at the beat period needed to trust it
 TEMPO_COMB_DECAY = 0.95  # weight of each older beat in the phase comb: low values let one bar outvote the window
 TEMPO_REST = 0.5        # weight of the attacks above the bass in the attacks the tempo is found from
 TEMPO_COMB_SPAN = 0.06  # seconds of bass attack after each comb beat it sums: kick bodies build over 30-60 ms, an off-beat bass note jumps in one hop
-TEMPO_COMB_REST = 1.0   # weight of the attacks above the bass in the phase comb (taken in their one hop: hats and claps are sharp)
+TEMPO_COMB_REST = 2.0   # weight of the attacks above the bass in the phase comb (taken in their one hop: hats and claps are sharp); 2, not 1, so a bass on the off-beat 8ths (Freestyler) can't outvote the snare
 TEMPO_FLIP = 8          # net estimates that must put the beat half a beat away before the grid moves there
 TEMPO_COAST = 60.0      # seconds a tempo is held through a section with no clear beat, as a track keeps its tempo through a breakdown
 TEMPO_COAST_AGREE = 16  # estimates in a row (4 s) that must agree before a pulse heard in such a section replaces the held tempo
@@ -141,6 +141,8 @@ TEMPO_KICK_SPAN = 0.035  # the most the kicks may move the period from the one l
 TEMPO_KICK_SOFT = 0.01   # seconds: errors smaller than this steer in proportion (jitter in when a kick is heard), larger ones fully
 TEMPO_KICK_OFFSET = 0.05  # how fast the usual offset of kicks from the grid is learned (a mic or the kick sound shifts it)
 TEMPO_ODD_RATIO = 0.005   # estimates this close to 3/4 or 4/3 of the period (now, or at the lock) are ignored, never relocked to
+TEMPO_TRIPLET_RATIO = 0.015  # estimates this close to 2/3 or 3/2 of the period: a riff of three notes over two beats (Freestyler) or two
+TEMPO_TRIPLET_KICKS = 4       # over three; ignored while at least this many kicks in the window fit the lock as well as they fit the estimate
 TEMPO_EST_OFFSET = 0.1   # how fast, once clicks time the kicks, the window's beat's offset from them is learned
 TEMPO_EST_MAX = 0.035    # seconds: the most that offset may grow to (the bass's biggest rise comes 20-30 ms into a kick)
 TEMPO_KICK_LEARN = 8      # kicks after the first lock that only learn that offset (their mean) before any steering
@@ -152,6 +154,8 @@ TEMPO_TRUST_BEATS = 12    # (a lock at 4/3 of the kicks' tempo gets one on every
 TEMPO_FIT_KICKS = 32      # kicks on the grid remembered to fit the period from when a hold begins
 TEMPO_FIT_MIN = 8         # ... and the least that will do
 TEMPO_FIT_RESID = 0.015   # seconds: the most a kick may sit off the fitted line to be counted
+TEMPO_DENSE_KICKS = 2.5   # kicks per beat over the window that make a tempo up to half the range's top twice as fast:
+                          # footwork's 3-3-2 kicks repeat only every two beats, and at half speed come 3.5 to a beat
 ONSET_DELAY = 0.025     # seconds the detected attack lags the real one, until clicks have been heard (measured on a kick with no click)
 CLICK_LOOK = (0.005, 0.07)  # seconds before a detected kick that its click is looked for: mastered kicks click on the beat and their body builds 10-20 ms later
 CLICK_JUMP = 4.0        # how many times the high-band energy of the 5 ms before must jump to count as the click
@@ -160,7 +164,8 @@ CLICK_MIN = 6           # ... and the fewest that will do, all within
 CLICK_CLUSTER = 0.006   # ... this many seconds of each other
 ROLL = (180, 1500)      # Hz: where snare rolls are looked for
 ROLL_WINDOW = 1.5       # seconds of that band each estimate looks at
-ROLL_HIT = (0.096, 0.18)  # seconds between hits that count as a roll, about 16ths at 85-155 BPM
+ROLL_HIT = (0.05, 0.18)  # seconds between hits that count as a roll: 16ths at 85-155 BPM, 32nds up to 150
+ROLL_FAST_SHARE = 0.85  # share of the best repeat a faster hit gap needs to be taken instead, as 32nds also repeat every second hit
 ROLL_START, ROLL_END = 0.5, 0.28  # how strongly the hits must repeat over ROLL_WINDOW to keep a roll (a build's broken patterns read about 0.3 between their fills)
 ROLL_QUICK = 0.75       # seconds of that band the first look at a new roll takes, so it starts within about a beat and a half
 ROLL_QUICK_START = 0.8  # how alike hits must be in that shorter look to start a roll
@@ -172,6 +177,7 @@ ROLL_EVEN_SLACK = 0.022  # seconds the gaps between those hits may differ by
 ROLL_EVEN_HOLD = 1.0     # seconds a roll stays on after such hits, until the longer looks have caught up
 ROLL_KEEP_GAPS, ROLL_KEEP_DEPTH = 3, 3.0  # the looser test that keeps a roll going once it has started
 ROLL_MIN_DEPTH = 2.0    # dB the band must pulse by
+ROLL_KEEP_MIN_DEPTH = 0.5  # ... to keep a roll going: 32nds blur into each other and pulse by about 1 dB, less through a room
 ROLL_BASS_ROOM = 9.0    # dB the band may sit under the bass during a roll: builds often keep the kick going under it, running grooves sit 17 dB or more under
 ROLL_DROP_ROOM = 13.0   # dB under the bass that means the drop has landed
 ROLL_UNDER_BASS_EVEN = 1.5  # seconds of unbroken even hits that start a roll under the bass, as a groove's 16ths are also even for a moment
@@ -618,6 +624,7 @@ class _TempoTracker:
         self.bass = deque(maxlen=n)  # the bass part of each attack, and the rest, for the phase comb
         self.rest = deque(maxlen=n)
         self.times = deque(maxlen=n)
+        self.kickTimes = deque(maxlen=n)  # times of the kicks heard (not in a roll), to count how many come to a beat
         self.minBpm, self.maxBpm = TEMPO_MIN_BPM, TEMPO_MAX_BPM
         self.reset()
 
@@ -634,6 +641,7 @@ class _TempoTracker:
         self.bass.clear()
         self.rest.clear()
         self.times.clear()
+        self.kickTimes.clear()
         self.period = 0.0
         self.refT = self.refPos = 0.0
         self.locked = False
@@ -683,9 +691,13 @@ class _TempoTracker:
             return
         period, beatT = est
         beatT -= self.estOffset
-        if self.locked and self.trusted and any(abs(period / q - r) < TEMPO_ODD_RATIO * r for r in (0.75, 4.0 / 3.0) for q in (self.period, self.basePeriod)):
-            # A dotted-eighth bass (three notes to two beats) repeats at 3/4 of the beat: not a new tempo.
-            # Only once the kicks have shown the lock is right: a first lock on a weak intro can itself be the 4/3.
+        near = lambda ratios, tol: any(abs(period / q - r) < tol * r for r in ratios for q in (self.period, self.basePeriod))
+        if self.locked and (self.trusted and near((0.75, 4.0 / 3.0), TEMPO_ODD_RATIO)
+                            or near((2.0 / 3.0, 1.5), TEMPO_TRIPLET_RATIO) and (self.trusted or self._kicksKeep(period, beatT))):
+            # A dotted-eighth bass (three notes to two beats) repeats at 3/4 of the beat, a riff of dotted quarters
+            # (Freestyler) at 3/2 of it: not a new tempo. Only once the kicks have shown the lock is right: a first
+            # lock on a weak intro can itself be the 4/3. Breakbeat kicks may never earn that trust, so for 3/2 it
+            # is enough that the window's kicks fit the lock as well as the estimate.
             if self.flipped is not None and now - self.flipped[0] < TEMPO_WINDOW:
                 self.refPos += self.flipped[1]  # the same bass, before it ruled the window, put the beat on the off-beat
                 self.flipped = None
@@ -700,7 +712,7 @@ class _TempoTracker:
             return  # the attacks of a breakdown (hats, pads) say nothing about where the beats fall
         if self.agree < (TEMPO_COAST_AGREE if self.coast is not None else 2):  # not yet confirmed: keep the current lock, if any, for now
             if self.locked and abs(period / self.period - 1.0) > 0.04:
-                self._unsure()
+                self._unsure()  # (not while holding: 8 doubts would clear the count before TEMPO_COAST_AGREE is reached)
             return
         if not self.locked or abs(period / self.period - 1.0) > 0.04:  # lock on, or a new tempo
             self.locked, self.period, self.refT, self.refPos = True, period, beatT, 0.0
@@ -734,6 +746,16 @@ class _TempoTracker:
                 self.flip = 0
                 self.flipped = (now, err)
         self.doubt = 0
+
+    def _kicksKeep(self, period, beatT):
+        """Whether the kicks of the window land on the locked grid at least as often as on the grid of
+        (period, beatT); with too few kicks to tell, they don't."""
+        ks = [t - self.onsetDelay - self.kickOffset for t in self.kickTimes if t > self.times[0]]
+        if len(ks) < TEMPO_TRIPLET_KICKS:
+            return False
+        def on(P, ref, pos):
+            return sum(1 for t in ks if abs((pos + (t - ref) / P + 0.5) % 1.0 - 0.5) * P <= TEMPO_KICK_GATE)
+        return on(self.period, self.refT, self.refPos) >= on(period, beatT, 0.0)
 
     def _unsure(self):
         self.doubt += 1
@@ -780,6 +802,8 @@ class _TempoTracker:
         Otherwise a kick close to a grid beat moves the grid and the period a little towards it, so a change
         of tempo is followed within a few beats instead of waiting for the 8 s window to fill with it.
         weight is less than 1 for a kick that only cleared the lower bar for an expected beat."""
+        if not rolling:
+            self.kickTimes.append(t)
         if self.coast is None and self.locked and not rolling:
             self.recent.append(t)
             if self._jump(t):
@@ -897,6 +921,12 @@ class _TempoTracker:
         den = y0 - 2.0 * y1 + y2
         P = M + (0.5 * (y0 - y2) / den if den < 0 else 0.0)
         P = min(max(P, M - 0.5), M + 0.5) / div
+        # Kicks far closer together than a beat: the beat is twice as fast, if that is in range.
+        span = self.times[-1] - self.times[0]
+        if 2.0 * 60.0 * self.hopRate / P <= self.maxBpm and span > 0:
+            heard = sum(1 for t in self.kickTimes if t > self.times[0])
+            if heard * P / self.hopRate >= TEMPO_DENSE_KICKS * span:
+                P /= 2.0
         # Phase: the offset whose comb of beats over the whole window (recent ones weighing a little more) catches the
         # most attack: the bass's over the TEMPO_COMB_SPAN after each beat, the rest's in the beat's hop. A kick whose
         # body swells in over a few hops then outweighs an off-beat bass note that jumps in at once, though that
@@ -1013,7 +1043,22 @@ class _RollFinder:
         trim = len(self.slow) // 2
         level = 10.0 * np.log10(snare + 1e-12)
         pulse = (level - np.convolve(level, self.slow, "same"))[trim:-trim]
-        return pulse if pulse.std() >= ROLL_MIN_DEPTH else None
+        return pulse if pulse.std() >= (ROLL_KEEP_MIN_DEPTH if self.active else ROLL_MIN_DEPTH) else None
+
+    def _bestLag(self, scores):
+        """The best peak in scores, which start a step under minLag and end a step past the longest lag looked at:
+        (score, lag), or (0, 0) with no peak. Only a peak counts, as one hit's fade also scores high at the shortest lags.
+        A faster peak nearly as high wins, and the lag is fitted between steps, as a 32nd is only five or six steps
+        and a whole step would miscount the hits in a beat."""
+        peaks = [i for i in range(1, len(scores) - 1) if scores[i] > scores[i - 1] and scores[i] >= scores[i + 1] and scores[i] > 0]
+        if not peaks:
+            return 0.0, 0
+        best = max(scores[i] for i in peaks)
+        pick = next(i for i in peaks if scores[i] >= ROLL_FAST_SHARE * best)
+        a, b, c = scores[pick - 1], scores[pick], scores[pick + 1]
+        bend = a - 2.0 * b + c
+        lag = self.minLag - 1 + pick + (0.5 * (a - c) / bend if bend < 0 else 0.0)
+        return float(b), lag
 
     def _steadyRepeat(self, snare, bass):
         """How strongly the band repeats at a roll's speed over the long window, 0..1, and at what lag."""
@@ -1022,8 +1067,7 @@ class _RollFinder:
             return 0.0, 0
         corr = np.correlate(pulse, pulse, "full")[len(pulse) - 1:]
         corr /= corr[0]
-        lag = self.minLag + int(np.argmax(corr[self.minLag:self.maxLag + 1]))
-        return float(corr[lag]), lag
+        return self._bestLag(corr[self.minLag - 1:self.maxLag + 2])
 
     def _quickRepeat(self, snare, bass):
         """As _steadyRepeat for the short window. Each lag is scored only over the part that overlaps,
@@ -1031,14 +1075,12 @@ class _RollFinder:
         pulse = self._pulse(snare, bass)
         if pulse is None:
             return 0.0, 0
-        best, bestLag = 0.0, 0
-        for lag in range(self.minLag, min(self.maxLag, len(pulse) - ROLL_QUICK_OVERLAP) + 1):
+        scores = []
+        for lag in range(self.minLag - 1, min(self.maxLag + 1, len(pulse) - ROLL_QUICK_OVERLAP) + 1):
             a, b = pulse[:-lag], pulse[lag:]
             size = math.sqrt(float((a * a).sum() * (b * b).sum()))
-            score = float((a * b).sum()) / size if size > 0 else 0.0
-            if score > best:
-                best, bestLag = score, lag
-        return best, bestLag
+            scores.append(float((a * b).sum()) / size if size > 0 else 0.0)
+        return self._bestLag(scores)
 
     def _evenGap(self, snare, bass, count, depth):
         """The steps between the newest hits if the last count gaps are even and at a roll's speed, else 0.
