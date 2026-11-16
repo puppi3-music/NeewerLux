@@ -28,9 +28,25 @@ Nanoleaf panel sets (Shapes, Canvas, Lines, Elements, Light Panels) are controll
 
 Your presets, animations and per-light settings live in the `light_prefs` folder next to the executable. They are plain text and safe to edit by hand or copy between installs. Release zips don't include a preset file, so extracting a newer release over an existing install keeps your presets.
 
+### macOS (Apple Silicon)
+
+1. Download `Puppi3sNeewerLux-<version>-macOS-AppleSilicon.zip` from [Releases](https://github.com/puppi3-music/NeewerLux/releases) and open it.
+2. Drag `Puppi3sNeewerLux.app` to Applications.
+3. Open it. The app isn't signed by Apple, so the first time macOS says it can't check it: open System Settings > Privacy & Security, click **Open Anyway** next to the message about Puppi3's NeewerLux, and confirm. (Or run `xattr -dr com.apple.quarantine /Applications/Puppi3sNeewerLux.app` in Terminal.)
+
+macOS asks once for Bluetooth access, for microphone access the first time you use the Sound tab, and for local network access when you add a Nanoleaf. Settings live in `~/Library/Application Support/Puppi3sNeewerLux/light_prefs`, so replacing the app with a newer one keeps them. On an Intel Mac, run from source.
+
+### Linux (x86_64)
+
+1. Download `Puppi3sNeewerLux-<version>-Linux-x86_64.tar.gz` from [Releases](https://github.com/puppi3-music/NeewerLux/releases).
+2. Extract it somewhere in your home folder: `tar -xzf Puppi3sNeewerLux-<version>-Linux-x86_64.tar.gz`
+3. Run `Puppi3sNeewerLux/Puppi3sNeewerLux`. Started from a terminal, it also prints its log there.
+
+Bluetooth goes through BlueZ, which desktop distributions already run. A few system libraries aren't bundled; on Debian or Ubuntu, `sudo apt install libxcb-cursor0 libportaudio2` covers the window (on X11) and the Sound tab. Settings live in the `light_prefs` folder next to the program, as on Windows.
+
 ### From source
 
-Requires Python 3.11 or newer. Dependency versions are pinned in `uv.lock`.
+Runs on Windows, macOS and Linux, on any CPU. Requires Python 3.11 or newer. Dependency versions are pinned in `uv.lock`.
 
 With [uv](https://docs.astral.sh/uv/):
 

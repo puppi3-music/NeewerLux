@@ -394,8 +394,18 @@ def discoverAll(timeout=3.0, scan=True):
 # Saved devices
 # ---------------------------------------------------------------------------
 
+def lightPrefsDir():
+    """The app's light_prefs folder, by the same rule as lightPrefsDir() in Puppi3sNeewerLux.py: next to the
+    script or program, except in the macOS app, where it is in ~/Library/Application Support."""
+    if getattr(sys, "frozen", False) and sys.platform == "darwin":
+        base = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "Puppi3sNeewerLux")
+    else:
+        base = os.path.dirname(os.path.abspath(sys.argv[0]))
+    return os.path.join(base, "light_prefs")
+
+
 def defaultSavedPath():
-    return os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "light_prefs", "nanoleaf.json")
+    return os.path.join(lightPrefsDir(), "nanoleaf.json")
 
 
 def loadSaved(path=None):

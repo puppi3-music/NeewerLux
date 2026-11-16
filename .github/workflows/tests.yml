@@ -15,9 +15,13 @@ permissions:
 
 jobs:
   unittest:
-    # Windows, like the release build and most users. The tests also use 127.0.0.1-only sockets,
+    # On all three OSes the release is built for. The tests use 127.0.0.1-only sockets,
     # so there is no firewall prompt to worry about.
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -32,6 +36,11 @@ jobs:
 
       # bleak and PySide6 only: the audio group (python-rtmidi, sounddevice) is not needed
       # by any test. --locked fails if uv.lock is out of date with pyproject.toml.
+      # Qt's offscreen platform still loads the GL and keyboard libraries
+      - name: Install Qt's system libraries (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q libegl1 libgl1 libxkbcommon0 libfontconfig1
+
       - name: Install dependencies
         run: uv sync --locked --no-default-groups --group gui
 
