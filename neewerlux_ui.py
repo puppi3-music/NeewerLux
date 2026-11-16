@@ -1596,6 +1596,17 @@ class Ui_MainWindow(object):
         briL = QLabel("Brightness:"); briL.setFont(mainFont); cg.addWidget(briL, 4, 0)
         self.animBriSpin = SpinBoxWithButtons(minVal=5, maxVal=100, value=100, suffix="%")
         cg.addWidget(self.animBriSpin, 4, 1)
+        offL = QLabel("Offset:"); offL.setFont(mainFont); cg.addWidget(offL, 5, 0)
+        self.animOffsetSpin = SpinBoxWithButtons(minVal=0, maxVal=100, value=0, suffix="%")
+        self.animOffsetSpin.setToolTip("Staggers the lights through the animation, in light order.\n"
+            "0% = every light in step. 100% = spread evenly over the whole loop, so it chases from light to light.")
+        cg.addWidget(self.animOffsetSpin, 5, 1)
+        sprL = QLabel("Colour spread:"); sprL.setFont(mainFont); cg.addWidget(sprL, 6, 0)
+        self.animSpreadSpin = SpinBoxWithButtons(minVal=0, maxVal=100, value=0, suffix="%")
+        self.animSpreadSpin.setToolTip("Turns each light's colour further round the colour wheel than the one before.\n"
+            "0% = the colours the animation sets. 100% = spread evenly over the whole wheel.\n"
+            "White (CCT) keyframes are left as they are.")
+        cg.addWidget(self.animSpreadSpin, 6, 1)
         animCtrl.addLayout(cg)
 
         self.animStatusLabel = QLabel("Stopped")
@@ -2032,10 +2043,21 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         self.soundAllLightsCheck = QCheckBox("All lights (else the selected ones)")
         self.soundAllLightsCheck.setChecked(True)
         sg.addWidget(self.soundAllLightsCheck, 6, 1, 1, 3)
-        colL = QLabel("Colours:"); colL.setFont(mainFont); sg.addWidget(colL, 7, 0)
+        offL = QLabel("Offset:"); offL.setFont(mainFont); sg.addWidget(offL, 7, 0)
+        self.soundOffsetSpin = _spin(0, 100, 0, "%")
+        self.soundOffsetSpin.setToolTip("Ripples changes across the lights, in light order: each light shows them a little later than the one before.\n"
+            "0% = every light in step. 100% = the last light trails the first by nearly a beat.")
+        sg.addWidget(self.soundOffsetSpin, 7, 1)
+        sprL = QLabel("Colour spread:"); sprL.setFont(mainFont); sg.addWidget(sprL, 7, 2)
+        self.soundSpreadSpin = _spin(0, 100, 0, "%")
+        self.soundSpreadSpin.setToolTip("Gives each light its own colour, moved further round the colour wheel (or along the palette) than the one before.\n"
+            "0% = every light the same colour. 100% = spread evenly over the whole wheel or palette.\n"
+            "For Spectrum colour, Beat colour jump and Bass pulse. Frequency bands and Rainbow drift already give each light its own colour.")
+        sg.addWidget(self.soundSpreadSpin, 7, 3)
+        colL = QLabel("Colours:"); colL.setFont(mainFont); sg.addWidget(colL, 8, 0)
         self.soundPalette = PaletteEditor()
-        sg.addWidget(self.soundPalette, 7, 1, 1, 3)
-        beatL = QLabel("Beats from:"); beatL.setFont(mainFont); sg.addWidget(beatL, 8, 0)
+        sg.addWidget(self.soundPalette, 8, 1, 1, 3)
+        beatL = QLabel("Beats from:"); beatL.setFont(mainFont); sg.addWidget(beatL, 9, 0)
         self.soundBeatSourceCombo = QComboBox()
         self.soundBeatSourceCombo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.soundBeatSourceCombo.setToolTip("Where beats come from. A MIDI clock input (Traktor Virtual Output, say)\n"
@@ -2047,29 +2069,29 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         beatRow = QHBoxLayout()
         beatRow.addWidget(self.soundBeatSourceCombo, 1)
         beatRow.addWidget(self.soundMidiRefreshButton)
-        sg.addLayout(beatRow, 8, 1, 1, 2)
+        sg.addLayout(beatRow, 9, 1, 1, 2)
         self.soundClockBadge = QLabel("")
         self.soundClockBadge.setToolTip("MIDI clock link: green when beats come from the clock")
-        sg.addWidget(self.soundClockBadge, 8, 3)
-        leadL = QLabel("Beat lead:"); leadL.setFont(mainFont); sg.addWidget(leadL, 9, 0)
+        sg.addWidget(self.soundClockBadge, 9, 3)
+        leadL = QLabel("Beat lead:"); leadL.setFont(mainFont); sg.addWidget(leadL, 10, 0)
         self.soundClockLeadSpin = _spin(0, 300, 50, " ms")
         self.soundClockLeadSpin.setToolTip("Fire MIDI clock beats, and beats predicted from the tempo, this much early,\nto make up for the time "
             "Bluetooth takes to reach the lights.\n\nStart around 50 ms.\n"
             "Then adjust in 10 ms steps: raise it if the lights land after the kick, lower it if they land before.\n"
             "Has no effect on beats taken straight from detected kicks.")
         leadL.setToolTip(self.soundClockLeadSpin.toolTip())
-        sg.addWidget(self.soundClockLeadSpin, 9, 1)
-        everyL = QLabel("Colour every:"); everyL.setFont(mainFont); sg.addWidget(everyL, 9, 2)
+        sg.addWidget(self.soundClockLeadSpin, 10, 1)
+        everyL = QLabel("Colour every:"); everyL.setFont(mainFont); sg.addWidget(everyL, 10, 2)
         self.soundBeatsPerColourSpin = _spin(1, 16, 8, " beats")
         self.soundBeatsPerColourSpin.setToolTip("Beat colour jump: change colour every this many beats (4 = once a bar).\n"
             "Brightness still flashes on every beat. With a MIDI clock, changes land on bar lines.")
-        sg.addWidget(self.soundBeatsPerColourSpin, 9, 3)
+        sg.addWidget(self.soundBeatsPerColourSpin, 10, 3)
         self.soundClockNeedsSoundCheck = QCheckBox("Clock beats only while kicks play")
         self.soundClockNeedsSoundCheck.setChecked(True)
         self.soundClockNeedsSoundCheck.setToolTip("Traktor keeps sending MIDI clock after the decks stop. With this on,\n"
             "clock beats pause when no kicks are heard, for example after the decks\n"
             "stop or in an off-beat bassline, and come back with the first kick on a beat.")
-        sg.addWidget(self.soundClockNeedsSoundCheck, 10, 1, 1, 3)
+        sg.addWidget(self.soundClockNeedsSoundCheck, 11, 1, 1, 3)
         self.soundPredictBeatsCheck = QCheckBox("Predict beats from the tempo")
         self.soundPredictBeatsCheck.setChecked(True)
         self.soundPredictBeatsCheck.setToolTip("Without a MIDI clock: find the tempo in the sound (about 4 s after the kicks start)\n"
@@ -2091,8 +2113,8 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         predictRow.addWidget(flashOnL)
         predictRow.addWidget(self.soundFlashOnCombo)
         predictRow.addStretch(1)
-        sg.addLayout(predictRow, 11, 1, 1, 3)
-        tempoL = QLabel("Tempo range:"); tempoL.setFont(mainFont); sg.addWidget(tempoL, 12, 0)
+        sg.addLayout(predictRow, 12, 1, 1, 3)
+        tempoL = QLabel("Tempo range:"); tempoL.setFont(mainFont); sg.addWidget(tempoL, 13, 0)
         self.soundTempoMinSpin = _spin(50, 240, 70, " BPM")
         self.soundTempoMaxSpin = _spin(50, 240, 180, " BPM")
         tempoTip = ("Without a MIDI clock: the tempos looked for in the sound. Outside 70 to 180 BPM,\n"
@@ -2106,8 +2128,8 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         tempoRow.addWidget(QLabel("to"))
         tempoRow.addWidget(self.soundTempoMaxSpin)
         tempoRow.addStretch(1)
-        sg.addLayout(tempoRow, 12, 1, 1, 3)
-        rollL = QLabel("Drum rolls:"); rollL.setFont(mainFont); sg.addWidget(rollL, 13, 0)
+        sg.addLayout(tempoRow, 13, 1, 1, 3)
+        rollL = QLabel("Drum rolls:"); rollL.setFont(mainFont); sg.addWidget(rollL, 14, 0)
         self.soundRollStyleCombo = QComboBox()
         self.soundRollStyleCombo.addItems(["Strobe", "Swell", "Strobe + Swell"])
         self.soundRollStyleCombo.setToolTip("How drum rolls show in Beat colour jump, Bass pulse and Rainbow drift.\n"
@@ -2115,7 +2137,7 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
             "Swell: brightness climbs smoothly to Max bright over about 8 s, with no pulsing.\n"
             "Strobe + Swell: the same pulses, on a brightness that climbs to Max bright over about 8 s.")
         rollL.setToolTip(self.soundRollStyleCombo.toolTip())
-        sg.addWidget(self.soundRollStyleCombo, 13, 1)
+        sg.addWidget(self.soundRollStyleCombo, 14, 1)
         self.soundFlashLevelCombo = QComboBox()
         self.soundFlashLevelCombo.addItem("Standard (4 a second)", "Standard")
         self.soundFlashLevelCombo.addItem("Show (10 a second)", "Show")
@@ -2125,8 +2147,8 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
             "Show: at most 10 in bursts of about 4 s, then 4 until about 8 s below that have passed. Only with a notice posted.\n"
             "Off: no limit at all, only with a notice posted.\n"
             "Show and Off go back to Standard each time NeewerLux starts.")
-        flashL = QLabel("Flash limit:"); flashL.setFont(mainFont); flashL.setToolTip(self.soundFlashLevelCombo.toolTip()); sg.addWidget(flashL, 13, 2)
-        sg.addWidget(self.soundFlashLevelCombo, 13, 3)
+        flashL = QLabel("Flash limit:"); flashL.setFont(mainFont); flashL.setToolTip(self.soundFlashLevelCombo.toolTip()); sg.addWidget(flashL, 14, 2)
+        sg.addWidget(self.soundFlashLevelCombo, 14, 3)
         sndLay.addLayout(sg)
 
         meterRow = QHBoxLayout()

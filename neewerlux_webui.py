@@ -473,6 +473,13 @@ select:focus, input:focus { border-color: var(--accent); outline: none; }
                 </div>
             </div>
             <div class="control-group">
+                <label>Offset / Colour spread (%)</label>
+                <div style="display:flex;gap:6px">
+                    <input type="number" id="animOffset" value="0" min="0" max="100" style="width:60px" title="Staggers the lights through the loop: 0 = all in step, 100 = spread evenly over the whole loop (a chase)">
+                    <input type="number" id="animSpread" value="0" min="0" max="100" style="width:60px" title="Turns each light's colour further round the colour wheel: 0 = all the same, 100 = spread evenly over the whole wheel">
+                </div>
+            </div>
+            <div class="control-group">
                 <label style="display:flex;align-items:center;gap:6px;text-transform:none;color:var(--text)">
                     <input type="checkbox" id="animLoop"> Loop animation
                 </label>
@@ -554,7 +561,7 @@ select:focus, input:focus { border-color: var(--accent); outline: none; }
             </div>
             <div class="api-section">
                 <h3>Animations</h3>
-                <div class="api-desc">Play by name (GET). Format: <code>Name|speed|rate|bri|loop|maxLoops|revert</code></div>
+                <div class="api-desc">Play by name (GET). Format: <code>Name|speed|rate|bri|loop|maxLoops|revert|offset|spread</code> (offset, spread: 0-100%, staggering the lights through the loop and round the colour wheel)</div>
                 <div class="api-code">GET /NeewerLux/doAction?animate=Concert%20Sweep|1.0|10|80</div>
                 <div class="api-desc">With loop control: play twice then revert</div>
                 <div class="api-code">GET /NeewerLux/doAction?animate=Halloween|1.0|10|50|true|2|true</div>
@@ -667,11 +674,13 @@ function playAnimation() {
     const loop = document.getElementById('animLoop').checked;
     const maxLoops = parseInt(document.getElementById('animLoopCount').value) || 0;
     const revert = document.getElementById('animRevert').checked;
+    const offset = parseFloat(document.getElementById('animOffset').value) || 0;
+    const spread = parseFloat(document.getElementById('animSpread').value) || 0;
 
     fetch('/NeewerLux/animate', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({action:'play', name:selectedAnim, speed:parseFloat(speed), rate:parseInt(rate), brightness:parseInt(bri), loop:loop, maxLoops:maxLoops, revert:revert})
+        body: JSON.stringify({action:'play', name:selectedAnim, speed:parseFloat(speed), rate:parseInt(rate), brightness:parseInt(bri), loop:loop, maxLoops:maxLoops, revert:revert, offset:offset, spread:spread})
     }).then(r => r.json()).then(d => {
         let msg = '▶ Playing: ' + selectedAnim;
         if (loop) msg += maxLoops > 0 ? ' (' + maxLoops + ' loops)' : ' (looping)';

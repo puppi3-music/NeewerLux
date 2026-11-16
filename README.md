@@ -145,12 +145,12 @@ http://localhost:8080/NeewerLux/doAction?animate=Halloween|1.0|10|50|true|2|true
 http://localhost:8080/NeewerLux/doAction?stop_animate
 ```
 
-The `animate` value is `Name|speed|rate|brightness|loop|maxLoops|revert`. Only the name is required. The example plays Halloween twice at half brightness, then puts the lights back how they were.
+The `animate` value is `Name|speed|rate|brightness|loop|maxLoops|revert|offset|spread`. Only the name is required. The example plays Halloween twice at half brightness, then puts the lights back how they were. `offset` and `spread` (0-100) stagger the lights through the loop and spread their colours round the wheel; both default to 0, every light in step.
 
 For richer control, POST JSON to `/NeewerLux/batch` (several lights in one request) or `/NeewerLux/animate`:
 
 ```json
-{ "action": "play", "name": "Concert Sweep", "speed": 1.0, "loop": true, "maxLoops": 3, "revert": true }
+{ "action": "play", "name": "Concert Sweep", "speed": 1.0, "loop": true, "maxLoops": 3, "revert": true, "offset": 50, "spread": 0 }
 ```
 
 The Info tab and the dashboard both carry the full command reference.

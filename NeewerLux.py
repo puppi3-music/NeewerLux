@@ -1398,7 +1398,8 @@ try: # try to load the GUI
             animRevertOnFinish = self.animRevertCheck.isChecked()
             maxLoops = self.animLoopCountSpin.value()
 
-            startAnimation(name, asyncioEventLoop, speedMult, loopOverride, fps=fps, briScale=briScale, maxLoops=maxLoops)
+            startAnimation(name, asyncioEventLoop, speedMult, loopOverride, fps=fps, briScale=briScale, maxLoops=maxLoops,
+                           offset=self.animOffsetSpin.value() / 100.0, colourSpread=self.animSpreadSpin.value() / 100.0)
 
         def animStop(self):
             """Stop the currently playing animation."""
@@ -3364,7 +3365,7 @@ try: # try to load the GUI
             self.soundModeCombo.currentTextChanged.connect(self._soundSettingsChanged)
             self.soundRollStyleCombo.currentTextChanged.connect(self._soundSettingsChanged)
             for sp in (self.soundBrightSensSpin, self.soundKickSensSpin, self.soundSmoothSpin, self.soundMinBriSpin, self.soundMaxBriSpin,
-                       self.soundSatSpin, self.soundRateSpin, self.soundColourFadeSpin):
+                       self.soundSatSpin, self.soundRateSpin, self.soundColourFadeSpin, self.soundOffsetSpin, self.soundSpreadSpin):
                 sp.valueChanged.connect(self._soundSettingsChanged)
             self.soundAllLightsCheck.toggled.connect(self._soundSettingsChanged)
             self.soundFlashLevelCombo.activated.connect(self._soundFlashLevelChosen)
@@ -3442,9 +3443,10 @@ try: # try to load the GUI
                         ("minBri", "soundMinBriSpin"), ("maxBri", "soundMaxBriSpin"),
                         ("saturation", "soundSatSpin"), ("colourFade", "soundColourFadeSpin"),
                         ("rate", "soundRateSpin"), ("clockLead", "soundClockLeadSpin"),
+                        ("offset", "soundOffsetSpin"), ("colourSpread", "soundSpreadSpin"),
                         ("beatsPerColour", "soundBeatsPerColourSpin"),
                         ("tempoMin", "soundTempoMinSpin"), ("tempoMax", "soundTempoMaxSpin"))
-        _SOUND_DEFAULTS = {"tempoMin": 70, "tempoMax": 180}  # for presets saved before these settings
+        _SOUND_DEFAULTS = {"tempoMin": 70, "tempoMax": 180, "offset": 0, "colourSpread": 0}  # for presets saved before these settings
 
         def _soundCollect(self):
             """The Sound tab settings a preset holds (not the input device or beat source)."""
@@ -3673,6 +3675,8 @@ try: # try to load the GUI
             e.kickSensitivity = self.soundKickSensSpin.value() / 100.0
             e.smoothing = self.soundSmoothSpin.value() / 100.0
             e.colourFade = self.soundColourFadeSpin.value() / 100.0
+            e.offset = self.soundOffsetSpin.value() / 100.0
+            e.colourSpread = self.soundSpreadSpin.value() / 100.0
             e.rollStyle = self.soundRollStyleCombo.currentText()
             e.flashLevel = self.soundFlashLevelCombo.currentData()
             e.minBri = self.soundMinBriSpin.value()
@@ -3884,6 +3888,8 @@ try: # try to load the GUI
                     "animSpeed": self.animSpeedCombo.currentText(),
                     "animRate": self.animRateSpin.value(),
                     "animBri": self.animBriSpin.value(),
+                    "animOffset": self.animOffsetSpin.value(),
+                    "animSpread": self.animSpreadSpin.value(),
                     "animLoop": self.animLoopCheck.isChecked(),
                     "animLoopCount": self.animLoopCountSpin.value(),
                     "animParallel": self.animParallelCheck.isChecked(),
@@ -3949,6 +3955,10 @@ try: # try to load the GUI
                         self.animRateSpin.setValue(geo["animRate"])
                     if "animBri" in geo:
                         self.animBriSpin.setValue(geo["animBri"])
+                    if "animOffset" in geo:
+                        self.animOffsetSpin.setValue(geo["animOffset"])
+                    if "animSpread" in geo:
+                        self.animSpreadSpin.setValue(geo["animSpread"])
                     if "animLoop" in geo:
                         self.animLoopCheck.setChecked(geo["animLoop"])
                     if "animLoopCount" in geo:
@@ -6276,6 +6286,7 @@ def processHTMLCommands(paramsList, loop):
             loopOverride = None
             maxLoops = 0
             revertOverride = None
+            offset = spread = 0.0
             if "|" in animName:
                 parts = animName.split("|")
                 animName = parts[0]
@@ -6302,11 +6313,17 @@ def processHTMLCommands(paramsList, loop):
                     elif revertVal in ("0", "false", "no", "off"):
                         revertOverride = False
                 except IndexError: pass
+                # Offset and colour spread across the lights, in %
+                try: offset = float(parts[7]) / 100.0
+                except (ValueError, IndexError): pass
+                try: spread = float(parts[8]) / 100.0
+                except (ValueError, IndexError): pass
             # Apply revert override if specified
             if revertOverride is not None:
                 global animRevertOnFinish
                 animRevertOnFinish = revertOverride
-            startAnimation(animName, loop, speedMult, loopOverride=loopOverride, fps=fps, briScale=briScale, maxLoops=maxLoops)
+            startAnimation(animName, loop, speedMult, loopOverride=loopOverride, fps=fps, briScale=briScale, maxLoops=maxLoops,
+                           offset=offset, colourSpread=spread)
         else:
             printDebugString("HTTP: no animation name specified")
 
@@ -6732,9 +6749,11 @@ def animationSendFrame(frameCommands, loop):
     # Compute byte values for each light
     changedLights = []
     for cmd in frameCommands:
-        lightId = str(cmd.get("light", ""))
         mode = cmd.get("mode", "").upper()
-        selectedLights = returnLightIndexesFromMacAddress(lightId)
+        if "idx" in cmd:  # one light, by its index in availableLights
+            selectedLights = [cmd["idx"]]
+        else:
+            selectedLights = returnLightIndexesFromMacAddress(str(cmd.get("light", "")))
 
         if not selectedLights:
             continue
@@ -6774,9 +6793,9 @@ def animationSendFrame(frameCommands, loop):
                     changedLights.append(lightIdx)
 
     if not changedLights:
-        return
+        return True
 
-    signalWorkerSend(changedLights)
+    return signalWorkerSend(changedLights)
 
 
 def signalWorkerSend(changedLights, waitSeconds=2.0):
@@ -6853,9 +6872,141 @@ def stopSoundReactive():
         soundEngine.stop()
 
 
-def animationEngineThread(animation, loop, speedMultiplier=1.0, loopOverride=None, fps=5, briScale=1.0, maxLoops=0):
-    """Main animation playback thread. Runs keyframes with timing and interpolation.
-    maxLoops: 0 = infinite (if shouldLoop), N>0 = play exactly N times then stop."""
+class AnimationTimeline:
+    """Where a keyframe animation is at any moment, worked out from the time, so each light can
+    run the same animation at its own offset. Times are in ms from the start, speed applied.
+
+    Keyframe k fades in from keyframe k-1 over its fade_ms, then holds for its hold_ms. On the first
+    pass frame 0 has nothing to fade from; on later passes of a loop it fades in from the last frame,
+    taking the last frame's fade if it has none of its own, so loops are seamless."""
+
+    def __init__(self, keyframes, speed=1.0, loop=False, maxLoops=0):
+        speed = speed if speed > 0 else 1.0
+        self.count = len(keyframes)
+        self.holds = [max(50, int(kf.get("hold_ms", 200) / speed)) for kf in keyframes]
+        fades = [max(0, int(kf.get("fade_ms", 0) / speed)) for kf in keyframes]
+        first = list(fades)
+        steady = list(fades)
+        if self.count:
+            first[0] = 0
+            if steady[0] == 0:
+                steady[0] = fades[-1]
+        self.fades = (first, steady)  # [pass][frame]: pass 0 is the first, 1 any later one
+        self.firstLen = sum(first) + sum(self.holds)
+        self.loopLen = sum(steady) + sum(self.holds)
+        self.loop = loop
+        # passes played: None = for ever
+        self.passes = (max(1, maxLoops) if maxLoops > 0 else None) if loop else 1
+        self.length = None if self.passes is None else self.firstLen + (self.passes - 1) * self.loopLen
+
+    def passesDone(self, t):
+        if t < self.firstLen:
+            return 0
+        done = 1 + int((t - self.firstLen) // self.loopLen) if self.loop else 1
+        return done if self.passes is None else min(done, self.passes)
+
+    def position(self, t, fresh=True):
+        """(pass, frame, ms into the frame, ms until it next changes or None) at t ms.
+        A light that isn't fresh (an offset light in an endless loop) has been looping since before
+        the start, so it is never on the first pass. A finite animation waits on its first frame
+        before t=0 and stays on its last after it ends."""
+        until = None
+        if self.length is not None:
+            if t < 0:
+                until = -t
+                t = 0.0
+            elif t >= self.length:
+                t = self.length - 0.001
+                until = math.inf
+        if (fresh or self.length is not None) and 0 <= t < self.firstLen:
+            kind, u = 0, t
+        else:
+            kind, u = 1, (t - self.firstLen) % self.loopLen
+        fades = self.fades[kind]
+        k = 0
+        for k in range(self.count):
+            span = fades[k] + self.holds[k]
+            if u < span:
+                break
+            u -= span
+        else:
+            u = span - 0.001
+        if until is None:
+            until = (fades[k] - u) if u < fades[k] else (fades[k] + self.holds[k] - u)
+        return kind, k, u, until
+
+    def fading(self, kind, k, u):
+        return u < self.fades[kind][k]
+
+    def lightState(self, params, kind, k, u):
+        """A light's settings at this point. params holds its settings in each keyframe, None where a
+        keyframe leaves it alone (it keeps what an earlier keyframe set). None if nothing has set it yet."""
+        target = params[k]
+        if target is None:
+            earlier = range(k - 1, -1, -1) if kind == 0 else [(k - j) % self.count for j in range(1, self.count)]
+            return next((params[j] for j in earlier if params[j] is not None), None)
+        fade = self.fades[kind][k]
+        if u >= fade:
+            return target
+        prev = params[k - 1] if k > 0 else params[-1]  # frame 0 only fades on later passes, from the last frame
+        if prev is None:
+            return target  # nothing to fade from: it snaps
+        t = u / fade
+        mode = target.get("mode", "HSI").upper()
+        if mode != prev.get("mode", mode).upper():
+            return prev  # can't blend across modes: it changes when the fade ends
+        if mode == "HSI":
+            h, s, b = interpolateHSI((prev.get("hue", 0), prev.get("sat", 100), prev.get("bri", 100)),
+                                     (target.get("hue", 0), target.get("sat", 100), target.get("bri", 100)), t)
+            return {"mode": "HSI", "hue": h, "sat": s, "bri": b}
+        if mode == "CCT":
+            temp, bri = interpolateCCT((prev.get("temp", 56), prev.get("bri", 100)),
+                                       (target.get("temp", 56), target.get("bri", 100)), t)
+            return {"mode": "CCT", "temp": temp, "bri": bri}
+        return prev  # other modes have nothing to blend
+
+
+def animationLightParams(keyframes):
+    """{light index: [its settings in each keyframe, or None]} for the connected lights an animation
+    names. Where a keyframe names a light twice ("*" and "2"), the later entry wins."""
+    params = {}
+    lookup = {}
+    for k, kf in enumerate(keyframes):
+        for key, p in kf.get("lights", {}).items():
+            key = str(key)
+            if key not in lookup:
+                lookup[key] = returnLightIndexesFromMacAddress(key)
+            for idx in lookup[key]:
+                params.setdefault(idx, [None] * len(keyframes))[k] = p
+    return params
+
+
+def animationLightCommand(state, briScale=1.0, hueShift=0):
+    """The command for animationSendFrame: brightness scaled, an HSI hue turned by hueShift degrees."""
+    cmd = dict(state)
+    if "bri" in cmd:
+        cmd["bri"] = max(0, min(100, int(cmd["bri"] * briScale)))
+    if hueShift and cmd.get("mode", "").upper() == "HSI":
+        cmd["hue"] = (int(cmd.get("hue", 0)) + hueShift) % 360
+    return cmd
+
+
+def animationOffsets(order, spanMs, offset, colourSpread):
+    """({light: delay ms}, {light: hue shift}) for lights in order: offset spreads them over that share
+    of the loop (1 = evenly round it, a chase), colourSpread over that share of the colour wheel."""
+    n = max(1, len(order))
+    delays = {idx: offset * spanMs * pos / n for pos, idx in enumerate(order)}
+    shifts = {idx: int(round(colourSpread * 360 * pos / n)) % 360 for pos, idx in enumerate(order)}
+    return delays, shifts
+
+
+def animationEngineThread(animation, loop, speedMultiplier=1.0, loopOverride=None, fps=5, briScale=1.0, maxLoops=0,
+                          offset=0.0, colourSpread=0.0):
+    """Main animation playback thread. Each light's colour is worked out from the time since the start,
+    so lights can run offset from each other, and sent when it changes.
+    maxLoops: 0 = infinite (if shouldLoop), N>0 = play exactly N times then stop.
+    offset: 0-1, how far the lights are spread through the loop (0 = all in step).
+    colourSpread: 0-1, how far their hues are spread round the colour wheel."""
     global animationRunning, animationStopFlag, currentAnimationName, preAnimationStates, threadAction, _animChainStop
 
     animationRunning = True
@@ -6866,6 +7017,8 @@ def animationEngineThread(animation, loop, speedMultiplier=1.0, loopOverride=Non
     animName = animation.get("name", "Untitled")
     currentAnimationName = animName
     stepInterval = max(33, int(1000 / max(1, fps)))  # ms between interpolation steps, capped at ~30 FPS
+    offset = max(0.0, min(1.0, float(offset)))
+    colourSpread = max(0.0, min(1.0, float(colourSpread)))
     completedLoops = 0
     userStopped = False
 
@@ -6875,114 +7028,70 @@ def animationEngineThread(animation, loop, speedMultiplier=1.0, loopOverride=Non
         currentAnimationName = ""
         return
 
-    printDebugString("Animation '" + animName + "' starting (" + str(len(keyframes)) + " keyframes, loop=" + str(shouldLoop) + ", speed=" + str(speedMultiplier) + "x, rate=" + str(fps) + "/s, bri=" + str(int(briScale * 100)) + "%)")
+    printDebugString("Animation '" + animName + "' starting (" + str(len(keyframes)) + " keyframes, loop=" + str(shouldLoop) + ", speed=" + str(speedMultiplier) + "x, rate=" + str(fps) + "/s, bri=" + str(int(briScale * 100)) + "%"
+                     + (", offset=" + str(int(offset * 100)) + "%" if offset else "") + (", colour spread=" + str(int(colourSpread * 100)) + "%" if colourSpread else "") + ")")
 
-    frameIndex = 0
+    timeline = AnimationTimeline(keyframes, speedMultiplier, shouldLoop, maxLoops)
+    spanMs = timeline.loopLen if shouldLoop else timeline.firstLen
     totalFrames = len(keyframes)
-    prevFrameIndex = -1  # tracks previous frame for fade interpolation (-1 = none yet)
+    lightCount = -1
+    params, order, delays, shifts, lastSent = {}, [], {}, {}, {}
     lastGUIUpdate = 0  # throttle GUI updates to avoid cross-thread blocking
+    start = time.perf_counter()
 
     try:
         while not animationStopFlag:
-            keyframe = keyframes[frameIndex]
-            hold_ms = keyframe.get("hold_ms", 200)
-            fade_ms = keyframe.get("fade_ms", 0)
-            lights = keyframe.get("lights", {})
+            if len(availableLights) != lightCount:  # a light connected or dropped: work out who is where again
+                lightCount = len(availableLights)
+                params = animationLightParams(keyframes)
+                order = sorted(params)
+                delays, shifts = animationOffsets(order, spanMs, offset, colourSpread)
+                lastSent = {}
 
-            # Apply speed multiplier to timing
-            hold_ms = max(50, int(hold_ms / speedMultiplier))
-            fade_ms = max(0, int(fade_ms / speedMultiplier))
+            now = (time.perf_counter() - start) * 1000.0
+            completedLoops = timeline.passesDone(now)
+            if timeline.length is not None and now >= timeline.length + max(delays.values(), default=0):
+                break  # every light has played to the end
 
-            # For looping animations: if we just wrapped around to frame 0 from the last frame
-            # and frame 0 has fade_ms=0, auto-apply a fade using the last keyframe's fade_ms.
-            # This makes loops seamless without requiring the user to set fade on the first frame.
-            if frameIndex == 0 and prevFrameIndex == totalFrames - 1 and fade_ms == 0 and shouldLoop:
-                lastFade = keyframes[-1].get("fade_ms", 0)
-                if lastFade > 0:
-                    fade_ms = max(0, int(lastFade / speedMultiplier))
+            frameCommands = []
+            sent = {}
+            wait = 1000.0  # ms until any light next changes
+            shownFrame = 0
+            for pos, idx in enumerate(order):
+                delay = delays[idx]
+                kind, k, u, until = timeline.position(now - delay, fresh=delay == 0)
+                if pos == 0:
+                    shownFrame = k
+                wait = min(wait, stepInterval if timeline.fading(kind, k, u) else until)
+                state = timeline.lightState(params[idx], kind, k, u)
+                if state is None:
+                    continue
+                cmd = animationLightCommand(state, briScale, shifts[idx])
+                if lastSent.get(idx) != cmd:
+                    sent[idx] = cmd
+                    frameCommands.append(dict(cmd, idx=idx))
+
+            if frameCommands and not animationStopFlag:
+                if animationSendFrame(frameCommands, loop) is False:
+                    wait = min(wait, stepInterval)  # the worker was busy: try again soon
+                else:
+                    lastSent.update(sent)
 
             # Update GUI status (throttled to max once per second to avoid
             # cross-thread Qt blocking that causes animation stutters)
-            now = time.time()
-            if now - lastGUIUpdate >= 1.0:
-                lastGUIUpdate = now
-                playingText = "Playing: " + animName + "\nFrame " + str(frameIndex + 1) + "/" + str(totalFrames)
+            wall = time.time()
+            if wall - lastGUIUpdate >= 1.0:
+                lastGUIUpdate = wall
+                playingText = "Playing: " + animName + "\nFrame " + str(shownFrame + 1) + "/" + str(totalFrames)
                 runOnGui(lambda text=playingText: mainWindow.animStatusLabel.setText(text) if animationRunning else None)
 
-            # === FADE TRANSITION (if fade_ms > 0 and we have a previous frame) ===
-            if fade_ms > 0 and prevFrameIndex >= 0:
-                prevLights = keyframes[prevFrameIndex].get("lights", {})
-                steps = max(1, fade_ms // stepInterval)
-
-                for step in range(steps):
-                    if animationStopFlag:
-                        break
-                    t = (step + 1) / steps
-                    frameCommands = []
-
-                    for lightKey, targetParams in lights.items():
-                        mode = targetParams.get("mode", "HSI").upper()
-                        prevParams = prevLights.get(lightKey, targetParams)
-                        prevMode = prevParams.get("mode", mode).upper()
-
-                        # Only interpolate if modes match
-                        if mode == prevMode and mode == "HSI":
-                            h, s, b = interpolateHSI(
-                                (prevParams.get("hue", 0), prevParams.get("sat", 100), prevParams.get("bri", 100)),
-                                (targetParams.get("hue", 0), targetParams.get("sat", 100), targetParams.get("bri", 100)),
-                                t
-                            )
-                            frameCommands.append({"light": lightKey, "mode": "HSI", "hue": h, "sat": s, "bri": max(0, min(100, int(b * briScale)))})
-                        elif mode == prevMode and mode == "CCT":
-                            temp, bri = interpolateCCT(
-                                (prevParams.get("temp", 56), prevParams.get("bri", 100)),
-                                (targetParams.get("temp", 56), targetParams.get("bri", 100)),
-                                t
-                            )
-                            frameCommands.append({"light": lightKey, "mode": "CCT", "temp": temp, "bri": max(0, min(100, int(bri * briScale)))})
-                        else:
-                            # Can't interpolate across modes; just snap on last step
-                            if step == steps - 1:
-                                scaledTarget = dict(targetParams)
-                                if "bri" in scaledTarget:
-                                    scaledTarget["bri"] = max(0, min(100, int(scaledTarget["bri"] * briScale)))
-                                frameCommands.append({"light": lightKey, **scaledTarget})
-
-                    if frameCommands and not animationStopFlag:
-                        animationSendFrame(frameCommands, loop)
-                    time.sleep(stepInterval / 1000.0)
-
-            else:
-                # === INSTANT JUMP to this keyframe ===
-                frameCommands = []
-                for lightKey, params in lights.items():
-                    scaledParams = dict(params)
-                    if "bri" in scaledParams:
-                        scaledParams["bri"] = max(0, min(100, int(scaledParams["bri"] * briScale)))
-                    frameCommands.append({"light": lightKey, **scaledParams})
-
-                if frameCommands and not animationStopFlag:
-                    animationSendFrame(frameCommands, loop)
-
-            # === HOLD on this keyframe ===
-            holdSteps = max(1, hold_ms // 50)
-            for _ in range(holdSteps):
-                if animationStopFlag:
+            # Sleep until something changes, checking for a stop at least every 50ms
+            wakeAt = time.perf_counter() + max(10.0, wait) / 1000.0
+            while not animationStopFlag:
+                left = wakeAt - time.perf_counter()
+                if left <= 0:
                     break
-                time.sleep(0.05)
-
-            # Advance to next keyframe
-            prevFrameIndex = frameIndex
-            frameIndex += 1
-            if frameIndex >= totalFrames:
-                completedLoops += 1
-                if shouldLoop and not animationStopFlag:
-                    # Check maxLoops: 0 = infinite, N = stop after N loops
-                    if maxLoops > 0 and completedLoops >= maxLoops:
-                        break  # reached loop limit
-                    frameIndex = 0  # loop back to start (prevFrameIndex stays as last frame)
-                else:
-                    break  # animation complete
+                time.sleep(min(0.05, left))
 
     except Exception as e:
         printDebugString("Animation engine error: " + str(e))
@@ -7009,9 +7118,11 @@ def animationEngineThread(animation, loop, speedMultiplier=1.0, loopOverride=Non
         showAnimationStopped()
 
 
-def startAnimation(animName, loop, speedMultiplier=1.0, loopOverride=None, fps=5, briScale=1.0, maxLoops=0):
+def startAnimation(animName, loop, speedMultiplier=1.0, loopOverride=None, fps=5, briScale=1.0, maxLoops=0,
+                   offset=0.0, colourSpread=0.0):
     """Start an animation by name. Stops any currently running animation first.
-    maxLoops: 0 = use animation's loop setting, N>0 = play N times then stop."""
+    maxLoops: 0 = use animation's loop setting, N>0 = play N times then stop.
+    offset, colourSpread: 0-1, how far the lights are spread through the loop and round the colour wheel."""
     global animationStopFlag, savedAnimations, preAnimationStates, _animChainStop
 
     # Case-insensitive name lookup, HTTP args get lowercased by the argument parser
@@ -7041,7 +7152,7 @@ def startAnimation(animName, loop, speedMultiplier=1.0, loopOverride=None, fps=5
 
     animation = savedAnimations[animName].copy()
     t = threading.Thread(target=animationEngineThread,
-                         args=(animation, asyncioEventLoop, speedMultiplier, loopOverride, fps, briScale, maxLoops),
+                         args=(animation, asyncioEventLoop, speedMultiplier, loopOverride, fps, briScale, maxLoops, offset, colourSpread),
                          name="animationThread", daemon=True)
     t.start()
     return True
@@ -7793,7 +7904,8 @@ class NLPythonServer(BaseHTTPRequestHandler):
                     if "revert" in body:
                         global animRevertOnFinish
                         animRevertOnFinish = bool(body.get("revert", True))
-                    startAnimation(animName, asyncioEventLoop, speed, loop, fps=int(fps), briScale=briScale, maxLoops=maxLoops)
+                    startAnimation(animName, asyncioEventLoop, speed, loop, fps=int(fps), briScale=briScale, maxLoops=maxLoops,
+                                   offset=float(body.get("offset", 0)) / 100.0, colourSpread=float(body.get("spread", 0)) / 100.0)
                     resultData = {"success": True, "action": "play", "animation": animName}
                 else:
                     resultData = {"success": False, "error": "Animation '" + str(animName) + "' not found",
@@ -7913,7 +8025,7 @@ def writeHTMLSections(self, theSection, errorMsg = ""):
         self.wfile.write(bytes("<STRONG>list_animations</STRONG> - list all saved custom animations<BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/NeewerLux/doAction?list_animations</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>animate=</STRONG> - play a saved animation by name (URL-encode spaces as %20)<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;Optionally append |speed|rate|brightness (e.g. animate=Police%20Flash|2.0|10|50)<BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;Optionally append |speed|rate|brightness|loop|maxLoops|revert|offset|spread (e.g. animate=Police%20Flash|2.0|10|50); offset and spread (0-100) stagger the lights through the loop and round the colour wheel<BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/NeewerLux/doAction?animate=Police%20Flash</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/NeewerLux/doAction?animate=Color%20Cycle|0.5</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>stop_animate</STRONG> - stop the currently playing animation<BR>\n", "utf-8"))

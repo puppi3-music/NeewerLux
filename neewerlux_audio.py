@@ -269,6 +269,15 @@ def paletteAt(pal, t, wrap):
     return _blend(pal[i], pal[(i + 1) % n], x - i)
 
 
+def paletteShifted(pal, t, wrap, shift):
+    """paletteAt, moved shift (0-1) of the way round the palette (wrapping), for a light whose colour is spread from the others."""
+    n = len(pal)
+    if not shift or n == 1:
+        return paletteAt(pal, t, wrap)
+    x = (t % 1.0) * n if wrap else max(0.0, min(1.0, t)) * (n - 1)
+    return paletteAt(pal, x / n + shift, True)
+
+
 def _mix(colours, weights):
     """Weighted mix of (hue, sat) colours, averaging hue as an angle."""
     x = y = sat = 0.0
@@ -1618,8 +1627,8 @@ class _LightShow:
         self.stopHeld = False  # a stop held back a beat, so the kick that ends it fires as heard
         self.kickLevel = 0.0   # how loud the music is with kicks playing (fourth-root scale), slowly forgotten
         self.bassShare = 1.0   # how much of the bass reaches the brightness in the beat modes
-        self.jumpFrom = self.jumpTo = None  # "Beat colour jump": glide from this colour to that one
-        self.jumpAt = 0.0
+        self.jumps = {}  # "Beat colour jump": {colour spread shift: [glide from this colour, to this one, starting then]}
+        self.delayed = {}  # light index: deque of (time, command) held back by the offset
         self.hue = float(engine.baseHue)
         self.palIdx = 0
 
@@ -1847,8 +1856,10 @@ class _LightShow:
         mode = e.mode
         pal = list(e.palette) if e.palette else None
         jumpCol = None
+        targets = list(e.targets)
+        shifts = self._spreadShifts(targets)
         if mode == "Beat colour jump":
-            jumpCol = self._jumpColour(now, src, colourBeat, pal, every, colourFade)
+            jumpCol = self._jumpColour(now, src, colourBeat, pal, every, colourFade, shifts.values())
         elif mode == "Rainbow drift":
             speed = 20 + 200 * sm["level"]
             if pal:  # same time per colour as the built-in rainbow takes per 60 degrees
@@ -1861,13 +1872,13 @@ class _LightShow:
             self.lastSent = {}
             self.lastFull = now
         frame = {}
-        targets = list(e.targets)
         reserve = FLASH_BEAT_RESERVE if mode in ROLL_MODES and self.rollPos is None and not freshFlash \
             and now - self.lastBeat >= BEAT_SETTLE and (self._kicksPlaying(now, src) or (src is not None and self.envs["sustain"].value > SUSTAIN_FLASH)) else 0
         maxSwings = FLASH_LEVELS[e.flashLevel][0]
         if maxSwings is None:  # with the limit off nothing is counted, so turning it back on starts afresh
             self.limiters.clear()
         beatPeriod = src.beatPeriod() if src is not None else self.beatPeriod
+        offset = max(0.0, min(1.0, float(e.offset)))
         for pos, idx in enumerate(targets):
             gap = self._lightGap(idx)
             if gap > SLOW_LIGHT:
@@ -1875,7 +1886,7 @@ class _LightShow:
             else:
                 flash, lightBass = self.beatFlash, bass
                 self.slow.pop(idx, None)
-            h, sat, amt = self._lightColour(mode, pos, targets, pal, sm, lightBass, cen, colourPos, hit, jumpCol, flash)
+            h, sat, amt = self._lightColour(mode, pos, targets, pal, sm, lightBass, cen, colourPos, hit, jumpCol, flash, shifts[idx])
             lo, hiB = sorted((int(e.minBri), int(e.maxBri)))
             sat = sat * e.saturation / 100.0
             if self.rollPos is not None and mode in ROLL_MODES:
@@ -1891,10 +1902,17 @@ class _LightShow:
             if maxSwings is not None:
                 bri = self.limiters.setdefault(idx, _FlashLimiter()).step(bri, now, maxSwings, reserve)
             cmd = (int(round(h)) % 361, int(round(sat)), int(round(bri)))
+            # Offset: each light shows what it would have a share of a beat ago, further back down the line, so changes ripple across them
+            cmd = self._delayed(idx, now, cmd, offset * min(2.0, max(0.1, beatPeriod)) * pos / len(targets))
+            if cmd is None:
+                continue  # nothing old enough yet: it keeps what it shows
             # Only send when something visibly changed.
             prev = self.lastSent.get(idx)
             if prev is None or abs(prev[0] - cmd[0]) >= 3 or abs(prev[2] - cmd[2]) >= 2 or abs(prev[1] - cmd[1]) >= 3:
                 frame[idx] = cmd
+
+        for idx in [i for i in self.delayed if i not in shifts]:  # lights no longer driven
+            del self.delayed[idx]
 
         if stopped or not heard:  # the sound has gone: nothing from a roll comes back afterwards
             self.rollTop.clear()
@@ -2108,14 +2126,32 @@ class _LightShow:
             return beat, countBeat and beatIdx % every == 0, every
         return beat, countBeat and (self.beatCount - 1) % every == 0, every
 
-    def _jumpColour(self, now, src, colourBeat, pal, every, colourFade):
-        """Each colour change glides over a share of the time until the next one, set by Colour fade
-        (75% fills three quarters of it, 0 = a hard cut), from wherever the last glide had got to.
-        A short fixed glide is only a frame or two once Bluetooth drops busy frames, so it still jumps."""
+    def _delayed(self, idx, now, cmd, delay):
+        """The command light idx should show now, delay seconds behind: the newest one at least that old,
+        None while there is none yet. With no delay, cmd itself."""
+        if delay <= 0:
+            self.delayed.pop(idx, None)
+            return cmd
+        q = self.delayed.setdefault(idx, deque())
+        q.append((now, cmd))
+        cmd = None
+        while q and q[0][0] <= now - delay:
+            cmd = q.popleft()[1]
+        return cmd
+
+    def _spreadShifts(self, targets):
+        """{light index: how far (0-1) its colour is moved round the wheel or palette}, from Colour spread."""
+        spread = max(0.0, min(1.0, float(self.engine.colourSpread)))
+        n = max(1, len(targets))
+        return {idx: spread * pos / n for pos, idx in enumerate(targets)}
+
+    def _jumpColour(self, now, src, colourBeat, pal, every, colourFade, shifts=(0.0,)):
+        """{shift: colour shown} for each Colour spread shift. Each colour change glides over a share of the
+        time until the next one, set by Colour fade (75% fills three quarters of it, 0 = a hard cut), from
+        wherever the last glide had got to. A short fixed glide is only a frame or two once Bluetooth drops
+        busy frames, so it still jumps."""
         period = src.beatPeriod() if src is not None else self.beatPeriod
         fade = max(0.1, period) * every * colourFade
-        shown = self.jumpTo if self.jumpFrom is None or fade <= 0 else \
-            _blend(self.jumpFrom, self.jumpTo, _ease(min(1.0, (now - self.jumpAt) / fade)))
         if colourBeat and self.notePitch is not None:  # round the circle of fifths, so related chords get neighbouring colours
             fifths = self.notePitch * 7 % 12
             self.notePitch = None
@@ -2126,25 +2162,39 @@ class _LightShow:
             self.hue = (self.hue + 137.5) % 360
             if pal:
                 self.palIdx = (self.palIdx + _beatStep(len(pal))) % len(pal)
-        target = tuple(pal[self.palIdx % len(pal)]) if pal else (self.hue, 100.0)
-        if target != self.jumpTo:  # a new colour on the beat, or the palette was changed
-            self.jumpFrom, self.jumpTo, self.jumpAt = shown, target, now
-            shown = self.jumpFrom if self.jumpFrom is not None and fade > 0 else target
-        return shown
+        shifts = set(shifts)
+        self.jumps = {s: g for s, g in self.jumps.items() if s in shifts}
+        out = {}
+        for shift in shifts:
+            if not shift:
+                target = tuple(pal[self.palIdx % len(pal)]) if pal else (self.hue, 100.0)
+            elif pal:
+                target = tuple(paletteAt(pal, (self.palIdx % len(pal)) / len(pal) + shift, True))
+            else:
+                target = ((self.hue + shift * 360.0) % 360, 100.0)
+            g = self.jumps.setdefault(shift, [None, None, 0.0])
+            shown = g[1] if g[0] is None or fade <= 0 else _blend(g[0], g[1], _ease(min(1.0, (now - g[2]) / fade)))
+            if target != g[1]:  # a new colour on the beat, or the palette was changed
+                g[0], g[1], g[2] = shown, target, now
+                shown = g[0] if g[0] is not None and fade > 0 else target
+            out[shift] = shown
+        return out
 
-    def _lightColour(self, mode, pos, targets, pal, sm, bass, cen, colourPos, hit, jumpCol, flash=None):
-        """(hue, saturation, brightness 0..1) for the light at this position. flash is this light's beat flash."""
+    def _lightColour(self, mode, pos, targets, pal, sm, bass, cen, colourPos, hit, jumpCol, flash=None, shift=0.0):
+        """(hue, saturation, brightness 0..1) for the light at this position. flash is this light's beat flash,
+        shift how far (0-1) Colour spread moves its colour round the wheel or palette."""
         flash = self.beatFlash if flash is None else flash
         if mode == "Spectrum colour":
-            h, sat = paletteAt(pal, cen, False) if pal else (cen * 280.0, 100.0)
+            h, sat = paletteShifted(pal, cen, False, shift) if pal else ((cen * 280.0 + shift * 360.0) % 360, 100.0)
             return h, sat, sm["level"]
         if mode == "Beat colour jump":
             # The bass, not the whole mix, so it dips between kicks.
-            return jumpCol[0], jumpCol[1], max(bass, flash)
+            col = jumpCol[shift]
+            return col[0], col[1], max(bass, flash)
         if mode == "Bass pulse":
             # Colour follows the same pump, smoothed: soft bass on the first colour, a hard kick or a
             # beat (audio or MIDI clock) glides up toward the last and eases back down.
-            h, sat = paletteAt(pal, colourPos, False) if pal else (float(self.engine.baseHue), 100.0)
+            h, sat = paletteShifted(pal, colourPos, False, shift) if pal else ((self.engine.baseHue + shift * 360.0) % 360, 100.0)
             return h, sat, max(bass, flash * 0.8 * hit)
         if mode == "Frequency bands":
             bandCols = [pal[i % len(pal)] for i in range(3)] if pal else [(0.0, 100.0), (120.0, 100.0), (240.0, 100.0)]
@@ -2217,6 +2267,8 @@ class SoundEngine:
         self.palette = None        # None = each mode's built-in colours, else [(hue 0-360, sat 0-100), ...]
         self.smoothing = 0.5       # 0 = twitchy, 0.95 = very smooth (brightness and levels)
         self.colourFade = 0.75     # how long colour changes glide in Bass pulse and Beat colour jump, 0..0.95
+        self.offset = 0.0          # 0..1: the lights spread over this share of a beat behind the first, so changes ripple across them
+        self.colourSpread = 0.0    # 0..1: each light's colour moved further round the wheel (or palette), spread over the lights
         self.rollStyle = "Strobe"  # drum rolls: "Strobe" pulses on each hit, "Swell" climbs smoothly to Max bright, "Strobe + Swell" does both
         self.flashLevel = "Standard"  # how many flashes a second each light is held to: a key of FLASH_LEVELS
         self.fps = 15
