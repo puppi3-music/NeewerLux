@@ -17,8 +17,8 @@ Decisions already made:
 | Phase | State |
 |---|---|
 | 1. Module, fake controller, tests | Done, committed as `af1ae59`, verified on the Shapes set |
-| 2. Whole-device integration | Next |
-| 3. Per-panel mode | Not started |
+| 2. Whole-device integration | Done, committed as `3c7bbcb` (CI: `e839dd0`). App checks 2, 3, 6 and 7 by hand still to do |
+| 3. Per-panel mode | Next |
 | 4. Docs and packaging | Not started |
 
 ## Approach: Nanoleaf objects that stand in for Bleak objects
@@ -64,21 +64,24 @@ What exists, for Phase 2 to build on:
 
 Hardware check, 2026-11-16, on the Shapes set: discovery found it, and pairing, whole-device HSI and CCT, the power query, extControl v2 streaming, left-to-right order and restore all worked. Triangles are shape type 8; the controller is type 12 at panel id 0 and was skipped. Still unconfirmed: types 16, 19 and 20 (the set has no connectors), and the real frame-rate ceiling (the script's 21.5 fps is its own `asyncio.sleep(1/30)` pacing on Windows timers).
 
-## Phase 2: whole-device integration in `NeewerLux.py` — NEXT
+## Phase 2: whole-device integration in `NeewerLux.py` — DONE
 
-- Startup: `nanoleaf.setKelvinConverter(convert_K_to_RGB)`, and one `NanoleafController` per saved entry, kept in a module-level dict by id so every row and rescan reuses it.
-- `findDevices()` ([4757](NeewerLux.py#L4757)): after the BLE scan, add a row for every `controller.devices()` entry whose address is not already listed, using `getCustomLightPrefs` as the Neewer path does. Wrap the BLE scan so a machine without Bluetooth still gets its Nanoleaf rows. The "found again, clear `[1]`" branch stays BLE-only.
-- `connectToLight()` ([4946](NeewerLux.py#L4946)): replace the two `BleakClient(...)` constructions with a small `makeClient(device)` that returns `NanoleafClient(device)` for a `NanoleafDevice`. The retry loop and table updates work as they are.
-- `connectToOneLight()` ([5262](NeewerLux.py#L5262)): for an `NL:` address, build the entry from the saved list in place of `BleakScanner.find_device_by_address`.
-- IP changes: if connecting fails with an unreachable error, run `scanSubnet()`, try the saved token on each hit (`GET /api/v1/<token>/`), and when the `serialNo` matches, update `ip` in `nanoleaf.json` and retry. Without this, a new DHCP address means pairing again. Needs a small helper in the module plus a fake-controller test.
-- `getLightSpecs()` ([4893](NeewerLux.py#L4893)): add a Nanoleaf entry with range 1200–6500 K, not CCT-only.
-- `parseBatchString()` ([5969](NeewerLux.py#L5969)): when `parts[0]` is `NL`, rejoin `parts[0:2]` as the light id (a panel address is `NL:<id>-P<n>`, still one colon). Add a check that `NL:S1:HSI:0:100:50` and `NL:S1-P5:OFF` parse.
-- Table label: the `"[ʀssɪ: … dBm]"` suffix is built inline in about ten places ([3087-3100](NeewerLux.py#L3087-L3100), [2200-2203](NeewerLux.py#L2200-L2203)). Move it into one helper next to `_get_light_rssi` ([4564](NeewerLux.py#L4564)) that returns `[LAN]` for Nanoleaf rows.
-- Status bar strings that say "Neewer lights" become "lights".
-- Pairing UI: an "Add Nanoleaf…" button beside Scan in [neewerlux_ui.py:1211](neewerlux_ui.py#L1211). The dialog lists `discoverAll()` results, has a manual `ip[:port]` field, shows `PAIRING_HINT`, then calls `pairAndDescribe` and `addSaved` and triggers a discover. Network calls run off the GUI thread and report back through the existing `runOnGui` ([4280](NeewerLux.py#L4280)).
-- Headless pairing: a `--nanoleaf_pair <ip[:port]>` CLI argument beside the others at [5596](NeewerLux.py#L5596), for `--http` and `--cli` installs.
+What exists, for Phase 3 to build on:
+- Module-level `nanoleafControllers` (id to `NanoleafController`). `syncNanoleafControllers()` reads `nanoleaf.json` on every scan, creates missing controllers and refreshes idle ones (`controller.update(entry)`) after a re-pair or IP fix. The Kelvin converter is registered right after `convert_K_to_RGB`.
+- `findDevices()`: the BLE scan is wrapped (a machine without Bluetooth logs it and carries on), then `addNanoleafLights()` appends `nanoleafLightEntry(device)` for each `controller.devices()` address not already listed. Entries use `getCustomLightPrefs`, `[5] = False` and `[9] = "LAN"`. Phase 3 can rebuild a device's rows by removing them and calling `addNanoleafLights()`.
+- `makeClient(device)` in `connectToLight()`; `findNanoleafDevice(address)` in `connectToOneLight()` for `--light NL:...` (the CLI lower-cases arguments, so lookups ignore case). Link errors now include the exception text in the log.
+- IP changes are handled in the module, not the app: `_request` raises `NanoleafUnreachable` for network errors. `NanoleafController.open()` then calls `relocate()`, which runs `findMovedDevice(entry, hosts)` (scan, `GET /api/v1/<token>/`, match `serialNo`) and writes the new `ip`/`port` with `updateSaved()`. One search per 60 s (`relocateInterval`); rows connecting at once share it, and a row that failed while another row moved the device just retries. `relocateHosts` narrows the scan for tests. On the Shapes set, a wrong saved IP connected in 4.6 s.
+- `getLightSpecs`: `["Nanoleaf", 1200, 6500, False]`. `getCustomLightPrefs` looks specs up by kind for `NL:` addresses, since the device name is the user's own.
+- `parseBatchString`: `NL:<id>:MODE:..` and `NL:<id>-P<n>:MODE:..`; the id is upper-cased, and a bare `NL:MODE` is skipped as malformed.
+- `_light_table_label(entry)` builds every Name-column string (`[LAN]` for Nanoleaf); `_light_signal_text(entry)` gives "LAN" or "-60 dBm" for the HTTP page and `--list`. Status bar, `--list` and HTTP-page strings say "lights".
+- "Add Nanoleaf…" (`NanoleafPairDialog` in `neewerlux_ui.py`): it does no networking. `MainWindow.openNanoleafPairDialog` runs `discoverAll()` / `pairAndDescribe()` + `addSaved()` on threads and reports back through `runOnGui`. Devices already in `nanoleaf.json` are marked "already added". After pairing it queues `discover` if the worker is idle, else the status bar asks for a Re-scan.
+- `--nanoleaf_pair <ip[:port]>` (space or `=`): retries for 60 s while the controller is not in pairing mode, saves, prints the `NL:` address, and exits. It leaves the lock file alone when another instance is running.
+- The worker thread's power poll works unchanged; the status reads `LINKED ON / ᴄʜ. ---` (no channel on Nanoleaf).
+- Tests: `tests/test_nanoleaf.py` now has 32 (moved device, IP recovery, search throttle, address helpers, `updateSaved`, batch strings). New `tests/test_app_nanoleaf.py` (6) drives `NeewerLux.py` against the fake: a scan with Bluetooth failing, connect/HSI/CCT/off/power readback, IP recovery, CLI lookup, `--nanoleaf_pair` parsing, and the pairing dialog offscreen. `.github/workflows/tests.yml` runs `unittest discover` on Windows for pull requests and pushes to `main`.
+- Checked on the Shapes set (2026-11-16, app code run headless): recovery from a wrong saved IP, HSI, CCT 2700 K, off with the `STBY` readback, and `NL:` batch resolution.
 
-Nothing changes in the worker thread, `writeToLight`, `parallelWriteToLights`, the animation engine, the sound engine, presets, the HTTP server or the web UI.
+Not done here:
+- `release.yml`'s source zip lists files by name and is missing `neewerlux_nanoleaf.py` (and the existing `neewerlux_audio.py` / `neewerlux_midi.py`). This belongs with Phase 4 packaging.
 
 ## Phase 3: per-panel mode
 
@@ -92,6 +95,7 @@ Nothing changes in the worker thread, `writeToLight`, `parallelWriteToLights`, t
 - [README.md](README.md): Nanoleaf section covering Wi-Fi setup (not Thread-only), pairing, per-panel mode and the limits below.
 - [CHANGELOG.md](CHANGELOG.md) entry; update the description and keywords in [pyproject.toml](pyproject.toml).
 - [NeewerLux.spec](NeewerLux.spec): add `neewerlux_nanoleaf` to `hiddenimports` and confirm it is bundled in the Windows build.
+- [release.yml](.github/workflows/release.yml): add `neewerlux_nanoleaf.py` (and the missing `neewerlux_audio.py`, `neewerlux_midi.py`) to the source zip.
 
 ## Known limits (documented, not solved here)
 
@@ -105,7 +109,7 @@ Nothing changes in the worker thread, `writeToLight`, `parallelWriteToLights`, t
 
 Run tests with `uv run --no-sync python ...` or the activated `.venv`'s `python`: a plain `uv run` syncs the `audio` group, and `python-rtmidi` fails to build on this machine (no C++ compiler).
 
-1. `python -m unittest tests.test_nanoleaf` passes.
+1. `python -m unittest discover -s tests -p "test_*.py"` passes (38 tests; CI runs the same).
 2. Start `tests/fake_nanoleaf.py`, run `NeewerLux.py`, add `127.0.0.1:<port>` through "Add Nanoleaf…": pairing fails until the fake's button state is set, then succeeds and the row links.
 3. Whole-device: CCT and HSI sliders, on/off, a preset, an animation and sound-reactive each produce the expected `/state` requests in the fake's log; the table shows `LINKED ON` / `STBY`.
 4. Per-panel: enable the checkbox, confirm one row per panel, run "Rainbow Chase" and sound-reactive, and confirm the fake logs one UDP datagram per frame with distinct panel colours. Disable it and confirm the effect is restored and a single row returns.
