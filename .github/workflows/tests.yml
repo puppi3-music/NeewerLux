@@ -1,0 +1,42 @@
+# Run the test suite on every pull request and on every push to main.
+# No Bluetooth adapter or real lights are needed: the Nanoleaf tests use the fake
+# controller in tests/fake_nanoleaf.py, and the dialog test runs Qt offscreen.
+
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unittest:
+    # Windows, like the release build and most users. The tests also use 127.0.0.1-only sockets,
+    # so there is no firewall prompt to worry about.
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: latest
+          python-version: '3.13'
+          enable-cache: true
+
+      # bleak and PySide6 only: the audio group (python-rtmidi, sounddevice) is not needed
+      # by any test. --locked fails if uv.lock is out of date with pyproject.toml.
+      - name: Install dependencies
+        run: uv sync --locked --no-default-groups --group gui
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONUNBUFFERED: '1'
+        run: uv run --no-sync python -m unittest discover -s tests -p "test_*.py" -v
