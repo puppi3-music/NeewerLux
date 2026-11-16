@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-14, ubuntu-latest]  # macos-14: Apple Silicon, usually free sooner than macos-latest
+        os: [windows-latest, macos-15, ubuntu-latest]  # macos-15: Apple Silicon, usually free sooner than macos-latest
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:

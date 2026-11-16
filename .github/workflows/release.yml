@@ -39,7 +39,7 @@ jobs:
         include:
           - os: windows-latest
             label: Windows
-          - os: macos-14                # Apple Silicon (macos-latest often waits for a free machine)
+          - os: macos-15                # Apple Silicon; macos-latest (macOS 26) often waits for a free machine
             label: macOS-AppleSilicon
           - os: ubuntu-22.04            # an older glibc, so the build runs on most distributions
             label: Linux-x86_64
