@@ -2882,21 +2882,30 @@ try: # try to load the GUI
             else:
                 self._collapsedGroups.discard(controller.address)
 
-            # A selected panel that is about to be hidden passes its selection to the device's row, so the
-            # same lights stay selected (selectedLights counts a selected device row as all its panels)
+            # Panels about to be hidden can't stay selected out of sight. If all of them were selected, the
+            # device's row takes their selection (selectedLights counts it as all its panels), so the same
+            # lights stay selected; if only some were, they are deselected, as selecting the device's row
+            # would quietly widen the selection to every panel.
             selectedRows = {i.row() for i in self.lightTable.selectionModel().selectedRows()}
             memberRows = [self._lightRow[a] for a in members]
+            selectedMembers = [r for r in memberRows if r in selectedRows]
+            selectionChanged = False
             self.lightTable.blockSignals(True)
-            if collapse and any(r in selectedRows for r in memberRows):
+            if collapse and selectedMembers:
                 for r in memberRows:
                     self.lightTable.selectionModel().select(self.lightTable.model().index(r, 0),
                                                             QItemSelectionModel.Deselect | QItemSelectionModel.Rows)
-                self.lightTable.selectionModel().select(self.lightTable.model().index(row, 0),
-                                                        QItemSelectionModel.Select | QItemSelectionModel.Rows)
+                if len(selectedMembers) == len(memberRows):
+                    self.lightTable.selectionModel().select(self.lightTable.model().index(row, 0),
+                                                            QItemSelectionModel.Select | QItemSelectionModel.Rows)
+                else:
+                    selectionChanged = True
             for r in memberRows:
                 self.lightTable.setRowHidden(r, collapse)
             self.lightTable.blockSignals(False)
             self._refreshGroupRow(row)
+            if selectionChanged:
+                self.selectionChanged() # fewer lights are selected now: update the tabs and buttons to match
 
         def _appendLog(self, msg):
             """Append a timestamped message to the Log tab (main thread only)."""
@@ -2977,14 +2986,20 @@ try: # try to load the GUI
                 self.lightTable.setRowCount(0)
 
         def selectRows(self, rowsToSelect):
-            """Select lights by availableLights index; a panel of a collapsed device selects the device's row."""
+            """Select lights by availableLights index. All the panels of a collapsed device select the device's
+            row; only some of them expand the device, as its row would stand for every panel."""
             self.lightTable.clearSelection()
+            wanted = set(rowsToSelect)
             for a in rowsToSelect:
                 row = self._lightRow.get(a)
                 if row is None:
                     continue
                 if self.lightTable.isRowHidden(row) and a in self._groupRowOf:
-                    row = self._groupRowOf[a]
+                    groupRow = self._groupRowOf[a]
+                    if all(m in wanted for m in self._tableRows[groupRow][2]):
+                        row = groupRow
+                    else:
+                        self._toggleGroupAt(groupRow) # nothing of it is selected yet, so this only expands it
                 self.lightTable.selectionModel().select(self.lightTable.model().index(row, 0),
                                                         QItemSelectionModel.Select | QItemSelectionModel.Rows)
             

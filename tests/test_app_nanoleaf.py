@@ -405,13 +405,27 @@ class LightTableGroupTests(AppTestCase):
         self.window._toggleGroupAt(0)
         self.assertEqual([self.table.isRowHidden(r) for r in range(5)], [False, True, True, True, False])
         self.assertTrue(self.table.item(0, 0).text().startswith("▸ Fake Shapes"))
-        # the hidden panel's selection moved to the device, so all its panels are now selected
+        # one hidden panel is deselected, not widened to the whole device
+        self.assertEqual(self.window.selectedLights(), [])
+
+        # all of its panels selected: the device's row takes their selection, the same lights
+        self.window._toggleGroupAt(0)
+        self.window.selectRows([0, 1, 2])
+        self.window._toggleGroupAt(0)
+        self.assertEqual([i.row() for i in self.table.selectionModel().selectedRows()], [0])
         self.assertEqual(self.window.selectedLights(), [0, 1, 2])
 
-        # selecting a panel of a collapsed device selects the device row; a rebuilt table stays collapsed
-        self.window.selectRows([1])
+        # all the panels of a collapsed device select its row; a rebuilt table stays collapsed
+        self.window.selectRows([0, 1, 2])
         self.assertEqual([i.row() for i in self.table.selectionModel().selectedRows()], [0])
         self.window.updateLights(False, False)
+        self.assertTrue(self.table.isRowHidden(1))
+
+        # only some of them expand it, so just those are selected
+        self.window.selectRows([1])
+        self.assertFalse(self.table.isRowHidden(2))
+        self.assertEqual(self.window.selectedLights(), [1])
+        self.window._toggleGroupAt(0)  # collapse again for the checks below
         self.assertTrue(self.table.isRowHidden(1))
 
         self.window._toggleGroupAt(0)
