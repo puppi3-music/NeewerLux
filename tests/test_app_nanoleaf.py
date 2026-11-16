@@ -31,7 +31,10 @@ except Exception:  # bleak or PySide missing
 
 
 async def noBluetooth(*args, **kwargs):
-    raise OSError("No Bluetooth adapters found.")
+    # Stands in for BleakScanner.discover in every test here, so no test scans real Bluetooth (slow, and it
+    # could find real lights) and each checks that a failed Bluetooth scan still lists the Nanoleafs.
+    # The app logs this as "Bluetooth scan failed (...), skipping Bluetooth lights": expected, not a failure.
+    raise OSError("Bluetooth simulated as unavailable by the test")
 
 
 @unittest.skipIf(app is None, "Puppi3sNeewerLux.py could not be imported")
