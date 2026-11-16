@@ -137,6 +137,7 @@ class Song:
         self.length = float(self.beats[-1] + 1.0)
         self.change = None    # time the tempo starts to change, for cases that change it
         self.sounds = {}      # per-case sounds, used before SOUNDS
+        self.rolls = []       # true drum rolls as (start, end) seconds; None where it is unclear what counts as one
 
     def at(self, pos):
         i = int(math.floor(pos))
@@ -214,11 +215,13 @@ def houseBuild():
             s.bar(b, snares=np.arange(32) / 8.0, drums=False)
         else:
             s.bar(b, **HOUSE)
+    s.rolls = [(s.at(48), s.at(64))]
     return s
 
 
 def houseFillBreak():
     s = Song(_steady(126, 60))
+    s.rolls = None  # a one-beat snare fill: a roll or not, either is fine
     for b in range(len(s.beats) // 4 - 1):
         if b == 11:  # a one-bar fill: kick drops out, snare 16ths on the last two beats
             s.bar(b, kicks=(0,), snares=2 + np.arange(8) / 4.0, hats=(0.5, 1.5))
@@ -465,7 +468,7 @@ def run(samples, window=None, tempoRange=None, flashOn="Beats", colours=None):
             analyser.feed(samples[i:i + BLOCK].astype(np.float32), nextBlock, 1.0)
             i += BLOCK
             nextBlock += BLOCK / RATE
-            log.append((now, tempo.locked, tempo.period, tempo.refT, tempo.refPos))
+            log.append((now, tempo.locked, tempo.period, tempo.refT, tempo.refPos, analyser.roll.active))
         wait = show.step(now)
         if show.lastBeat != lastBeat:
             lastBeat = show.lastBeat
@@ -498,7 +501,7 @@ def score(song, log, fired, kicks):
             if song.change is not None and b >= song.change:
                 onAfter.append((b, False))
             continue
-        _, _, period, refT, refPos = log[j]
+        _, _, period, refT, refPos = log[j][:5]
         trueP = beats[k + 1] - b
         ratios.append(trueP / period)
         pos = refPos + (b - refT) / period
@@ -546,6 +549,74 @@ def score(song, log, fired, kicks):
 
 
 COLS = ("lock", "ratio", "on%", "sits", "grid50", "grid90", "fire%", "fire50", "extra", "kick%", "kfalse", "settle")
+
+
+def rollSpans(log, minGap=0.5):
+    """(start, end) of each span the roll finder was on, gaps under minGap s joined."""
+    spans = []
+    for e in log:
+        if not e[5]:
+            continue
+        if spans and e[0] - spans[-1][1] <= minGap:
+            spans[-1][1] = e[0]
+        else:
+            spans.append([e[0], e[0]])
+    return [(a, b) for a, b in spans]
+
+
+def _overlap(a, spans):
+    return sum(max(0.0, min(a[1], b) - max(a[0], s)) for s, b in spans)
+
+
+ROLL_COLS = ("rolls", "rollS", "true", "trueS", "found%", "falseS", "start", "end", "onRoll%", "onRest%")
+
+
+def scoreRolls(song, log, truth=None):
+    """The roll finder's spans; against true spans, when given: share of roll time found, seconds of
+    false roll, median start/end lateness of the matched rolls; and the beat grid's on% in and out of rolls."""
+    spans = rollSpans(log)
+    row = {"rolls": len(spans), "rollS": sum(b - a for a, b in spans)}
+    if truth is not None:
+        row["true"], row["trueS"] = len(truth), sum(b - a for a, b in truth)
+        if truth:
+            row["found%"] = 100.0 * sum(_overlap(t, spans) for t in truth) / row["trueS"]
+        row["falseS"] = row["rollS"] - sum(_overlap(sp, truth) for sp in spans)
+        starts, ends = [], []
+        for t in truth:
+            hit = [sp for sp in spans if _overlap(sp, [t]) > 0]
+            if hit:
+                starts.append(hit[0][0] - t[0])
+                ends.append(hit[-1][1] - t[1])
+        if starts:
+            row["start"], row["end"] = float(np.median(starts)), float(np.median(ends))
+    times = np.array([e[0] for e in log])
+    inRoll, rest = [], []
+    for b in song.beats[song.beats < song.length - 0.5]:
+        j = int(np.searchsorted(times, b)) - 1
+        if j < 0 or not log[j][1]:
+            continue
+        _, _, period, refT, refPos, rolling = log[j]
+        pos = refPos + (b - refT) / period
+        on = abs(pos - round(pos)) <= 0.125
+        (inRoll if any(s <= b <= e for s, e in (spans if truth is None else truth)) else rest).append(on)
+    if inRoll:
+        row["onRoll%"] = 100.0 * np.mean(inRoll)
+    if rest:
+        row["onRest%"] = 100.0 * np.mean(rest)
+    return row, spans
+
+
+def readRolls(path):
+    """True roll spans from a text file: one "start end" per line, in seconds or m:ss; # starts a comment."""
+    def sec(v):
+        m, _, s = v.rpartition(":")
+        return float(s) + 60.0 * float(m or 0)
+    spans = []
+    for line in open(path):
+        line = line.split("#")[0].split()
+        if len(line) >= 2:
+            spans.append((sec(line[0]), sec(line[1])))
+    return spans
 
 
 def throughLimit(times, level, fps=30.0):
@@ -780,6 +851,7 @@ def main():
     ap.add_argument("--nml", help="take the BPM and beat grid from this Traktor collection (.nml), by file name; "
                     "without a grid anchor the first beat is fitted as with --first-beat auto")
     ap.add_argument("--beats", help="text file with one true beat time per line")
+    ap.add_argument("--rolls", help='with --file: text file with one true drum roll per line, "start end" in seconds or m:ss')
     ap.add_argument("--kick", choices=("synth", "real"), default="synth",
                     help="synthetic kick sound: synth (body from the first sample) or real (click, body 13 ms later)")
     ap.add_argument("--flash", action="store_true", help='also a "Flash on: Kicks" against "Beats" table')
@@ -803,6 +875,7 @@ def main():
                 fb = "auto"  # no anchor in the collection: fit it
         fb = fb if fb == "auto" else float(fb)
         song, x = songFromFile(args.file, bpm, fb, args.beats)
+        song.rolls = readRolls(args.rolls) if args.rolls else None
         name = os.path.basename(args.file)
         if args.variant:  # e.g. mic: the track as a laptop mic across the room would hear it
             x, name = VARIANTS[args.variant](x), "%s/%s" % (name, args.variant)
@@ -816,12 +889,14 @@ def main():
             for v in ([args.variant] if args.variant else list(VARIANTS)):
                 inputs.append(("%s/%s" % (name, v), song, VARIANTS[v](raw)))
     rangeNote = " range %g-%g BPM" % tuple(args.range) if args.range else ""
-    flashRows, realRows = [], []
+    flashRows, realRows, rollRows = [], [], []
     for w in windows:
         rows = []
         for label, song, x in inputs:
             result = run(x, w, args.range)
             rows.append((label, score(song, *result)))
+            if w == windows[0]:
+                rollRows.append((label,) + scoreRolls(song, result[0], song.rolls))
             if w == windows[0]:
                 flashRows.append((label, scoreFlash(song, *result)))
                 if args.flash:
@@ -830,6 +905,11 @@ def main():
                     realRows.append((label, scoreReal(song, *real, colours)))
         printTable(rows, "Tempo window %.0f s%s%s (synthetic results are provisional until checked on real tracks)"
                    % (w, " (app default)" if w == default else "", rangeNote))
+    printTable([(label, row) for label, row, _ in rollRows], "Drum rolls, tempo window %.0f s (rollS/trueS/falseS seconds; start/end: lateness of the "
+                   "matched rolls, s; onRoll%%/onRest%%: beat grid on%% in and out of the rolls)" % windows[0], ROLL_COLS)
+    if args.file:
+        spans = rollRows[0][2]
+        print("roll spans: " + (", ".join("%d:%04.1f-%d:%04.1f" % (a // 60, a % 60, b // 60, b % 60) for a, b in spans) or "none"))
     if args.flash:
         printTable(flashRows, "Flash on: Kicks against Beats, tempo window %.0f s%s (light model; no input latency)"
                    % (windows[0], rangeNote), FLASH_COLS)
