@@ -25,8 +25,14 @@ percentile grid error in ms; **extra** = flashes with no beat.
 - **Love is Gonna Save Us (Benny Benassi, ARTBAT) 150-190 s.** A long fill: hits at ±117 / ±234 ms from the beat,
   few on it. The tempo window reads 4/3 (171 BPM) there and the 3/4-4/3 guard holds it off, but 102.5 (4/5) and
   then 171 still get through around 157 s. On 89.2→90.8 after the 2026-11-16 fixes; 150-190 s is still mostly off.
-- **Savana (Chris Lake):** g50 13.6 ≈ g90 16.0, which points to a steady offset (onset delay or kick offset), not jitter.
-- **light years (Inez, John Summit):** the harness prints no score row; probably a harness or parse problem.
+- **Savana (Chris Lake) 203-239 s:** the kicks stop and an off-beat bass plays alone (hits at +213 ms, first every
+  two beats, then every beat, plus a sound at +45..+65 ms). Its hits are taken as kicks, so no breakdown hold
+  starts; at 208.5 s the off-beat flip (TEMPO_FLIP) moves the trusted grid half a beat, and it stays there until the
+  kicks return at 239 s (on 90.3; 210-240 s is 0-14%). See Tried and dropped (Off-beat flips) for three attempts.
+  Its steady g50 13.6 is not the tracker: the kicks timed from their own click land 13.7 ms before Traktor's beats
+  all track long (±2 ms on the other tracks), and the decoder offset is right (Info frame + 529 samples, a kind of
+  MP3 dj-tools checked to the sample; this file's header, written by ffmpeg, gives no encoder delay). Traktor's grid
+  on this file sits late; don't tune for it.
 - **Freestyler (Bomfunk MC's):** ~81% on; phase off under the off-beat bass in places.
 - **I Found You (GVN, Elliot Vast):** ~41% on; kickless sections with a 16th off-beat bass.
 - **Go Back (Sub Focus):** switches 136→174 at ~144 s and is scored against one 174 grid, so its on% means little.
@@ -52,6 +58,23 @@ Each entry: what was tried, on which problem, and what the numbers showed.
 - (Love fill) Adding 4/5 and 5/4 to the trusted 3/4-4/3 guard: the tempo held at 128 but the grid ended half a
   beat off for 150-180 s (Love 83.1), I Found You 36.6, Apex 84.4. The phase had already drifted, because stray
   fill hits were moving the period (fixed by TEMPO_KICK_SHARE, see the log). Worth retrying on top of that fix.
+
+**Off-beat flips (Savana 203-239 s)**
+- No flip at all for a trusted lock: Freestyler 80.2→90.6, Feels Like Us 87.4→92.0, Falling Up and Strobe 100,
+  Love 92.8; but DURO 91.1→83.9, Age of Love 92.7→88.8, messy 82.6→76.2 and Savana 90.3→70.5. On Savana the grid
+  then creeps instead: the window pull drags it ~10 ms towards the +57 ms hits, those enter the 45 ms kick gate and
+  ratchet it to the off-beat, and with no flip nothing brings it back. The flip is also how grids recover.
+- A trusted lock flips only towards where its kicks last landed on the grid (anchor updated while ≥ half the last
+  8 kicks are on the grid), with or without also gating the kicks' phase nudge on that share: same numbers as no
+  flip at all. The anchor follows the creeping grid.
+- Start the hold for a trusted lock when on-grid kicks stop for max(2 s, 4 beats), even with other hits going on,
+  and end it only on a kick within a quarter beat (or 25 ms) of the held grid. A first, buggy run (the hold
+  restarted on each kick, so the fitted grid was held almost all the time) gave Savana, Love and Feels Like Us 100,
+  Afterparty 98.5, messy 95.2, but Strobe 36.7, DURO 46.9, Age of Love 47.8. Fixed: Savana 91.8 (the +45 ms hits
+  resnap the hold at 211 s), DURO 68.5, Strobe 82.6, I Found You 35.1. With 25 ms: Savana 95.1, messy 90.8, Desire
+  100, but DURO 55.4, Strobe 61.9, Feels Like Us 56.2, Love 72.7. The trigger fires in ordinary sections too.
+  The buggy run suggests that holding a fitted grid and snapping only on kicks right on it helps a lot where the
+  kicks are clear; what breaks the others was not looked at.
 
 **Kick timing**
 - Timing kicks from the start of their rise instead of the 0.7 × peak crossing (for Strobe g90): unguarded it made
@@ -109,3 +132,11 @@ Everything tried on a day, kept or dropped, in order. Numbers are on / g50 / g90
     while ≥ half of the last 8 are on the grid). Love 89.2→90.8 (extra 87→70), I Found You 40.9→43.4 (g90
     37.2→32.4), others within 0.4 on; messy g90 10.4→11.9, Feels Like Us g90 13.1→13.6. Synthetic: oddIntro136
     unchanged, others under 1 ms. Strobe mic 99.6 / g90 12.1→12.3.
+
+**2026-11-16 (later)**
+- light years "blank row": not the harness. The scratchpad runall.sh ran each track in the background without
+  `< /dev/null`, so the job read the start of the next line of the track list. Fixed there; the track scores
+  93.1 / 1.8 / 22.4 / 99 at 4c253cf.
+- Savana: offset traced to Traktor's grid on that file (see Open problems); the 0% section is an off-beat flip in a
+  kickless off-beat-bass part. Dropped: no flip when trusted; anchor-directed flip; trusted hold on missing on-grid
+  kicks (see Off-beat flips).
