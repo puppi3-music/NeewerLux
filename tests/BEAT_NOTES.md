@@ -170,6 +170,10 @@ Each entry: what was tried, on which problem, and what the numbers showed.
   on-grid kick before the hold began: vs (j) only Freestyler changes (78.4→80.0); messy 83.7, Savana 91.6 back,
   Sub Focus 47.9 ((k)'s +1.1 gone), synthetic and Strobe mic (100) the same as (j). Best variant so far, still not
   kept: vs base Sub Focus -1.5, light years -1.6 (scratchpad c68_audio.py).
+  Sub Focus under (r) traced (2026-11-16): the whole -1.5 is 90-140 s, the 136 breakdown and ramp before the 174
+  drop, which is scored against Traktor's one 174 grid (see Open problems); from 150 s both are 100%. Scored instead
+  by the share of detected kicks on the tracker's own grid, 90-140 s is even: base 43 of 99, (r) 44 of 98. Not a
+  real loss, no fix; light years is the only gap left vs base.
   light years 60-80 s traced (2026-11-16): base fails it too, just inside the tolerance. The trusted hold from
   57.8 s ends on a kick at 64.49 s (grid -6 ms vs Traktor); the window then reads 138.8-138.9 with its comb ~40 ms
   early, and its fits pull the phase -40, -28, -20, -10 ms (each under the 45 ms gate) and blend the period up from
@@ -265,3 +269,5 @@ Everything tried on a day, kept or dropped, in order. Numbers are on / g50 / g90
 - Comb-gated hold, messy under (k): the comb locks onto real off-beat kicks at 36.5 s; (r) resnaps only to a kick a
   whole number of beats from the last on-grid kick before the hold: Freestyler 80.0 kept, messy/Savana back to (j),
   synthetic/Strobe mic the same. Best variant; not kept yet (Sub Focus, light years behind base).
+- Comb-gated hold, Sub Focus under (r): its -1.5 vs base is all in the 136→174 ramp (90-140 s) scored against one
+  174 grid; on detected kicks the two are even (43/99 vs 44/98). No fix; only light years still behind base.
