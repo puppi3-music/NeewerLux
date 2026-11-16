@@ -317,6 +317,7 @@ soundPresetsFile = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "lig
 # writes the whole list to soundPresetsFile, which is read from then on, so deleting
 # every preset leaves an empty file and the shipped ones don't come back.
 defaultSoundPresetsFile = soundPresetsFile + ".default"
+soundPalettesFile = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "sound_palettes.json"  # palettes saved from the Colours menu
 logFilePath = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "NeewerLux.log"
 
 # FILE LOCKING FOR SINGLE INSTANCE
@@ -3146,6 +3147,7 @@ try: # try to load the GUI
                 sp.valueChanged.connect(self._soundSettingsChanged)
             self.soundAllLightsCheck.toggled.connect(self._soundSettingsChanged)
             self.soundFlashLevelCombo.activated.connect(self._soundFlashLevelChosen)
+            self.soundPalette.setSavedFile(soundPalettesFile)
             self.soundPalette.changed.connect(self._soundSettingsChanged)
             self.soundRefreshButton.clicked.connect(self.soundRefreshDevices)
             self.soundMidiRefreshButton.clicked.connect(self._soundMidiRefreshClicked)
@@ -3174,7 +3176,21 @@ try: # try to load the GUI
             self.soundPresetDeleteButton.clicked.connect(self._soundPresetDelete)
             self.soundPresetCombo.activated.connect(self._soundPresetLoad)
             self._soundPresetsRefresh()
+            # Sound settings are saved a moment after each change, not only on a clean close,
+            # so a crash mid-show reopens with the settings that were playing.
+            self._sessionSaveTimer = QTimer(self)
+            self._sessionSaveTimer.setSingleShot(True)
+            self._sessionSaveTimer.setInterval(1000)
+            self._sessionSaveTimer.timeout.connect(self.saveWindowGeometry)
+            self.soundDeviceCombo.currentIndexChanged.connect(self._sessionSaveSoon)
+            self.soundBeatSourceCombo.currentIndexChanged.connect(self._sessionSaveSoon)
+            self.soundPresetCombo.currentIndexChanged.connect(self._sessionSaveSoon)
             self._soundSettingsChanged()
+
+        def _sessionSaveSoon(self, *args):
+            """Save the settings shortly, once restoring them at launch is done (saving earlier would write half-restored ones)."""
+            if getattr(self, "_sessionRestored", False):
+                self._sessionSaveTimer.start()
 
         def _soundFlashLevelChosen(self, _index):
             """Anything above Standard has to be confirmed, because of who it can harm."""
@@ -3217,7 +3233,8 @@ try: # try to load the GUI
                 "rollStyle": self.soundRollStyleCombo.currentText(),
                 "flashOn": self.soundFlashOnCombo.currentText(),
                 "palettePreset": self.soundPalette.presetName(),
-                "palette": self.soundPalette.palette() if self.soundPalette.presetName() == "Custom" else None,
+                # Colours too unless built in, so a preset using a saved palette survives that palette being deleted.
+                "palette": None if self.soundPalette.isBuiltIn() else self.soundPalette.palette(),
                 "allLights": self.soundAllLightsCheck.isChecked(),
                 "clockNeedsSound": self.soundClockNeedsSoundCheck.isChecked(),
                 "predictBeats": self.soundPredictBeatsCheck.isChecked(),
@@ -3424,6 +3441,7 @@ try: # try to load the GUI
             return sorted(self.selectedLights())
 
         def _soundSettingsChanged(self, *args):
+            self._sessionSaveSoon()
             mode = self.soundModeCombo.currentText()
             self.soundModeHelp.setText(getattr(self, "_soundModeHelp", {}).get(mode, ""))
             if soundEngine is None:
@@ -3653,21 +3671,29 @@ try: # try to load the GUI
                     "sound": dict(self._soundCollect(),
                                   device=self.soundDeviceCombo.currentText(),
                                   beatSource=self.soundBeatSourceCombo.currentData() or ""),
+                    # The preset showing in the Sound tab, loaded again on the next launch
+                    "soundPreset": self.soundPresetCombo.currentText() if self.soundPresetCombo.currentIndex() >= 0 else "",
                 }
                 # Save current tab index for recall on next launch
                 geo["lastTab"] = self.ColorModeTabWidget.currentIndex()
                 createLightPrefsFolder()
-                with open(geometryPrefsFile, "w", encoding="utf-8") as f:
+                # Write a temp file and swap it in, so a crash mid-write can't leave a broken file
+                tmpPath = geometryPrefsFile + ".tmp"
+                with open(tmpPath, "w", encoding="utf-8") as f:
                     json.dump(geo, f)
+                os.replace(tmpPath, geometryPrefsFile)
             except Exception:
                 pass
 
         def restoreWindowGeometry(self):
             """Restore window position, size, and splitter state from JSON file."""
+            lastPreset = ""
+            soundRestored = False
             try:
                 if os.path.exists(geometryPrefsFile):
                     with open(geometryPrefsFile, "r", encoding="utf-8") as f:
                         geo = json.load(f)
+                    lastPreset = geo.get("soundPreset", "")
                     x, y = geo["x"], geo["y"]
                     w, h = geo["width"], geo["height"]
 
@@ -3717,6 +3743,7 @@ try: # try to load the GUI
                         if pos >= 0:
                             self.soundDeviceCombo.setCurrentIndex(pos)
                         self._soundApply(snd)
+                        soundRestored = True
                         if "beatSource" in snd:
                             self._soundSavedBeatSource = snd["beatSource"] or ""
                             self.soundRefreshMidi()
@@ -3726,6 +3753,27 @@ try: # try to load the GUI
                         lightPrefsLocked = tabIdx == 5 and not self.ColorModeTabWidget.isTabEnabled(5) # needs a selected light, and Qt would show it disabled
                         if 0 <= tabIdx < self.ColorModeTabWidget.count() and not lightPrefsLocked:
                             self.ColorModeTabWidget.setCurrentIndex(tabIdx)
+            except Exception:
+                pass
+            self._soundPresetLoadStartup(lastPreset, apply=not soundRestored)
+            self._sessionRestored = True
+
+        def _soundPresetLoadStartup(self, lastName, apply):
+            """Show the sound preset used last time in the list. With no saved settings to restore
+            (first launch), load it, or the first preset if it's gone or none was used."""
+            try:
+                presets = self._soundPresetsRead()
+                if not presets:
+                    return
+                if not apply:
+                    # The restored settings may have been changed after this preset was loaded, so only show its name
+                    if lastName in presets:
+                        self._soundPresetsRefresh(select=lastName)
+                    return
+                name = lastName if lastName in presets else sorted(presets, key=str.lower)[0]
+                self._soundPresetsRefresh(select=name)
+                self._soundApply(presets[name])
+                self.soundPresetUpdateButton.setEnabled(True)
             except Exception:
                 pass
 
