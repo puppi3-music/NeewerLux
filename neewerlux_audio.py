@@ -132,7 +132,6 @@ TEMPO_COMB_SPAN = 0.06  # seconds of bass attack after each comb beat it sums: k
 TEMPO_COMB_REST = 2.0   # weight of the attacks above the bass in the phase comb (taken in their one hop: hats and claps are sharp); 2, not 1, so a bass on the off-beat 8ths (Freestyler) can't outvote the snare
 TEMPO_FLIP = 8          # net estimates that must put the beat half a beat away before the grid moves there
 TEMPO_COAST = 60.0      # seconds a tempo is held through a section with no clear beat, as a track keeps its tempo through a breakdown
-TEMPO_COAST_AGREE = 16  # estimates in a row (4 s) that must agree before a pulse heard in such a section replaces the held tempo
 TEMPO_RESNAP = 0.04     # seconds: two kicks this close to a whole number of beats apart end the hold and set where the beats fall
 TEMPO_KICK_GATE = 0.045  # seconds: only kicks this close to a grid beat steer the grid (16ths at 160 BPM are 94 ms apart)
 TEMPO_KICK_PHASE = 0.5  # share of a kick's error the grid moves by
@@ -143,6 +142,8 @@ TEMPO_KICK_OFFSET = 0.05  # how fast the usual offset of kicks from the grid is 
 TEMPO_ODD_RATIO = 0.005   # estimates this close to 3/4 or 4/3 of the period (now, or at the lock) are ignored, never relocked to
 TEMPO_TRIPLET_RATIO = 0.015  # estimates this close to 2/3 or 3/2 of the period: a riff of three notes over two beats (Freestyler) or two
 TEMPO_TRIPLET_KICKS = 4       # over three; ignored while at least this many kicks in the window fit the lock as well as they fit the estimate
+TEMPO_TRIPLET_HOLD = 0.85     # ... or while the locked tempo still repeats at least this share as strongly as the estimate
+TEMPO_TRIPLET_SHARE = 1.25    # a winning lag is taken as 1.5 beats (a riff of dotted quarters) when 4/3 of it repeats this much more than twice it
 TEMPO_EST_OFFSET = 0.1   # how fast, once clicks time the kicks, the window's beat's offset from them is learned
 TEMPO_EST_MAX = 0.035    # seconds: the most that offset may grow to (the bass's biggest rise comes 20-30 ms into a kick)
 TEMPO_KICK_LEARN = 8      # kicks after the first lock that only learn that offset (their mean) before any steering
@@ -693,11 +694,14 @@ class _TempoTracker:
         beatT -= self.estOffset
         near = lambda ratios, tol: any(abs(period / q - r) < tol * r for r in ratios for q in (self.period, self.basePeriod))
         if self.locked and (self.trusted and near((0.75, 4.0 / 3.0), TEMPO_ODD_RATIO)
-                            or near((2.0 / 3.0, 1.5), TEMPO_TRIPLET_RATIO) and (self.trusted or self._kicksKeep(period, beatT))):
+                            or near((2.0 / 3.0, 1.5), TEMPO_TRIPLET_RATIO)
+                            and (self.trusted or self._kicksKeep(period, beatT)
+                                 or self._repeats(self.period) >= TEMPO_TRIPLET_HOLD * self._repeats(period))):
             # A dotted-eighth bass (three notes to two beats) repeats at 3/4 of the beat, a riff of dotted quarters
             # (Freestyler) at 3/2 of it: not a new tempo. Only once the kicks have shown the lock is right: a first
             # lock on a weak intro can itself be the 4/3. Breakbeat kicks may never earn that trust, so for 3/2 it
-            # is enough that the window's kicks fit the lock as well as the estimate.
+            # is enough that the window's kicks fit the lock as well as the estimate, or that the locked tempo still
+            # repeats nearly as strongly (Freestyler at 82 s, where riff and beat are close to a tie).
             if self.flipped is not None and now - self.flipped[0] < TEMPO_WINDOW:
                 self.refPos += self.flipped[1]  # the same bass, before it ruled the window, put the beat on the off-beat
                 self.flipped = None
@@ -710,9 +714,11 @@ class _TempoTracker:
             return  # the window still holds the tempo the kicks just left
         if self.coast is not None and abs(period / self.period - 1.0) <= 0.04:
             return  # the attacks of a breakdown (hats, pads) say nothing about where the beats fall
-        if self.agree < (TEMPO_COAST_AGREE if self.coast is not None else 2):  # not yet confirmed: keep the current lock, if any, for now
+        if self.coast is not None or self.agree < 2:  # not yet confirmed: keep the current lock, if any, for now
+            # While holding, only kicks end the hold (or TEMPO_COAST running out): a pulse heard in a breakdown, a pad
+            # or a riff, is no beat to relock to (Afterparty's breakdown would relock at 5/4 of its tempo).
             if self.locked and abs(period / self.period - 1.0) > 0.04:
-                self._unsure()  # (not while holding: 8 doubts would clear the count before TEMPO_COAST_AGREE is reached)
+                self._unsure()
             return
         if not self.locked or abs(period / self.period - 1.0) > 0.04:  # lock on, or a new tempo
             self.locked, self.period, self.refT, self.refPos = True, period, beatT, 0.0
@@ -746,6 +752,16 @@ class _TempoTracker:
                 self.flip = 0
                 self.flipped = (now, err)
         self.doubt = 0
+
+    def _repeats(self, period):
+        """How strongly the last estimate's window repeats at this beat period: one, two and four beats on, weighed
+        as _estimate weighs them (without its preference for tempos near 120)."""
+        ac = self.ac
+        L = period * self.hopRate
+        def at(lag):
+            i = int(round(lag))
+            return ac[max(0, i - 1):i + 2].max() if i + 1 < len(ac) else 0.0
+        return at(L) + TEMPO_HARMONIC * at(2 * L) + TEMPO_BAR * at(4 * L)
 
     def _kicksKeep(self, period, beatT):
         """Whether the kicks of the window land on the locked grid at least as often as on the grid of
@@ -888,6 +904,7 @@ class _TempoTracker:
         if ac[0] <= 1e-12:
             return None
         ac /= ac[0]
+        self.ac = ac
         lo = max(2, int(self.hopRate * 60.0 / self.maxBpm))
         hi = min(n // 2 - 1, int(math.ceil(self.hopRate * 60.0 / self.minBpm)))
         if hi <= lo + 1:
@@ -905,6 +922,14 @@ class _TempoTracker:
         half = int(round(L / 2.0))
         if half >= lo and ac[half] >= TEMPO_FAST_SHARE * ac[L]:
             L = half + int(np.argmax(ac[half - 1:half + 2])) - 1
+        # A riff of dotted quarters (three notes over two beats, Freestyler) repeats every 1.5 beats and can win.
+        # The beat itself then repeats two beats on, at 4/3 of that lag, far more than the lag repeats twice
+        # over; in plain 4/4 the repeat two of its beats on is the stronger.
+        k = int(round(4.0 * L / 3.0))
+        if int(round(2.0 * L / 3.0)) >= lo and 2 * L + 1 < n:
+            two, fourThirds = ac[2 * L - 1:2 * L + 2].max(), ac[k - 1:k + 2].max()
+            if fourThirds >= TEMPO_MIN_CONF and fourThirds >= TEMPO_TRIPLET_SHARE * max(two, 0.0):
+                L = int(round((k - 1 + int(np.argmax(ac[k - 1:k + 2]))) / 2.0))  # from that two-beat peak: the one-beat one is the noisier
         # A beat that only repeats every two beats (footwork's 3-3-2 kicks) or every bar (2-step
         # garage) counts too, as when the tempo range leaves out that slower tempo.
         reps = [(ac[m * L - m // 2:m * L + m // 2 + 1].max(), m) for m in (1, 2, 4) if m * L + m < n]
