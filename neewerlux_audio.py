@@ -73,6 +73,7 @@ HIGH = (2000, 15000)
 FFT_SIZE = 2048
 QUIET_RATIO = 0.18  # level (fourth root of power) below this share of the music level counts as quiet, about -30 dB
 QUIET_HOLD = 1.5    # seconds of quiet before MIDI clock beats pause
+QUIET_TEMPO_HOLD = 4.0  # seconds of quiet the tempo found in the sound is kept through, as for a gap in a track; longer is a stop
 NOISE_MARGIN = 1.5  # music must be this far over the noise floor (fourth-root scale, about +7 dB) to count
 HOP = 512           # samples analysed per step, about 94 steps a second at 48 kHz
 ANALYSIS_RATE = 48000  # Hz: faster devices are brought down to about this, see _Decimator
@@ -136,6 +137,7 @@ TEMPO_RESNAP = 0.04     # seconds: two kicks this close to a whole number of bea
 TEMPO_KICK_GATE = 0.045  # seconds: only kicks this close to a grid beat steer the grid (16ths at 160 BPM are 94 ms apart)
 TEMPO_KICK_PHASE = 0.5  # share of a kick's error the grid moves by
 TEMPO_KICK_FREQ = 0.25   # ... and the share added to the beat period, so a new tempo is followed within a few beats
+TEMPO_KICK_SHARE = 0.5   # once trusted, share of the last 8 kicks that must be on the grid before kicks move the period (a fill's stray hits don't)
 TEMPO_KICK_SPAN = 0.035  # the most the kicks may move the period from the one locked on, under the 4% that locks again
 TEMPO_KICK_SOFT = 0.01   # seconds: errors smaller than this steer in proportion (jitter in when a kick is heard), larger ones fully
 TEMPO_KICK_OFFSET = 0.05  # how fast the usual offset of kicks from the grid is learned (a mic or the kick sound shifts it)
@@ -668,6 +670,7 @@ class _TempoTracker:
         self.onGrid = deque(maxlen=TEMPO_FIT_KICKS)  # times of recent kicks that steered the grid, to fit the period when a hold begins
         self.flipped = None    # (when, by how much) the grid last moved to the off-beat
         self.jumped = None     # when the kicks last locked onto a new tempo: until the window has heard it, its estimates of the old one are ignored
+        self.onShare = deque(maxlen=8)  # whether each of the last kicks landed within the gate of a grid beat
         self.hits = deque(maxlen=TEMPO_TRUST_KICKS)  # grid beats the last kicks on the grid landed on, since the lock
         self.trusted = False   # enough kicks have landed on the grid that the lock is the beat, not a weak intro's guess
 
@@ -861,6 +864,7 @@ class _TempoTracker:
             at = t - self.onsetDelay
             p = self.position(at)
             e = (p - round(p)) * self.period - self.kickOffset  # seconds the kick came after its grid beat, as usual
+            self.onShare.append(abs(e) <= TEMPO_KICK_GATE)
             if abs(e) <= TEMPO_KICK_GATE and (not self.hits or self.hits[-1] != round(p)):
                 self.hits.append(round(p))
                 if len(self.hits) == self.hits.maxlen and self.hits[-1] - self.hits[0] < TEMPO_TRUST_BEATS:
@@ -877,7 +881,8 @@ class _TempoTracker:
                 self.refPos, self.refT = p, at
                 self.refPos -= TEMPO_KICK_PHASE * weight * e / self.period
                 lo, hi = self.basePeriod * (1 - TEMPO_KICK_SPAN), self.basePeriod * (1 + TEMPO_KICK_SPAN)
-                new = self.period + TEMPO_KICK_FREQ * weight * e
+                steer = not self.trusted or sum(self.onShare) >= TEMPO_KICK_SHARE * len(self.onShare)
+                new = self.period + (TEMPO_KICK_FREQ * weight * e if steer else 0.0)
                 # Never past the span (so the 4% relock can't fire on our own correction), but don't pull back into it either.
                 self.period = min(max(new, min(lo, self.period)), max(hi, self.period))
         if self.coast is not None and self.locked and self.lastKick is not None:
@@ -1386,9 +1391,12 @@ class _Analyser:
         self.roll.update(now)
         self.tempo.checkCoast(now, self.kicks.lastBeat, self.roll.active)
 
-    def pause(self):
-        """No music: start the kick and tempo search afresh when it comes back."""
-        self.tempo.reset()
+    def pause(self, quietFor):
+        """No music: start the kick and tempo search afresh when it comes back. A short quiet (a gap
+        in the middle of a track) keeps a tempo the kicks have confirmed, held as through a breakdown until they
+        return; an unconfirmed lock (a sparse intro, as oddIntro136) is let go to be found afresh."""
+        if quietFor > QUIET_TEMPO_HOLD or not self.tempo.trusted:
+            self.tempo.reset()
         self.roll.reset()
         self.harmony.reset()
         self.kicks.reset()
@@ -1678,7 +1686,7 @@ class _LightShow:
         heard = self.gate.step(0.0 if silent else math.sqrt(math.sqrt(raw["power"])), now, dt)
         self.heard = a.heard = heard
         if not heard:
-            a.pause()
+            a.pause(now - self.gate.lastSound if self.gate.lastSound is not None else math.inf)
             self.rollPos = self.rollHit = None  # the pause has just cleared the beat these were worked out from
 
         stopped = self._updateGap(now, raw, heard, kick)
