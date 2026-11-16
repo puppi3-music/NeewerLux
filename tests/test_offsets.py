@@ -108,15 +108,34 @@ class TimelineTests(unittest.TestCase):
 
 
 @unittest.skipIf(app is None, "Puppi3sNeewerLux.py could not be imported")
+class FakeClock:
+    """Simulated time for the playback thread. sleep() moves the clock on at once, so the timings these tests
+    check don't depend on how busy the machine is (a loaded CI runner can oversleep by tens of ms), and the
+    tests run in no time. Stops the animation once `seconds` of simulated time have passed."""
+
+    def __init__(self, seconds):
+        self.now = 1000.0
+        self.end = self.now + seconds
+
+    def perf_counter(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+        if self.now >= self.end:
+            app.animationStopFlag = True
+
+
 class EngineTests(unittest.TestCase):
-    """The playback thread, with three fake lights and the worker replaced by a recorder."""
+    """The playback thread, with three fake lights, the worker replaced by a recorder, and simulated time."""
 
     def play(self, keyframes, seconds, **kwargs):
         sent = []  # (seconds since start, light index, command)
-        start = time.perf_counter()
+        clock = FakeClock(seconds)
+        start = clock.now
 
         def record(frame, loop):
-            t = time.perf_counter() - start
+            t = clock.now - start
             sent.extend((t, c["idx"], c) for c in frame)
             return True
 
@@ -124,11 +143,13 @@ class EngineTests(unittest.TestCase):
              mock.patch.object(app, "animationSendFrame", record), \
              mock.patch.object(app, "runOnGui", lambda f: None), \
              mock.patch.object(app, "showAnimationStopped", lambda: None), \
-             mock.patch.object(app, "animRevertOnFinish", False):
+             mock.patch.object(app, "animRevertOnFinish", False), \
+             mock.patch.object(app.time, "perf_counter", clock.perf_counter), \
+             mock.patch.object(app.time, "sleep", clock.sleep):
             thread = threading.Thread(target=app.animationEngineThread,
                                       args=({"name": "test", "keyframes": keyframes}, None), kwargs=kwargs)
             thread.start()
-            thread.join(seconds)
+            thread.join(10)  # real time: a safety net, simulated time ends the animation long before
             app.animationStopFlag = True
             thread.join(2)
         self.assertFalse(thread.is_alive())
