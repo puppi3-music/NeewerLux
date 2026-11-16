@@ -18,6 +18,7 @@ UDP stream.
 import asyncio
 import colorsys
 import json
+import math
 import os
 import socket
 import sys
@@ -34,6 +35,9 @@ STREAM_PORT = 60222  # extControl v2 always streams to this port
 STREAM_AFTER = 0.5  # a colour this soon after the last one starts the stream, seconds
 STREAM_IDLE = 5.0  # with no colour for this long the stream ends and the last colour is PUT, seconds
 STREAM_RETRY = 30.0  # after the device refused to stream, PUT for this long before asking again, seconds
+# Streamed frames change the panels at once (no fade). A Shapes set showed clean red/blue swaps at 30 a second
+# this way, so a streaming device keeps up with the sound engine's fastest rate.
+STREAM_INTERVAL = 1 / 30  # seconds per frame a streaming device can show, for the sound engine
 
 CCT_MIN = 1200  # the Open API's colour temperature range
 CCT_MAX = 6500
@@ -42,6 +46,11 @@ CCT_MAX = 6500
 # 1 Rhythm module, 12 Shapes controller, 16 Lines connector, 19 controller cap,
 # 20 power connector. Confirm against the real Shapes set.
 NON_LIGHT_SHAPE_TYPES = {1, 12, 16, 19, 20}
+
+# Side length of each shape type, from the Open API docs' shape type table (the layout's own sideLength
+# is deprecated: Elements report 0). Used to tell which panels stand in the same column.
+SHAPE_SIDE = {0: 150, 2: 100, 3: 100, 4: 100, 7: 67, 8: 134, 9: 67, 14: 134, 17: 154, 18: 77,
+              29: 50, 30: 180, 31: 180, 32: 180}
 
 # SSDP service types the controllers answer to. Discovery also accepts any reply that
 # carries an nl-deviceid header, so an unlisted model still shows up.
@@ -483,12 +492,37 @@ def findMovedDevice(entry, hosts=None, port=None, timeout=0.6):
 # Controller: one per physical device
 # ---------------------------------------------------------------------------
 
-def orderPanels(layout):
-    """Light panel ids from a /panelLayout/layout body, left to right (then top to bottom)."""
+def orderPanels(layout, orientation=0):
+    """Light panel ids from a /panelLayout/layout body, in reading order on the wall: column by column from
+    left to right, top to bottom within a column.
+
+    orientation is the canvas rotation set in the Nanoleaf app (/panelLayout/globalOrientation). The layout's
+    x/y never include it, so it is applied here, clockwise (the convention LumenDesk checked against Nanoleaf's
+    SDK). Panels whose rotated x lies within a quarter of the smallest panel side of the previous one share a
+    column, so a row of up and down triangles, or a jagged hexagon column, does not order by stray units of x."""
     panels = [p for p in layout.get("positionData", [])
               if p.get("shapeType") not in NON_LIGHT_SHAPE_TYPES and p.get("panelId", 0) != 0]
-    panels.sort(key=lambda p: (p.get("x", 0), -p.get("y", 0), p["panelId"]))
-    return [p["panelId"] for p in panels]
+    if not panels:
+        return []
+    angle = math.radians(float(orientation or 0) % 360)
+    c, s = math.cos(angle), math.sin(angle)
+    points = []
+    for p in panels:
+        x, y = float(p.get("x", 0)), float(p.get("y", 0))
+        points.append((x * c + y * s, -x * s + y * c, p["panelId"]))
+    sides = [SHAPE_SIDE.get(p.get("shapeType"), 0) for p in panels]
+    sides = [v for v in sides if v > 0] or [layout.get("sideLength") or 100]
+    tolerance = min(sides) * 0.25
+    points.sort()
+    ordered, column, lastX = [], [], None
+    for x, y, pid in points:
+        if lastX is not None and x - lastX > tolerance:
+            ordered += sorted(column, key=lambda q: (-q[0], q[1]))
+            column = []
+        column.append((y, pid))
+        lastX = x
+    ordered += sorted(column, key=lambda q: (-q[0], q[1]))
+    return [pid for _, pid in ordered]
 
 
 class NanoleafController:
@@ -508,7 +542,7 @@ class NanoleafController:
         self.relocateInterval = 60.0  # seconds between searches, so connect retries do not rescan every time
         self._lastRelocate = None
         self._relocating = None  # future while a search runs, shared by rows connecting at once
-        self.transition = 1  # stream transition time, in 100 ms steps
+        self.transition = 0  # stream transition time, in 100 ms steps; 0 changes the panels at once
         self.streamPort = STREAM_PORT  # tests point this at the fake
         self.streamAfter = STREAM_AFTER  # tests change these
         self.streamIdle = STREAM_IDLE
@@ -568,12 +602,14 @@ class NanoleafController:
         return await asyncio.to_thread(_request, method, self._url(path), body)
 
     async def loadLayout(self):
-        status, layout = await self.http("GET", "/panelLayout/layout")
+        status, body = await self.http("GET", "/panelLayout")
         if status == 401 or status == 403:
             raise NanoleafError("The Nanoleaf rejected the saved token; pair it again.")
-        if status != 200 or not isinstance(layout, dict):
+        if status != 200 or not isinstance(body, dict) or not isinstance(body.get("layout"), dict):
             raise NanoleafError("Could not read the panel layout (HTTP %s)" % status)
-        panels = orderPanels(layout)
+        orientation = body.get("globalOrientation", {})
+        orientation = orientation.get("value", 0) if isinstance(orientation, dict) else 0
+        panels = orderPanels(body["layout"], orientation)
         changed = panels != self.panels
         self.panels = panels
         self._layoutLoaded = True
@@ -655,7 +691,7 @@ class NanoleafController:
     def updateInterval(self):
         """Seconds between colour updates this device can show, for the sound engine."""
         if self.streaming:
-            return max(1, self.transition) * 0.1
+            return max(STREAM_INTERVAL, self.transition * 0.1)
         return self.putTime
 
     async def putState(self, body):
@@ -761,6 +797,13 @@ class NanoleafController:
         with self._stateLock:
             self.wholeStreaming = True
             self._saved = None  # it ends on the last colour, not on what ran before
+            # Writes that came while the stream started wait in _pendingState. Sending them now would put the device
+            # back on a solid colour and out of stream mode; the stream carries the newest colour from _wholeBody, and
+            # a power change ends the stream as it would have had it come a moment later (see putState).
+            pending, self._pendingState = self._pendingState, None
+            if pending and "on" in pending:
+                self._wholeBody["on"] = pending["on"]
+                self._finishWhole = True
             body = self._wholeBody
             if "ct" in body:
                 rgb = cctToRGB(body["ct"]["value"], body.get("brightness", {}).get("value", 100))

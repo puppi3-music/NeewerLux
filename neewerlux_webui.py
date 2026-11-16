@@ -135,6 +135,10 @@ a:hover { text-decoration: underline; }
 .light-table tr:hover td { background: rgba(145, 0, 255, 0.08); }
 .light-table .linked { color: var(--green); font-weight: 600; }
 .light-table .not-linked { color: var(--muted); }
+.light-table .group-row { cursor: pointer; font-weight: 600; }
+.light-table .group-row td { background: rgba(145, 0, 255, 0.05); }
+.light-table .group-arrow { display: inline-block; width: 1em; text-align: center; }
+.light-table .tree-branch { color: var(--muted); font-family: monospace; white-space: pre; }
 .light-table .light-id {
     color: var(--accent);
     font-weight: 700;
@@ -741,14 +745,22 @@ function renderLightsJSON(data) {
         return;
     }
 
-    let html2 = '', linkedCount = 0;
+    // Panels of one device (a Nanoleaf shown one row per panel) go under a row for the device, which
+    // collapses like a folder. Which devices are collapsed is remembered in this browser only.
+    let collapsed = {};
+    try { collapsed = JSON.parse(localStorage.getItem('nlCollapsedGroups') || '{}') || {}; } catch(e) {}
+    const order = [], groups = {};
     lights.forEach(l => {
-        if (l.linked) linkedCount++;
+        if (!l.group) { order.push(l); return; }
+        if (!groups[l.group]) { groups[l.group] = {mac: l.group, name: l.groupName || l.group, panels: []}; order.push(groups[l.group]); }
+        groups[l.group].panels.push(l);
+    });
+
+    const lightRow = (l, branch, group) => {
         const displayName = l.name || l.model || l.mac;
-        select.innerHTML += `<option value="${l.id}">${l.id} - ${displayName}</option>`;
-        html2 += `<tr>
+        return `<tr${group ? ' class="panel-row" data-group="' + group.mac + '"' + (collapsed[group.mac] ? ' hidden' : '') : ''}>
             <td class="light-id">${l.id}</td>
-            <td>${displayName}${l.model && l.name !== l.model ? ' <span style="color:var(--muted);font-size:11px">(' + l.model + ')</span>' : ''}</td>
+            <td>${branch ? '<span class="tree-branch">' + branch + '</span>' : ''}${displayName}${l.model && l.name !== l.model ? ' <span style="color:var(--muted);font-size:11px">(' + l.model + ')</span>' : ''}</td>
             <td style="font-family:monospace;font-size:11px">${l.mac}</td>
             <td class="${l.linked ? 'linked' : 'not-linked'}">${l.linked ? '● LINKED' : '○ Not linked'}</td>
             <td style="font-size:11px">${l.status}</td>
@@ -757,11 +769,53 @@ function renderLightsJSON(data) {
                 : '<button class="btn success" style="padding:3px 8px;font-size:11px" onclick="apiCall(\''+BASE+'link='+l.id+'&nopage\',\'Link: light '+l.id+'\');setTimeout(refreshAll,3000)">Link</button>'
             }</td>
         </tr>`;
+    };
+
+    let html2 = '', linkedCount = 0;
+    order.forEach(item => {
+        if (!item.panels) {
+            if (item.linked) linkedCount++;
+            select.innerHTML += `<option value="${item.id}">${item.id} - ${item.name || item.model || item.mac}</option>`;
+            html2 += lightRow(item, '', null);
+            return;
+        }
+        const linked = item.panels.filter(p => p.linked).length;
+        linkedCount += linked;
+        const isCollapsed = !!collapsed[item.mac];
+        html2 += `<tr class="group-row" onclick="toggleLightGroup('${item.mac}')" title="Click to ${isCollapsed ? 'show' : 'hide'} its panels">
+            <td class="light-id"><span class="group-arrow">${isCollapsed ? '&#9656;' : '&#9662;'}</span></td>
+            <td>${item.name} <span style="color:var(--muted);font-size:11px">&middot; ${item.panels.length} panels</span></td>
+            <td style="font-family:monospace;font-size:11px">${item.mac}</td>
+            <td class="${linked ? 'linked' : 'not-linked'}">${linked === item.panels.length ? '● LINKED' : linked ? '◐ ' + linked + ' of ' + item.panels.length + ' linked' : '○ Not linked'}</td>
+            <td></td><td></td>
+        </tr>`;
+        let options = '';
+        item.panels.forEach((p, n) => {
+            html2 += lightRow(p, n === item.panels.length - 1 ? '└─ ' : '├─ ', item);
+            options += `<option value="${p.id}">${p.id} - ${p.name || p.model || p.mac}</option>`;
+        });
+        select.innerHTML += `<optgroup label="${item.name}">${options}</optgroup>`;
     });
     document.getElementById('lightTableBody').innerHTML = html2;
     document.getElementById('connStatus').textContent = linkedCount + '/' + lights.length + ' linked';
     if (linkedCount > 0) document.getElementById('connStatus').classList.add('connected');
     if (!window._lightsLoadedOnce) { logMsg('Loaded ' + lights.length + ' light(s)', 'ok'); window._lightsLoadedOnce = true; }
+}
+
+function toggleLightGroup(mac) {
+    let collapsed = {};
+    try { collapsed = JSON.parse(localStorage.getItem('nlCollapsedGroups') || '{}') || {}; } catch(e) {}
+    if (collapsed[mac]) delete collapsed[mac]; else collapsed[mac] = true;
+    try { localStorage.setItem('nlCollapsedGroups', JSON.stringify(collapsed)); } catch(e) {}
+    document.querySelectorAll('#lightTableBody tr.panel-row').forEach(tr => {
+        if (tr.dataset.group === mac) tr.hidden = !!collapsed[mac];
+    });
+    document.querySelectorAll('#lightTableBody tr.group-row').forEach(tr => {
+        if (tr.getAttribute('onclick') === "toggleLightGroup('" + mac + "')") {
+            tr.querySelector('.group-arrow').innerHTML = collapsed[mac] ? '&#9656;' : '&#9662;';
+            tr.title = 'Click to ' + (collapsed[mac] ? 'show' : 'hide') + ' its panels';
+        }
+    });
 }
 
 function renderPresetsJSON(data) {

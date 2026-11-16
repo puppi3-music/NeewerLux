@@ -1,7 +1,7 @@
 """A fake Nanoleaf panel controller for tests and for trying the app without hardware.
 
 Implements the parts of the Open API that neewerlux_nanoleaf uses: pairing, /state,
-/panelLayout/layout, /effects, and a UDP listener that decodes extControl v2 frames.
+/panelLayout, /effects, and a UDP listener that decodes extControl v2 frames.
 Standard library only. Run from the repo root:
 
     uv run python tests/fake_nanoleaf.py                       # HTTP 16021, UDP 60222 on 127.0.0.1
@@ -50,6 +50,7 @@ class FakeNanoleaf:
         self.verbose = verbose
         self.supportsV2 = supportsV2
         self.layout = json.loads(json.dumps(DEFAULT_LAYOUT))
+        self.orientation = 0  # globalOrientation, the canvas rotation set in the Nanoleaf app
         self.state = {
             "on": {"value": True},
             "brightness": {"value": 60, "max": 100, "min": 0},
@@ -142,6 +143,8 @@ class FakeNanoleaf:
             except Exception:
                 frame = [("bad frame", data.hex(), 0)]
             with self.lock:
+                if self.effect != "*ExtControl*":  # like the real thing, it ignores frames outside stream mode
+                    continue
                 self.frames.append(frame)
                 self.frameEvent.notify_all()
             if self.verbose:
@@ -177,7 +180,7 @@ class FakeNanoleaf:
                 return 200, {"name": "Fake Shapes", "serialNo": "S12345", "model": "NL42",
                              "firmwareVersion": "9.9.9", "state": self.state,
                              "effects": {"select": self.effect},
-                             "panelLayout": {"layout": self.layout}}
+                             "panelLayout": self._panelLayout()}
             if method == "GET" and sub == "/state":
                 return 200, self.state
             if method == "GET" and sub.startswith("/state/"):
@@ -196,6 +199,8 @@ class FakeNanoleaf:
                     self.state["colorMode"] = "ct"
                     self.effect = "*Solid*"
                 return 204, None
+            if method == "GET" and sub == "/panelLayout":
+                return 200, self._panelLayout()
             if method == "GET" and sub == "/panelLayout/layout":
                 return 200, self.layout
             if method == "GET" and sub == "/effects/select":
@@ -218,6 +223,9 @@ class FakeNanoleaf:
                                  "streamControlProtocol": "udp"}
                 return 400, None
         return 404, None
+
+    def _panelLayout(self):
+        return {"globalOrientation": {"value": self.orientation, "max": 360, "min": 0}, "layout": self.layout}
 
     def lastStatePut(self):
         with self.lock:

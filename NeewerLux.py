@@ -255,6 +255,8 @@ lightAliases = {}  # {MAC: {"id": int, "name": str}}, built from per-light prefs
 workerWakeEvent = threading.Event()  # signaled by animation thread to wake the worker immediately
 soundLatestLights = set()  # lights holding a sound colour the worker hasn't written yet
 soundLatestLock = threading.Lock()
+nanoleafPerPanelRequests = []  # (Nanoleaf device id, perPanel) for the worker to apply, see setNanoleafPerPanel
+nanoleafPerPanelLock = threading.Lock()
 animParallelWrites = True  # send BLE commands to all lights simultaneously during animations
 animRevertOnFinish = True  # revert lights to pre-animation state when a non-looping animation finishes
 preAnimationStates = {}    # {light_index: byte_list} saved before animation starts
@@ -471,6 +473,16 @@ try: # try to load the GUI
             # Inject version into Info tab
             self.infoText.setHtml(self.infoText.toHtml().replace("{VERSION}", NEEWERLUX_VERSION))
             self.connectMe() # connect the function handlers to the widgets
+
+            # The light table can hold group rows (a Nanoleaf shown one row per panel), so table rows and
+            # availableLights indexes differ: _tableRows[row] is ("light", index) or ("group", controller,
+            # [indexes]), and _lightRow maps an index back to its row. See updateLights.
+            self._tableRows = []
+            self._lightRow = {}
+            self._groupRowOf = {}  # panel index -> its device's group row
+            self._collapsedGroups = set()  # controller addresses whose panels are hidden
+            self.lightTable.cellDoubleClicked.connect(self._toggleGroupAt)
+            self.lightTable.verticalHeader().sectionClicked.connect(self._toggleGroupAt)
 
             # Connect the thread-safe table update signal
             self._tableUpdateSignal.connect(self.setTheTable)
@@ -1715,6 +1727,7 @@ try: # try to load the GUI
             self.customName.clicked.connect(self.checkLightPrefsEnables)
             self.colorTempRange.clicked.connect(self.checkLightPrefsEnables)
             self.saveLightPrefsButton.clicked.connect(self.checkLightPrefs)
+            self.nanoleafPerPanelCheck.clicked.connect(self.toggleNanoleafPerPanel)
 
             self.resetGlobalPrefsButton.clicked.connect(lambda: self.setupGlobalLightPrefsTab(True))
             self.saveGlobalPrefsButton.clicked.connect(self.saveGlobalPrefs)
@@ -2161,7 +2174,31 @@ try: # try to load the GUI
             else:
                 self.onlyCCTModeCheck.setChecked(False)
 
+            # A NANOLEAF IS NEVER CCT-ONLY, BUT CAN SHOW EACH PANEL AS ITS OWN LIGHT
+            device = availableLights[selectedLight][0]
+            isNanoleaf = nanoleaf is not None and isinstance(device, nanoleaf.NanoleafDevice)
+            self.onlyCCTModeCheck.setVisible(not isNanoleaf)
+            self.nanoleafPerPanelCheck.setVisible(isNanoleaf)
+            if isNanoleaf:
+                self.nanoleafPerPanelCheck.setChecked(device.controller.perPanel)
+
             self.checkLightPrefsEnables() # set up which fields on the panel are enabled
+
+        def toggleNanoleafPerPanel(self, checked):
+            selectedRows = self.selectedLights()
+            if len(selectedRows) != 1 or nanoleaf is None:
+                return
+            device = availableLights[selectedRows[0]][0]
+            if not isinstance(device, nanoleaf.NanoleafDevice) or bool(checked) == device.controller.perPanel:
+                return
+            # the rows are about to change under any animation or sound session, so stop them first
+            if soundEngine is not None and soundEngine.running:
+                self.soundStop()
+            if animationRunning:
+                stopAnimation()
+                showAnimationStopped()
+            requestNanoleafPerPanel(device.controller.id, checked) # the worker swaps the rows
+            self.statusBar.showMessage("Changing how " + device.controller.name + " is listed...")
 
         def checkLightPrefsEnables(self): # enable/disable fields when clicking on checkboxes
             # allow/deny typing in the "custom name" field if the option is clicked
@@ -2210,7 +2247,7 @@ try: # try to load the GUI
                         changedPrefs += 1 # add one to the preferences changed counter
 
                 # IF A CUSTOM NAME IS SET UP FOR THIS LIGHT, THEN CHANGE THE TABLE TO REFLECT THAT
-                self.setTheTable([_light_table_label(availableLights[selectedRows[0]]), "", "", ""], selectedRows[0])
+                self.setTheTable([self._lightLabel(selectedRows[0]), "", "", ""], selectedRows[0])
 
                 if self.colorTempRange.isChecked(): # if we've asked to save a custom temperature range for this light
                     if availableLights[selectedRows[0]][4] != newRange: # change the range in the available lights table if they are different
@@ -2755,7 +2792,8 @@ try: # try to load the GUI
 
         # ADD A LIGHT TO THE TABLE VIEW
         def setTheTable(self, infoArray, rowToChange = -1):
-            """Update the light table. Must be called from the main/GUI thread."""
+            """Update the light table. Must be called from the main/GUI thread.
+            rowToChange is an availableLights index (its row is looked up); -1 appends a new row."""
             if rowToChange == -1:
                 currentRow = self.lightTable.rowCount()
                 self.lightTable.insertRow(currentRow) # if rowToChange is not specified, then we'll make a new row at the end
@@ -2764,30 +2802,99 @@ try: # try to load the GUI
                 self.lightTable.setItem(currentRow, 2, QTableWidgetItem())
                 self.lightTable.setItem(currentRow, 3, QTableWidgetItem())
             else:
-                currentRow = rowToChange # change data for the specified row
+                currentRow = self._lightRow.get(rowToChange) # the row showing that light
+                if currentRow is None or currentRow >= self.lightTable.rowCount():
+                    return # the table is being rebuilt; updateLights will show the latest state
+
+            def current(column):
+                return self.lightTable.item(currentRow, column).text() if rowToChange != -1 else ""
 
             # THIS SECTION BELOW LIMITS UPDATING THE TABLE **ONLY** IF THE DATA SUPPLIED IS DIFFERENT THAN IT WAS ORIGINALLY
             if infoArray[0] != "": # the name of the light
-                if rowToChange == -1 or (rowToChange != -1 and infoArray[0] != self.returnTableInfo(rowToChange, 0)):
+                if rowToChange == -1 or infoArray[0] != current(0):
                     self.lightTable.item(currentRow, 0).setText(infoArray[0])
             if infoArray[1] != "": # the MAC address of the light
-                if rowToChange == -1 or (rowToChange != -1 and infoArray[1] != self.returnTableInfo(rowToChange, 1)):
+                if rowToChange == -1 or infoArray[1] != current(1):
                     self.lightTable.item(currentRow, 1).setText(infoArray[1])
             if infoArray[2] != "": # the Linked status of the light
-                currentLinked = self.returnTableInfo(rowToChange, 2) if rowToChange != -1 else ""
+                currentLinked = current(2)
                 # a plain "LINKED" doesn't overwrite a "LINKED\nON / ch. 1" that already says more
                 keepDetail = infoArray[2] == "LINKED" and currentLinked.startswith("LINKED")
                 if rowToChange == -1 or (infoArray[2] != currentLinked and not keepDetail):
                     self.lightTable.item(currentRow, 2).setText(infoArray[2])
                     self.lightTable.item(currentRow, 2).setTextAlignment(Qt.AlignCenter) # align the light status info to be center-justified
             if infoArray[3] != "": # the current status message of the light
-                if rowToChange == -1 or (rowToChange != -1 and infoArray[3] != self.returnTableInfo(rowToChange, 3)):
+                if rowToChange == -1 or infoArray[3] != current(3):
                     self.lightTable.item(currentRow, 3).setText(infoArray[3])
+
+            if rowToChange != -1 and rowToChange in self._groupRowOf: # a panel: its device's row counts linked panels
+                self._refreshGroupRow(self._groupRowOf[rowToChange])
 
             self.lightTable.resizeRowsToContents()
 
-        def returnTableInfo(self, row, column):
-            return self.lightTable.item(row, column).text()
+        def returnTableInfo(self, lightIndex, column):
+            """The text in one column of a light's row (lightIndex is an availableLights index)."""
+            row = self._lightRow.get(lightIndex)
+            item = self.lightTable.item(row, column) if row is not None else None
+            return item.text() if item is not None else ""
+
+        def _lightLabel(self, lightIndex):
+            """The Name column for a light, drawn as a branch under its device when it is a panel."""
+            label = _light_table_label(availableLights[lightIndex])
+            if lightIndex in self._groupRowOf:
+                members = self._tableRows[self._groupRowOf[lightIndex]][2]
+                label = _tree_label(label, lightIndex == members[-1])
+            return label
+
+        def _refreshGroupRow(self, row):
+            """Redraw a device's group row: arrow, name, panel count and how many panels are linked."""
+            _kind, controller, members = self._tableRows[row]
+            collapsed = controller.address in self._collapsedGroups
+            linked = sum(1 for a in members if availableLights[a][1] != "" and availableLights[a][1].is_connected)
+            if linked == len(members):
+                linkedText = "LINKED"
+            elif linked == 0:
+                linkedText = "NOT\nLINKED"
+            else:
+                linkedText = str(linked) + " of " + str(len(members)) + "\nLINKED"
+            texts = [("▸ " if collapsed else "▾ ") + controller.name + "\n  [LAN] · " + str(len(members)) + " panels",
+                     controller.address, linkedText,
+                     "Double-click to " + ("show" if collapsed else "hide") + " its panels"]
+            for column, text in enumerate(texts):
+                item = self.lightTable.item(row, column)
+                if item.text() != text:
+                    item.setText(text)
+            self.lightTable.item(row, 2).setTextAlignment(Qt.AlignCenter)
+            header = self.lightTable.verticalHeaderItem(row)
+            if header is not None:
+                header.setText("▸" if collapsed else "▾")
+
+        def _toggleGroupAt(self, row, column = 0):
+            """Collapse or expand the device on this row (double-click, or a click on its row number)."""
+            if row < 0 or row >= len(self._tableRows) or self._tableRows[row][0] != "group":
+                return
+            _kind, controller, members = self._tableRows[row]
+            collapse = controller.address not in self._collapsedGroups
+            if collapse:
+                self._collapsedGroups.add(controller.address)
+            else:
+                self._collapsedGroups.discard(controller.address)
+
+            # A selected panel that is about to be hidden passes its selection to the device's row, so the
+            # same lights stay selected (selectedLights counts a selected device row as all its panels)
+            selectedRows = {i.row() for i in self.lightTable.selectionModel().selectedRows()}
+            memberRows = [self._lightRow[a] for a in members]
+            self.lightTable.blockSignals(True)
+            if collapse and any(r in selectedRows for r in memberRows):
+                for r in memberRows:
+                    self.lightTable.selectionModel().select(self.lightTable.model().index(r, 0),
+                                                            QItemSelectionModel.Deselect | QItemSelectionModel.Rows)
+                self.lightTable.selectionModel().select(self.lightTable.model().index(row, 0),
+                                                        QItemSelectionModel.Select | QItemSelectionModel.Rows)
+            for r in memberRows:
+                self.lightTable.setRowHidden(r, collapse)
+            self.lightTable.blockSignals(False)
+            self._refreshGroupRow(row)
 
         def _appendLog(self, msg):
             """Append a timestamped message to the Log tab (main thread only)."""
@@ -2868,9 +2975,16 @@ try: # try to load the GUI
                 self.lightTable.setRowCount(0)
 
         def selectRows(self, rowsToSelect):
+            """Select lights by availableLights index; a panel of a collapsed device selects the device's row."""
             self.lightTable.clearSelection()
-            indexes = [self.lightTable.model().index(r, 0) for r in rowsToSelect]
-            [self.lightTable.selectionModel().select(i, QItemSelectionModel.Select | QItemSelectionModel.Rows) for i in indexes]
+            for a in rowsToSelect:
+                row = self._lightRow.get(a)
+                if row is None:
+                    continue
+                if self.lightTable.isRowHidden(row) and a in self._groupRowOf:
+                    row = self._groupRowOf[a]
+                self.lightTable.selectionModel().select(self.lightTable.model().index(row, 0),
+                                                        QItemSelectionModel.Select | QItemSelectionModel.Rows)
             
         # TELL THE BACKGROUND THREAD TO START LOOKING FOR LIGHTS
         def startSelfSearch(self):
@@ -3124,10 +3238,17 @@ try: # try to load the GUI
             if threadAction != "quit":
                 currentSelection = self.lightTable.selectionModel().selectedRows()
 
-                for a in range(len(currentSelection)):
-                    selectionList.append(currentSelection[a].row()) # add the row index of the nth selected light to the selectionList array
+                for index in currentSelection:
+                    row = index.row()
+                    if row >= len(self._tableRows):
+                        continue
+                    entry = self._tableRows[row]
+                    # a selected device row stands for all of its panels
+                    for a in (entry[2] if entry[0] == "group" else [entry[1]]):
+                        if a not in selectionList:
+                            selectionList.append(a)
 
-            return selectionList # return the row IDs that are currently selected, or an empty array ([]) otherwise
+            return selectionList # the availableLights indexes of the selected lights, or an empty array ([]) otherwise
 
         def _onLightsChanged(self):
             # The worker already reordered availableLights, so rows stay stable while it links
@@ -3160,22 +3281,46 @@ try: # try to load the GUI
                 else: # if we didn't find any (additional) lights on the last scan
                     self.statusBar.showMessage("We didn't locate any lights on the last search")
 
-            for a in range(len(availableLights)):
-                _label = _light_table_label(availableLights[a])
+            # A Nanoleaf shown one row per panel gets a row of its own with its panels listed under it,
+            # like folders in a directory tree; double-clicking it collapses or expands them
+            self._tableRows, self._lightRow, self._groupRowOf = [], {}, {}
+            headerLabels = [] # the vertical header shows effective IDs (preferred ID if set, else list position)
+            groupBold = QFont(self.lightTable.font())
+            groupBold.setBold(True)
+
+            def addLight(a):
+                self._lightRow[a] = len(self._tableRows)
+                self._tableRows.append(("light", a))
+                _label = self._lightLabel(a)
                 if availableLights[a][1] != "" and availableLights[a][1].is_connected: # we have a connection to the light
                     self.setTheTable([_label, availableLights[a][0].address, "LINKED", "Waiting to send..."])
                 else: # no connection object yet, or we're still trying to connect
                     self.setTheTable([_label, availableLights[a][0].address, "Waiting", "Waiting to connect..."])
-
-            # Update vertical header labels to show effective IDs (preferred ID if set, else row number)
-            headerLabels = []
-            for a in range(len(availableLights)):
                 prefID = availableLights[a][8] if len(availableLights[a]) > 8 else 0
-                if prefID > 0:
-                    headerLabels.append(str(prefID))
-                else:
-                    headerLabels.append(str(a + 1))
+                headerLabels.append(str(prefID) if prefID > 0 else str(a + 1))
+
+            for entry in _light_groups():
+                if entry[0] == "light":
+                    addLight(entry[1])
+                    continue
+                groupRow = len(self._tableRows)
+                self._tableRows.append(entry)
+                self.setTheTable(["", "", "", ""]) # filled in by _refreshGroupRow
+                for column in range(4):
+                    self.lightTable.item(groupRow, column).setFont(groupBold)
+                headerLabels.append("")
+                for a in entry[2]:
+                    self._groupRowOf[a] = groupRow
+                for a in entry[2]:
+                    addLight(a)
+
             self.lightTable.setVerticalHeaderLabels(headerLabels)
+            for row, entry in enumerate(self._tableRows):
+                if entry[0] == "group":
+                    self._refreshGroupRow(row)
+                    for a in entry[2]:
+                        self.lightTable.setRowHidden(self._lightRow[a], entry[1].address in self._collapsedGroups)
+            self.lightTable.resizeRowsToContents()
 
         # === THEME TOGGLE ===
         def toggleTheme(self):
@@ -4087,7 +4232,8 @@ try: # try to load the GUI
 
                     for a in range(len(lightsToHighlight)):
                         for b in range(4):
-                            self.lightTable.item(lightsToHighlight[a], b).setBackground(QColor(76, 175, 80, 80))
+                            if lightsToHighlight[a] in self._lightRow:
+                                self.lightTable.item(self._lightRow[lightsToHighlight[a]], b).setBackground(QColor(76, 175, 80, 80))
             else: # if we're exiting a snapshot preset, then reset the color of the affected lights
                 lightsToHighlight = self.checkForSnapshotPreset(numOfPreset)
                 
@@ -4098,7 +4244,8 @@ try: # try to load the GUI
 
                     for a in range(len(lightsToHighlight)):
                         for b in range(4):
-                            self.lightTable.item(lightsToHighlight[a], b).setData(Qt.BackgroundRole, None)
+                            if lightsToHighlight[a] in self._lightRow:
+                                self.lightTable.item(self._lightRow[lightsToHighlight[a]], b).setData(Qt.BackgroundRole, None)
 
         def checkForSnapshotPreset(self, numOfPreset):
             if customLightPresets[numOfPreset][0][0] != -1: # if the value is not -1, then we most likely have a snapshot preset
@@ -4661,6 +4808,32 @@ def _light_table_label(light_entry):
         return name + "\n  [LAN]"
     return name + "\n  [ʀssɪ: " + _get_light_rssi(light_entry) + " dBm]"
 
+def _light_group(light_entry):
+    """The NanoleafController a per-panel row belongs to, or None for a light that stands alone."""
+    if isNanoleafLight(light_entry) and light_entry[0].panelId is not None:
+        return light_entry[0].controller
+    return None
+
+def _light_groups():
+    """The table's layout, in availableLights order: ("light", index) for a light on its own, and
+    ("group", controller, [indexes]) for a device shown one row per panel, placed where its first panel is."""
+    rows, groups = [], {}
+    for a, light in enumerate(availableLights):
+        controller = _light_group(light)
+        if controller is None:
+            rows.append(("light", a))
+        elif controller.address in groups:
+            groups[controller.address][2].append(a)
+        else:
+            groups[controller.address] = ("group", controller, [a])
+            rows.append(groups[controller.address])
+    return rows
+
+def _tree_label(label, last):
+    """Indent a panel's Name text under its device, with directory-tree branches."""
+    lines = label.split("\n")
+    return "\n".join([("└─ " if last else "├─ ") + lines[0]] + [("     " if last else "│    ") + l for l in lines[1:]])
+
 # TEST TO MAKE SURE THE VALUE GIVEN TO THE FUNCTION IS VALID OR IN BOUNDS
 def testValid(theParam, theValue, defaultValue, startBounds, endBounds, returnDefault = False):
     if theParam == "temp":
@@ -4945,6 +5118,80 @@ def addNanoleafLights():
                 continue
             printDebugString("Adding Nanoleaf [" + device.name + "] " + device.address + " at " + controller.ip)
             availableLights.append(nanoleafLightEntry(device))
+
+def nanoleafRows(deviceId):
+    """The availableLights indexes of one Nanoleaf device's rows (the whole device, or its panels)."""
+    if nanoleaf is None:
+        return []
+    return [i for i, light in enumerate(availableLights)
+            if isinstance(light[0], nanoleaf.NanoleafDevice) and light[0].controller.id == deviceId]
+
+def requestNanoleafPerPanel(deviceId, perPanel):
+    """Ask the worker thread to show a Nanoleaf as one row or one row per panel (see setNanoleafPerPanel).
+    Stops any animation or sound session first, here, so their last writes go to the rows as they are now."""
+    stopAnimation()
+    stopSoundReactive()
+    with nanoleafPerPanelLock:
+        nanoleafPerPanelRequests.append((deviceId, bool(perPanel)))
+    workerWakeEvent.set()
+
+def setNanoleafPerPanel(_loop, deviceId, perPanel, updateGUI=True):
+    """Show a Nanoleaf as one light, or as one light per panel. Runs on the worker thread.
+
+    Stops animations and sound reactive, disconnects the device's rows, saves perPanel in nanoleaf.json,
+    replaces the rows with controller.devices() (each panel row reads its own sidecar prefs), and links
+    the new rows if the old ones were linked. Closing the last per-panel row ends the stream and puts back
+    the effect from before it. Returns the new rows' indexes, or None if nothing changed."""
+    controller = nanoleafControllers.get(deviceId) if nanoleaf is not None else None
+    if controller is None:
+        printDebugString("Per-panel mode: no saved Nanoleaf " + str(deviceId))
+        return None
+
+    if perPanel and not controller.panels: # never linked, so the panels aren't known yet
+        try:
+            _loop.run_until_complete(controller.loadLayout())
+        except nanoleaf.NanoleafError as e:
+            printDebugString("Per-panel mode: could not read the panels of [" + controller.name + "]: " + str(e))
+            if updateGUI and mainWindow is not None:
+                mainWindow._statusMessageSignal.emit("Could not read the panels of " + controller.name + ": " + str(e))
+            return None
+        if not controller.panels:
+            printDebugString("Per-panel mode: [" + controller.name + "] has no light panels")
+            return None
+
+    stopAnimation()
+    stopSoundReactive()
+    with soundLatestLock:
+        soundLatestLights.clear() # these indexes are about to move
+
+    rows = nanoleafRows(deviceId)
+    wasLinked = any(availableLights[i][1] != "" and availableLights[i][1].is_connected for i in rows)
+    if rows:
+        _loop.run_until_complete(parallelAction("disconnect", rows, False))
+
+    controller.perPanel = bool(perPanel)
+    if controller.savedPath is not False:
+        try:
+            nanoleaf.updateSaved(deviceId, controller.savedPath, perPanel=controller.perPanel)
+        except OSError as e:
+            printDebugString("Per-panel mode: could not save nanoleaf.json: " + str(e))
+
+    for i in reversed(rows):
+        del availableLights[i]
+    addNanoleafLights()
+    reorderByPreferredID()
+    loadLightAliases()
+    newRows = nanoleafRows(deviceId)
+    printDebugString("Nanoleaf [" + controller.name + "] now shows as " + str(len(newRows)) + " light(s)")
+
+    if updateGUI and mainWindow is not None:
+        mainWindow._lightsChangedSignal.emit()
+        mainWindow._statusMessageSignal.emit(controller.name + (" now shows each panel as its own light" if perPanel
+                                                                 else " now shows as one light"))
+        runOnGui(lambda rows=list(newRows): mainWindow.selectRows(rows[:1])) # keep its prefs on screen
+    if wasLinked and newRows:
+        _loop.run_until_complete(parallelAction("connect", newRows, updateGUI and mainWindow is not None))
+    return newRows
 
 def findNanoleafDevice(address):
     """The NanoleafDevice for an NL: address, from the saved devices, or None."""
@@ -5573,6 +5820,18 @@ def workerThread(_loop):
                             printDebugString("Auto-reconnect attempt complete")
                     except Exception as e:
                         printDebugString("Auto-reconnect error: " + str(e))
+
+        if threadAction == "":  # a Nanoleaf switching between one row and one row per panel
+            with nanoleafPerPanelLock:
+                perPanelRequests = list(nanoleafPerPanelRequests)
+                nanoleafPerPanelRequests.clear()
+            for deviceId, perPanel in perPanelRequests:
+                try:
+                    setNanoleafPerPanel(_loop, deviceId, perPanel, hasGUI)
+                except Exception as e:
+                    printDebugString("Per-panel mode change failed: " + str(e))
+            if perPanelRequests:
+                reconnectCooldown.clear() # keyed by row index, and the rows have moved
 
         if threadAction == "":  # sound frames: however many arrived during the last write, only the newest colours go out
             with soundLatestLock:
@@ -7039,25 +7298,29 @@ def loadLightAliases():
         if len(filename) == 12 and all(c in "0123456789ABCDEFabcdef" for c in filename):
             # Reconstruct MAC address from filename
             mac = ":".join(filename[i:i+2] for i in range(0, 12, 2)).upper()
+        elif filename.upper().startswith("NL") and len(filename) > 2 and "." not in filename:
+            # A Nanoleaf: NL:S12345 is saved as NLS12345, a panel NL:S12345-P5001 as NLS12345-P5001
+            mac = "NL:" + filename[2:].upper()
+        else:
+            continue
+        try:
+            with open(prefsDir + os.sep + filename, mode="r", encoding="utf-8") as f:
+                fields = f.read().strip().split("|")
 
-            try:
-                with open(prefsDir + os.sep + filename, mode="r", encoding="utf-8") as f:
-                    fields = f.read().strip().split("|")
+            customName = fields[0] if len(fields) > 0 else ""
+            preferredID = 0
 
-                customName = fields[0] if len(fields) > 0 else ""
-                preferredID = 0
+            # Fields: name|tempRange|cctOnly|lastSettings|preferredID
+            if len(fields) >= 5:
+                try:
+                    preferredID = int(fields[4])
+                except (ValueError, IndexError):
+                    pass
 
-                # Fields: name|tempRange|cctOnly|lastSettings|preferredID
-                if len(fields) >= 5:
-                    try:
-                        preferredID = int(fields[4])
-                    except (ValueError, IndexError):
-                        pass
-
-                if customName or preferredID > 0:
-                    lightAliases[mac] = {"id": preferredID, "name": customName}
-            except (IOError, OSError):
-                pass
+            if customName or preferredID > 0:
+                lightAliases[mac] = {"id": preferredID, "name": customName}
+        except (IOError, OSError):
+            pass
 
     if lightAliases:
         parts = []
@@ -7180,9 +7443,14 @@ class NLPythonServer(BaseHTTPRequestHandler):
                                 status = ""
                         except Exception:
                             status = ""
-                        lightsData.append({"id": effectiveID, "name": name, "mac": mac,
-                                           "linked": linked, "status": status,
-                                           "model": light[0].name})
+                        lightData = {"id": effectiveID, "name": name, "mac": mac,
+                                     "linked": linked, "status": status,
+                                     "model": light[0].name}
+                        groupController = _light_group(light)
+                        if groupController is not None: # a panel: the web UI lists it under its device
+                            lightData["group"] = groupController.address
+                            lightData["groupName"] = groupController.name
+                        lightsData.append(lightData)
 
                     animData = []
                     for aName, aData in sorted(savedAnimations.items()):

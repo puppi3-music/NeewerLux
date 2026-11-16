@@ -54,8 +54,11 @@ def getEntry(ip, port):
 
 async def run(entry, seconds):
     controller = nl.NanoleafController(entry, savedPath=SAVED)
-    status, layout = await controller.http("GET", "/panelLayout/layout")
-    print("\nLayout (HTTP %s): %s panels, side length %s" % (status, layout.get("numPanels"), layout.get("sideLength")))
+    status, body = await controller.http("GET", "/panelLayout")
+    layout = body.get("layout", {}) if isinstance(body, dict) else {}
+    orientation = (body.get("globalOrientation") or {}).get("value") if isinstance(body, dict) else None
+    print("\nLayout (HTTP %s): %s panels, side length %s, canvas rotated %s degrees"
+          % (status, layout.get("numPanels"), layout.get("sideLength"), orientation))
     for p in layout.get("positionData", []):
         skip = p.get("shapeType") in nl.NON_LIGHT_SHAPE_TYPES or p.get("panelId") == 0
         print("  id %-6s x %-5s y %-5s o %-4s shapeType %-3s %s" % (p.get("panelId"), p.get("x"), p.get("y"), p.get("o"),
@@ -63,7 +66,7 @@ async def run(entry, seconds):
 
     whole = nl.NanoleafClient(nl.NanoleafDevice(controller))
     await whole.connect()
-    print("Light panels, left to right: %s" % controller.panels)
+    print("Light panels in reading order on the wall (after the canvas rotation): %s" % controller.panels)
 
     replies = []
     await whole.start_notify(UUID, lambda s, d: replies.append(bytes(d)))

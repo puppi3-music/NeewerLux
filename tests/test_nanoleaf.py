@@ -113,6 +113,39 @@ class FrameTests(unittest.TestCase):
         ]}
         self.assertEqual(nl.orderPanels(layout), [1, 4, 2, 3])
 
+    def test_panel_order_follows_canvas_rotation(self):
+        row = {"positionData": [{"panelId": i, "x": 100 * i, "y": 0, "shapeType": 7} for i in (1, 2, 3)]}
+        self.assertEqual(nl.orderPanels(row, 0), [1, 2, 3])
+        self.assertEqual(nl.orderPanels(row, 180), [3, 2, 1])
+        self.assertEqual(nl.orderPanels(row, 360), [1, 2, 3])
+        # turned a quarter clockwise, the row stands as a column, read top to bottom
+        self.assertEqual(nl.orderPanels(row, 90), [1, 2, 3])
+        self.assertEqual(nl.orderPanels(row, 270), [3, 2, 1])
+
+        # the Shapes set at 10.0.0.152: two triangles and the controller, canvas rotated 157 degrees
+        shapes = {"positionData": [{"panelId": 24936, "x": 67, "y": 49, "o": 0, "shapeType": 8},
+                                   {"panelId": 50093, "x": 0, "y": 87, "o": 300, "shapeType": 8},
+                                   {"panelId": 0, "x": 33, "y": 0, "o": 180, "shapeType": 12}]}
+        self.assertEqual(nl.orderPanels(shapes), [50093, 24936])
+        self.assertEqual(nl.orderPanels(shapes, 157), [24936, 50093])
+
+    def test_panel_order_groups_columns(self):
+        # Hexagons (side 67) in two jagged columns: x differs by a few units within a column, after
+        # rounding or a rotation, so a plain sort by x would interleave them
+        hexes = {"positionData": [
+            {"panelId": 11, "x": 0, "y": 232, "shapeType": 7},
+            {"panelId": 12, "x": 3, "y": 116, "shapeType": 7},
+            {"panelId": 13, "x": 1, "y": 0, "shapeType": 7},
+            {"panelId": 21, "x": 101, "y": 174, "shapeType": 7},
+            {"panelId": 22, "x": 99, "y": 58, "shapeType": 7},
+        ]}
+        self.assertEqual(nl.orderPanels(hexes), [11, 12, 13, 21, 22])
+        # Shapes triangles (side 134) alternate up and down along a row, 67 apart: each is its own column
+        tris = {"positionData": [{"panelId": 100 + i, "x": 67 * i, "y": 39 if i % 2 else 0, "shapeType": 8}
+                                 for i in range(20)]}
+        self.assertEqual(nl.orderPanels(tris), [100 + i for i in range(20)])
+        self.assertEqual(nl.orderPanels(tris, 180), [119 - i for i in range(20)])
+
     def test_host_port(self):
         self.assertEqual(nl.parseHostPort("10.0.0.5"), ("10.0.0.5", 16021))
         self.assertEqual(nl.parseHostPort(" 10.0.0.5:1234 "), ("10.0.0.5", 1234))
@@ -323,7 +356,7 @@ class FakeControllerTests(unittest.TestCase):
                     break
                 await asyncio.sleep(0.01)
             self.assertTrue(c.wholeStreaming)
-            self.assertLessEqual(client.updateInterval, 0.1)
+            self.assertLess(client.updateInterval, 0.06)  # quick enough to flash on every beat
             await client.write_gatt_char(UUID, hsiBytes(240, 100, 50))
             frames = await asyncio.to_thread(self.fake.waitForFrames, 2)
             self.assertEqual({rgb for pid, rgb, tr in frames[-1]}, {(0, 0, 128)})
@@ -336,6 +369,49 @@ class FakeControllerTests(unittest.TestCase):
         self.assertEqual(self.fake.lastStatePut(),
                          {"hue": {"value": 240}, "sat": {"value": 100}, "brightness": {"value": 50, "duration": 0}})
         self.assertEqual(self.fake.state["hue"]["value"], 240)
+
+    def test_colours_while_the_stream_starts(self):
+        # colours keep coming at the sound engine's rate while stream mode starts: none of them may be PUT
+        # afterwards, as a colour PUT takes the device back out of stream mode and every later frame is lost
+        self.fake.stateDelay = 0.15
+        c = self.makeController()
+        c.streamAfter, c.streamIdle = 0.5, 0.5
+
+        async def run():
+            client = nl.NanoleafClient(c.devices()[0])
+            await client.connect()
+            for i in range(20):
+                await client.write_gatt_char(UUID, hsiBytes(i * 15, 100, 100))
+                await asyncio.sleep(1 / 15)
+            self.assertTrue(c.wholeStreaming)
+            self.assertEqual(self.fake.effect, "*ExtControl*")
+            frames = self.fake.waitForFrames(1)
+            self.assertEqual({rgb for pid, rgb, tr in frames[-1]}, {nl.hsiToRGB(285, 100, 100)})
+            await c.settle()
+            await client.disconnect()
+
+        asyncio.run(run())
+        self.assertEqual(self.fake.lastStatePut()["hue"], {"value": 285})
+
+    def test_power_while_the_stream_starts(self):
+        # turning the light off while stream mode starts ends the stream and leaves it off
+        self.fake.stateDelay = 0.15
+        c = self.makeController()
+        c.streamAfter = 0.5
+
+        async def run():
+            client = nl.NanoleafClient(c.devices()[0])
+            await client.connect()
+            await client.write_gatt_char(UUID, hsiBytes(0, 100, 100))
+            await client.write_gatt_char(UUID, hsiBytes(120, 100, 100))
+            await asyncio.sleep(0.2)  # the first PUT is still going; the stream starts after it
+            await c.putState({"on": {"value": False}})
+            await c.settle()
+            self.assertFalse(c.streaming or c.wholeStreaming)
+            await client.disconnect()
+
+        asyncio.run(run())
+        self.assertFalse(self.fake.state["on"]["value"])
 
     def test_refused_state_raises_on_next_write(self):
         self.fake.refuseState = True
@@ -378,16 +454,16 @@ class FakeControllerTests(unittest.TestCase):
             frames = await asyncio.to_thread(self.fake.waitForFrames, 1)
             await asyncio.sleep(0.2)  # catch any stray extra datagram
             self.assertEqual(len(self.fake.frames), 1)
-            self.assertEqual(frames[0], [(5002, (255, 0, 0), 1), (5003, (0, 255, 0), 1),
-                                         (5004, (0, 0, 255), 1), (5001, (255, 200, 100), 1)])
+            self.assertEqual(frames[0], [(5002, (255, 0, 0), 0), (5003, (0, 255, 0), 0),
+                                         (5004, (0, 0, 255), 0), (5001, (255, 200, 100), 0)])
             self.assertEqual(self.fake.effect, "*ExtControl*")
 
             # second frame: one panel off, one recoloured; every panel is resent
             await asyncio.gather(clients[1].write_gatt_char(UUID, OFF, False),
                                  clients[2].write_gatt_char(UUID, hsiBytes(60, 100, 100), False))
             frames = await asyncio.to_thread(self.fake.waitForFrames, 2)
-            self.assertEqual(frames[1], [(5002, (255, 0, 0), 1), (5003, (0, 0, 0), 1),
-                                         (5004, (255, 255, 0), 1), (5001, (255, 200, 100), 1)])
+            self.assertEqual(frames[1], [(5002, (255, 0, 0), 0), (5003, (0, 0, 0), 0),
+                                         (5004, (255, 255, 0), 0), (5001, (255, 200, 100), 0)])
 
             received = []
             await clients[1].start_notify(UUID, lambda s, d: received.append(bytes(d)))

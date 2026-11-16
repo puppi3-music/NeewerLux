@@ -1650,6 +1650,15 @@ class Ui_MainWindow(object):
         self.onlyCCTModeCheck = QCheckBox("This light can only use CCT mode\n(for Neewer lights without HSI mode)")
         self.onlyCCTModeCheck.setFont(mainFont)
         lpLay.addWidget(self.onlyCCTModeCheck)
+
+        # Nanoleaf rows only (setupLightPrefsTab shows it); applies at once, not on Save
+        self.nanoleafPerPanelCheck = QCheckBox("Show each panel as its own light")
+        self.nanoleafPerPanelCheck.setFont(mainFont)
+        self.nanoleafPerPanelCheck.setToolTip("Lists every panel of this Nanoleaf as a separate light, with its own\n"
+            "colour, name and preferred ID. Panels are driven over the Nanoleaf's streaming mode.\n"
+            "Changing this stops any animation or sound reactive session and re-links the device.")
+        self.nanoleafPerPanelCheck.setVisible(False)
+        lpLay.addWidget(self.nanoleafPerPanelCheck)
         lpLay.addStretch(1)
         self.saveLightPrefsButton = QPushButton("Save Preferences")
         lpLay.addWidget(self.saveLightPrefsButton, alignment=Qt.AlignRight)
