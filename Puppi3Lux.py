@@ -20,7 +20,7 @@
 ##          Windows, Linux/Ubuntu, MacOS and RPi
 ############################################################
 
-PUPPI3LUX_VERSION = "1.6.0"
+PUPPI3LUX_VERSION = "1.5.1"
 PUPPI3LUX_REPO_URL = "https://github.com/puppi3-music/Puppi3Lux/"
 PUPPI3LUX_RELEASES_API = "https://api.github.com/repos/puppi3-music/Puppi3Lux/releases/latest"
 APP_NAME = "Puppi3Lux" # the name users see, and the one file names, modules and URLs use
