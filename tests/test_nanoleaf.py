@@ -167,13 +167,14 @@ class SavedTests(unittest.TestCase):
             self.assertEqual(nl.loadSaved(path), [])
             nl.addSaved({"id": "A", "name": "One", "ip": "1.1.1.1", "port": 16021, "token": "t"}, path)
             devices = nl.loadSaved(path)
-            self.assertEqual(devices[0]["perPanel"], False)
-            devices[0]["perPanel"] = True
+            self.assertEqual(devices[0]["perPanel"], True)  # a new device shows one light per panel
+            devices[0]["perPanel"] = False  # the user switches it to one light
             nl.saveSaved(devices, path)
-            nl.addSaved({"id": "A", "name": "One", "ip": "1.1.1.2", "port": 16021, "token": "t2"}, path)
+            # Pairing again (pairAndDescribe sets perPanel) keeps the user's choice
+            nl.addSaved({"id": "A", "name": "One", "ip": "1.1.1.2", "port": 16021, "token": "t2", "perPanel": True}, path)
             devices = nl.loadSaved(path)
             self.assertEqual(len(devices), 1)
-            self.assertEqual((devices[0]["ip"], devices[0]["token"], devices[0]["perPanel"]), ("1.1.1.2", "t2", True))
+            self.assertEqual((devices[0]["ip"], devices[0]["token"], devices[0]["perPanel"]), ("1.1.1.2", "t2", False))
 
 
 class FakeControllerTests(unittest.TestCase):
@@ -205,6 +206,18 @@ class FakeControllerTests(unittest.TestCase):
         self.assertEqual(nl.pair("127.0.0.1", self.fake.port), TOKEN)
         entry = nl.pairAndDescribe("127.0.0.1", self.fake.port)
         self.assertEqual((entry["id"], entry["name"], entry["model"]), ("S12345", "Fake Shapes", "NL42"))
+        # Pairing reads the layout, so the panels can be listed one light each straight away
+        self.assertTrue(entry["perPanel"])
+        self.assertEqual(entry["panels"], nl.orderPanels(self.fake.layout))
+        self.assertEqual(len(nl.NanoleafController(entry, savedPath=False).devices()), len(entry["panels"]))
+
+    def test_pairing_a_device_without_light_panels_gives_one_light(self):
+        self.fake.buttonHeld = True
+        self.fake.layout = {"numPanels": 1, "sideLength": 0,
+                            "positionData": [{"panelId": 0, "x": 0, "y": 0, "o": 0, "shapeType": 12}]}
+        entry = nl.pairAndDescribe("127.0.0.1", self.fake.port)
+        self.assertFalse(entry["perPanel"])
+        self.assertNotIn("panels", entry)
 
     def test_address_scan(self):
         found = nl.scanHosts(["127.0.0.1"], self.fake.port)

@@ -1,7 +1,11 @@
-# Build the Puppi3Lux Windows EXE on release tag push
-# Creates a GitHub Release with:
-#   - Puppi3Lux-<version>-Windows.zip  (PyInstaller --onedir EXE + light_prefs/)
-#   - Puppi3Lux-<version>-Source.zip   (Python source distribution)
+# Build Puppi3Lux for Windows, macOS and Linux on a release tag push.
+# PyInstaller can only build for the OS (and CPU) it runs on, so each OS has its own job.
+# A v* tag creates a draft GitHub Release with:
+#   - Puppi3Lux-<version>-Windows.zip            (Puppi3Lux.exe + light_prefs/)
+#   - Puppi3Lux-<version>-macOS-AppleSilicon.zip (Puppi3Lux.app, unsigned)
+#   - Puppi3Lux-<version>-Linux-x86_64.tar.gz    (Puppi3Lux + light_prefs/)
+#   - Puppi3Lux-<version>-Source.zip             (the Python source, for any OS)
+# Pull requests that touch the build run the three builds too, without making a release.
 
 name: Build Release
 
@@ -9,23 +13,63 @@ on:
   push:
     tags:
       - 'v*'  # Trigger on version tags like v1.0.0
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - 'Puppi3Lux.spec'
+      - 'pyproject.toml'
+      - 'uv.lock'
+  workflow_dispatch:
 
 permissions:
   contents: write  # Needed to create releases
 
+# 3.12, not 3.13: python-rtmidi publishes no 3.13 wheels, so 3.13 would have to compile it.
+# The setup-python interpreter is used rather than a uv-managed one, which PyInstaller can't
+# always bundle on macOS and Linux.
+env:
+  PYTHON_VERSION: '3.12'
+  UV_PYTHON_PREFERENCE: only-system
+
 jobs:
-  build-windows-exe:
-    runs-on: windows-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows
+          - os: macos-15                # Apple Silicon; macos-latest (macOS 26) often waits for a free machine
+            label: macOS-AppleSilicon
+          - os: ubuntu-22.04            # an older glibc, so the build runs on most distributions
+            label: Linux-x86_64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
           version: latest
-          python-version: '3.13'
+          python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
+
+      - name: Version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=dev-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          fi
 
       # --locked asserts uv.lock is already in agreement with pyproject.toml and
       # fails the build otherwise, so a release can never be cut from a stale or
@@ -34,25 +78,69 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --group build
 
-      - name: Build EXE with PyInstaller
+      - name: Make the macOS icon
+        if: runner.os == 'macOS'
+        run: |
+          ICONSET=io.github.puppi3_music.Puppi3Lux.iconset
+          mkdir "$ICONSET"
+          for size in 16 32 64 128 256 512; do
+            sips -z $size $size io.github.puppi3_music.Puppi3Lux.png --out "$ICONSET/icon_${size}x${size}.png" > /dev/null
+          done
+          for size in 16 32 128 256; do
+            cp "$ICONSET/icon_$((size * 2))x$((size * 2)).png" "$ICONSET/icon_${size}x${size}@2x.png"
+          done
+          rm "$ICONSET/icon_64x64.png"
+          iconutil -c icns "$ICONSET"
+
+      - name: Build with PyInstaller
         run: uv run --locked --group build pyinstaller Puppi3Lux.spec
 
-      - name: Copy light_prefs into dist
+      # Starts the built program far enough to import every module, print its banner and help, and quit.
+      # (Not on Windows: the .exe has no console to print to.)
+      - name: Check the build starts
+        if: runner.os != 'Windows'
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            BIN=dist/Puppi3Lux.app/Contents/MacOS/Puppi3Lux
+          else
+            sudo apt-get update -q && sudo apt-get install -y -q libegl1 libgl1 libxkbcommon0 libfontconfig1 libportaudio2 > /dev/null
+            BIN=dist/Puppi3Lux/Puppi3Lux
+          fi
+          "$BIN" --help | tee help.txt
+          grep -q "Puppi3Lux ver. " help.txt
+          grep -q -- "--nanoleaf_pair" help.txt
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
           Copy-Item -Path "light_prefs" -Destination "dist/Puppi3Lux/light_prefs" -Recurse
-          Copy-Item -Path "README.md" -Destination "dist/Puppi3Lux/"
-          Copy-Item -Path "CHANGELOG.md" -Destination "dist/Puppi3Lux/"
+          Copy-Item -Path "README.md", "CHANGELOG.md" -Destination "dist/Puppi3Lux/"
+          Compress-Archive -Path "dist/Puppi3Lux/*" -DestinationPath "Puppi3Lux-$env:VERSION-${{ matrix.label }}.zip"
 
-      - name: Create EXE zip
+      # ditto keeps the app bundle's symlinks and permissions, which a plain zip can lose
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: ditto -c -k --sequesterRsrc --keepParent dist/Puppi3Lux.app "Puppi3Lux-$VERSION-${{ matrix.label }}.zip"
+
+      # tar keeps the program's executable bit, which the artifact upload's own zip would drop
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
         run: |
-          $version = "${{ github.ref_name }}" -replace '^v', ''
-          Compress-Archive -Path "dist/Puppi3Lux/*" -DestinationPath "Puppi3Lux-${version}-Windows.zip"
+          cp -R light_prefs dist/Puppi3Lux/light_prefs
+          cp README.md CHANGELOG.md dist/Puppi3Lux/
+          tar -czf "Puppi3Lux-$VERSION-${{ matrix.label }}.tar.gz" -C dist Puppi3Lux
 
-      - name: Upload EXE artifact
+      - name: Upload build
         uses: actions/upload-artifact@v4
         with:
-          name: windows-exe
-          path: Puppi3Lux-*-Windows.zip
+          name: build-${{ matrix.label }}
+          path: |
+            Puppi3Lux-*.zip
+            Puppi3Lux-*.tar.gz
+          if-no-files-found: error
 
   build-source:
     runs-on: ubuntu-latest
@@ -62,7 +150,7 @@ jobs:
 
       - name: Create source zip
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then VERSION="${GITHUB_REF_NAME#v}"; else VERSION="dev-${GITHUB_SHA::7}"; fi
           zip -r "Puppi3Lux-${VERSION}-Source.zip" \
             Puppi3Lux.py \
             puppi3lux_ui.py \
@@ -81,6 +169,8 @@ jobs:
             io.github.puppi3_music.Puppi3Lux.png \
             README.md \
             CHANGELOG.md \
+            LICENSE \
+            LICENSE-MIT \
             light_prefs/
 
       - name: Upload source artifact
@@ -89,8 +179,12 @@ jobs:
           name: source-zip
           path: Puppi3Lux-*-Source.zip
 
+  # Runs even if a build failed or never got a machine (GitHub's macOS runners are sometimes all busy), so a
+  # slow Mac queue can't hold up a release: the draft gets whichever builds finished. Re-running a failed build
+  # later ("gh run rerun <id> --failed") runs this job again, which adds that build's file to the same draft.
   create-release:
-    needs: [build-windows-exe, build-source]
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/v') && needs.build-source.result == 'success' }}
+    needs: [build, build-source]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -103,6 +197,7 @@ jobs:
         with:
           draft: true
           generate_release_notes: true
+          fail_on_unmatched_files: false
           files: |
-            Puppi3Lux-*-Windows.zip
-            Puppi3Lux-*-Source.zip
+            Puppi3Lux-*.zip
+            Puppi3Lux-*.tar.gz

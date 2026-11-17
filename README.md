@@ -28,9 +28,25 @@ Nanoleaf panel sets (Shapes, Canvas, Lines, Elements, Light Panels) are controll
 
 Your presets, animations and per-light settings live in the `light_prefs` folder next to the executable. They are plain text and safe to edit by hand or copy between installs. Release zips don't include a preset file, so extracting a newer release over an existing install keeps your presets.
 
+### macOS (Apple Silicon)
+
+1. Download `Puppi3Lux-<version>-macOS-AppleSilicon.zip` from [Releases](https://github.com/puppi3-music/Puppi3Lux/releases) and open it.
+2. Drag `Puppi3Lux.app` to Applications.
+3. Open it. The app isn't signed by Apple, so the first time macOS says it can't check it: open System Settings > Privacy & Security, click **Open Anyway** next to the message about Puppi3Lux, and confirm. (Or run `xattr -dr com.apple.quarantine /Applications/Puppi3Lux.app` in Terminal.)
+
+macOS asks once for Bluetooth access, for microphone access the first time you use the Sound tab, and for local network access when you add a Nanoleaf. Settings live in `~/Library/Application Support/Puppi3Lux/light_prefs`, so replacing the app with a newer one keeps them. On an Intel Mac, run from source.
+
+### Linux (x86_64)
+
+1. Download `Puppi3Lux-<version>-Linux-x86_64.tar.gz` from [Releases](https://github.com/puppi3-music/Puppi3Lux/releases).
+2. Extract it somewhere in your home folder: `tar -xzf Puppi3Lux-<version>-Linux-x86_64.tar.gz`
+3. Run `Puppi3Lux/Puppi3Lux`. Started from a terminal, it also prints its log there.
+
+Bluetooth goes through BlueZ, which desktop distributions already run. A few system libraries aren't bundled; on Debian or Ubuntu, `sudo apt install libxcb-cursor0 libportaudio2` covers the window (on X11) and the Sound tab. Settings live in the `light_prefs` folder next to the program, as on Windows.
+
 ### From source
 
-Requires Python 3.11 or newer. Dependency versions are pinned in `uv.lock`.
+Runs on Windows, macOS and Linux, on any CPU. Requires Python 3.11 or newer. Dependency versions are pinned in `uv.lock`.
 
 With [uv](https://docs.astral.sh/uv/):
 
@@ -148,7 +164,7 @@ python Puppi3Lux.py --nanoleaf_pair 192.168.1.50
 
 It waits up to a minute for the controller to enter pairing mode, saves the set and prints its address, such as `NL:S23220H3960`. That address works with `--light`, in batch strings, in animations and in the HTTP API. Paired sets are kept in `light_prefs/nanoleaf.json`, and if a set's IP address changes, Puppi3Lux finds it again on this network and updates the file.
 
-**One light, or one per panel.** A set is one light by default: every panel shows the same colour. Select it and tick **Show each panel as its own light** in Light Preferences to give every panel a row of its own, numbered left to right. The panel rows sit under a row for the set, like folders: double-click that row (or click its ▾ / ▸) to collapse or expand it, and select it to select every panel. Each panel can have its own name and fixed number, animations and presets can set panels to different colours, and Offset and Colour spread run across them. The dashboard groups panels the same way. Per-panel colours are sent as a fast stream, so sound reactive mode and animations can update every panel many times a second. Untick the box to go back to one light; the set returns to the effect it was showing before.
+**One light per panel, or one for the set.** When you pair a set, each of its panels becomes a light of its own, numbered left to right. The panel rows sit under a row for the set, like folders: double-click that row (or click its ▾ / ▸) to collapse or expand it, and select it to select every panel. Each panel can have its own name and fixed number, animations and presets can set panels to different colours, and Offset and Colour spread run across them. The dashboard groups panels the same way. Per-panel colours are sent as a fast stream, so sound reactive mode and animations can update every panel many times a second. To drive the whole set as one light instead, so every panel shows the same colour, select it and untick **Show each panel as its own light** in Light Preferences; the set returns to the effect it was showing before. Tick it again to go back to one light per panel. Pairing a set again keeps the choice. Sets added before version 1.4.1 started as one light, so tick the box for those.
 
 **Chase drum rolls.** In sound reactive mode, set **Drum rolls** to **Chase** to run a drum roll round a set shown one light per panel: each deep flash goes to the next panel, left to right. Other lights keep the Strobe. See [Sound reactive](#sound-reactive) for the flash limit, which counts a set's panels together as one area.
 

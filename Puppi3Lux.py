@@ -211,6 +211,45 @@ def _resource_path(filename):
 # Are we running as a frozen PyInstaller EXE?
 _isFrozenExe = getattr(sys, 'frozen', False)
 
+def lightPrefsDir():
+    """The light_prefs folder: next to the script or program, except in the macOS app, whose bundle can be
+    read-only and is replaced on update. There it is ~/Library/Application Support/Puppi3Lux/light_prefs.
+    puppi3lux_nanoleaf.lightPrefsDir() follows the same rule."""
+    if _isFrozenExe and sys.platform == "darwin":
+        base = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "Puppi3Lux")
+    else:
+        base = os.path.dirname(os.path.abspath(sys.argv[0]))
+    return os.path.join(base, "light_prefs")
+
+def seedBundledPrefs():
+    """macOS app: copy the shipped light_prefs (animations and the .default templates) out of the app bundle
+    into lightPrefsDir(). Templates are refreshed every launch. Shipped animations are copied once per version,
+    and only where missing, so the user's edits stay and an animation they delete doesn't come back."""
+    if not (_isFrozenExe and sys.platform == "darwin"):
+        return
+    source = _resource_path("light_prefs")
+    if not os.path.isdir(source):
+        return
+    target = lightPrefsDir()
+    marker = os.path.join(target, ".bundle_seeded")
+    try:
+        with open(marker) as f:
+            newVersion = f.read().strip() != PUPPI3LUX_VERSION
+    except OSError:
+        newVersion = True
+    try:
+        for root, _dirs, files in os.walk(source):
+            folder = os.path.normpath(os.path.join(target, os.path.relpath(root, source)))
+            os.makedirs(folder, exist_ok=True)
+            for name in files:
+                destination = os.path.join(folder, name)
+                if name.endswith(".default") or (newVersion and not os.path.exists(destination)):
+                    shutil.copyfile(os.path.join(root, name), destination)
+        with open(marker, "w") as f:
+            f.write(PUPPI3LUX_VERSION)
+    except OSError as e:
+        print("Could not copy the shipped presets and animations to " + target + " (" + str(e) + ")")
+
 CCTSlider = -1 # the current slider moved in the CCT window - 1 - Brightness / 2 - Hue / -1 - Both Brightness and Hue
 sendValue = [120, 135, 2, 20, 56, 157] # an array to hold the values to be sent to the light - the default is CCT / 5600K / 20%
 lastAnimButtonPressed = 1 # which animation button you clicked last - if none, then it defaults to 1 (the police sirens)
@@ -267,7 +306,7 @@ animationStopFlag = False      # set True to request the animation to stop
 _animChainStop = False         # set when stopping to chain into another animation (skips revert)
 currentAnimationName = ""      # name of the currently playing animation
 savedAnimations = {}           # dict of {name: animation_dict} loaded from disk
-animationsDir = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "animations"
+animationsDir = lightPrefsDir() + os.sep + "animations"
 lightAliases = {}  # {MAC: {"id": int, "name": str}}, built from per-light prefs sidecar files
 workerWakeEvent = threading.Event()  # signaled by animation thread to wake the worker immediately
 soundLatestLights = set()  # lights holding a sound colour the worker hasn't written yet
@@ -333,22 +372,22 @@ enableTabsOnLaunch = False # whether or not to enable tabs on startup (even with
 
 lockFile = tempfile.gettempdir() + os.sep + "Puppi3Lux.lock"
 anotherInstance = False # whether or not we're using a new instance (for the Singleton check)
-globalPrefsFile = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "Puppi3Lux.prefs" # the global preferences file for saving/loading
-customLightPresetsFile = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "customLights.prefs"
+globalPrefsFile = lightPrefsDir() + os.sep + "Puppi3Lux.prefs" # the global preferences file for saving/loading
+customLightPresetsFile = lightPrefsDir() + os.sep + "customLights.prefs"
 # Shipped template used to seed customLightPresetsFile on first run. The live file is
 # user state and is not tracked in the repository, so the defaults live here instead.
 defaultLightPresetsFile = customLightPresetsFile + ".default"
 # Records that seeding already happened, so a later deliberate reset or delete is not
 # undone by copying the shipped presets back in.
-presetsSeededMarkerFile = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + ".presets_seeded"
-geometryPrefsFile = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "Puppi3Lux.geometry"
-soundPresetsFile = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "sound_presets.json"
+presetsSeededMarkerFile = lightPrefsDir() + os.sep + ".presets_seeded"
+geometryPrefsFile = lightPrefsDir() + os.sep + "Puppi3Lux.geometry"
+soundPresetsFile = lightPrefsDir() + os.sep + "sound_presets.json"
 # Shipped Sound presets, shown until the user first saves, updates or deletes one. That
 # writes the whole list to soundPresetsFile, which is read from then on, so deleting
 # every preset leaves an empty file and the shipped ones don't come back.
 defaultSoundPresetsFile = soundPresetsFile + ".default"
-soundPalettesFile = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "sound_palettes.json"  # palettes saved from the Colours menu
-logFilePath = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "Puppi3Lux.log"
+soundPalettesFile = lightPrefsDir() + os.sep + "sound_palettes.json"  # palettes saved from the Colours menu
+logFilePath = lightPrefsDir() + os.sep + "Puppi3Lux.log"
 
 def migrateRenamedPrefsFiles():
     """Earlier versions saved their .prefs, .geometry and .log in light_prefs as Puppi3sNeewerLux.* or,
@@ -3143,12 +3182,13 @@ try: # try to load the GUI
                 global threadAction
                 try:
                     entry = nanoleaf.pairAndDescribe(ip, port)
-                    nanoleaf.addSaved(entry)
+                    saved = nanoleaf.savedEntry(nanoleaf.addSaved(entry), entry["id"]) or entry
                 except Exception as e:
                     self._nanoleafDialogCall("setBusy", False, str(e))
                     return
-                printDebugString("Paired Nanoleaf [" + entry["name"] + "] NL:" + entry["id"] + " at " + ip)
-                self._nanoleafDialogCall("setBusy", False, "Paired " + entry["name"] + " (NL:" + entry["id"] + "). "
+                printDebugString("Paired Nanoleaf [" + entry["name"] + "] NL:" + entry["id"] + " at " + ip + ": " + nanoleaf.listingText(saved))
+                self._nanoleafDialogCall("setBusy", False, "Paired " + entry["name"] + " (NL:" + entry["id"] + "): "
+                                         + nanoleaf.listingText(saved) + " (Light Preferences can change this). "
                                          "It is added to the light table; pair another or close this window.")
                 if threadAction == "": # list it now
                     threadAction = "discover"
@@ -4519,7 +4559,7 @@ def saveLightPrefs(lightID, deleteFile = False): # save a sidecar file with the 
 
     # GET THE CUSTOM FILENAME FOR THIS FILE, NOTED FROM THE MAC ADDRESS OF THE CURRENT LIGHT
     exportFileName = availableLights[lightID][0].address.split(":") # take the colons out of the MAC address
-    exportFileName = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "".join(exportFileName)
+    exportFileName = lightPrefsDir() + os.sep + "".join(exportFileName)
 
     if deleteFile == True:
         if os.path.exists(exportFileName):
@@ -5517,7 +5557,7 @@ def getCustomLightPrefs(MACAddress, lightName = ""):
         lightName = "Nanoleaf" # the device name is the user's own, so look the specs up by kind
 
     customPrefsPath = MACAddress.split(":")
-    customPrefsPath = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "".join(customPrefsPath)
+    customPrefsPath = lightPrefsDir() + os.sep + "".join(customPrefsPath)
 
     if os.path.exists(customPrefsPath):
         printDebugString("A custom preferences file was found for " + MACAddress + "!")
@@ -6508,8 +6548,8 @@ def pairNanoleafFromCLI(hostText, waitSeconds=60):
         print("Cancelled.")
         _finish(1)
 
-    nanoleaf.addSaved(entry)
-    print("Paired " + entry["name"] + " (" + (entry["model"] or "Nanoleaf") + ").")
+    saved = nanoleaf.savedEntry(nanoleaf.addSaved(entry), entry["id"]) or entry
+    print("Paired " + entry["name"] + " (" + (entry["model"] or "Nanoleaf") + "): " + nanoleaf.listingText(saved) + ".")
     print("Its address is NL:" + entry["id"] + " - use it with --light, in batch strings and the HTTP API.")
     print("Saved to " + nanoleaf.defaultSavedPath())
     _finish(0)
@@ -7837,7 +7877,7 @@ def loadLightAliases():
     # reloads it (rows moving under a running animation), and must never see it half filled.
     aliases = {}
 
-    prefsDir = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs"
+    prefsDir = lightPrefsDir()
     if not os.path.isdir(prefsDir):
         lightAliases = aliases
         return
@@ -8503,9 +8543,9 @@ def formatStringForConsole(theString, maxLength):
 def createLightPrefsFolder():
     #CREATE THE light_prefs FOLDER IF IT DOESN'T EXIST
     try:
-        os.mkdir(os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs")
-    except FileExistsError:
-        pass # the folder already exists, so we don't need to create it
+        os.makedirs(lightPrefsDir(), exist_ok=True)
+    except OSError:
+        pass # the folder can't be made here: saving will report it
 
 def markPresetsAsSeeded():
     """Record that this install already has its presets, so they are never re-seeded.
@@ -8719,6 +8759,7 @@ if __name__ == '__main__':
     print("---------------------------------------------------------")
 
     singleInstanceLock() # make a lockfile if one doesn't exist yet, and quit out if one does
+    seedBundledPrefs() # macOS app: shipped presets and animations, from the bundle to Application Support
     migrateRenamedPrefsFiles() # pick up settings saved under the old Puppi3sNeewerLux or NeewerLux names
 
     if os.path.exists(globalPrefsFile):
