@@ -2103,7 +2103,7 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         beatL = QLabel("Beats from:"); beatL.setFont(mainFont); sg.addWidget(beatL, 10, 0)
         self.soundBeatSourceCombo = QComboBox()
         self.soundBeatSourceCombo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.soundBeatSourceCombo.setToolTip("Where beats come from. A MIDI clock input (Traktor Virtual Output, say)\n"
+        self.soundBeatSourceCombo.setToolTip("Where beats come from. A MIDI clock input (Traktor Virtual Output on macOS,\nLoopBe Internal MIDI on Windows)\n"
             "gives the exact tempo and beat, so beat effects never miss. If the clock stops,\n"
             "beats are detected from the sound again until it comes back.")
         self.soundMidiRefreshButton = QPushButton("Refresh")

@@ -6,10 +6,13 @@ DJ software and drum machines can send MIDI clock: 24 ticks per beat plus Start,
 Stop and Continue messages. Following it gives the exact tempo and beat position,
 so beat effects land on every beat however busy the bass is.
 
-Traktor: Preferences > MIDI Clock > tick "Send MIDI Clock". Add a Generic MIDI
-controller in Controller Manager with Out-Port "Traktor Virtual Output". Then in
-the Master Clock panel press the clock-send button. Press Sync there (or stop and
-start the clock) to line the count up with the downbeat again.
+Traktor: Preferences > External Sync > EXT, tick "Enable MIDI Clock" (Traktor
+Pro 2: Preferences > MIDI Clock > "Send MIDI Clock"). Add a Generic MIDI
+controller in Controller Manager with Out-Port "Traktor Virtual Output" on macOS.
+On Windows other apps can't see that port: install LoopBe1, as Native Instruments
+recommends, set the Out-Port to "LoopBe Internal MIDI" and pick that port here. Then in the Master Clock panel press the
+clock-send button. Press Sync there (or stop and start the clock) to line the
+count up with the downbeat again.
 
 python-rtmidi is optional: MIDI_AVAILABLE is False without it.
 """

@@ -214,6 +214,8 @@ FLASH_BEAT_RESERVE = 4  # swings a rise that isn't a beat must leave free while 
 ROLL_BUILD_STEP = 2.0    # seconds of a roll at the Show level between halvings of the gap between its deep flashes
 ROLL_SWING_MAX = 8       # brightness points the ripple between accents may move, too little to count as a flash
 ROLL_SWING_RED = 6       # ... or in saturated red
+ROLL_RIPPLE_FLOOR = 0.2  # share of the Min to Max bright range the ripple sits above, as at Min bright it hardly shows
+CHASE_ROUND = 2.0 * FLASH_WINDOW / (FLASH_LEVELS["Standard"][0] - 1)  # seconds a Chase sweep takes round a group at least: each light's rise and fall within the Standard limit, with one swing to spare
 ROLL_SWELL_TIME = 8.0    # seconds a Swell takes to climb to Max bright
 ROLL_SWELL_FROM = 0.25   # highest point of the Min to Max bright range a Swell starts from
 ROLL_RELEASE = 1.0       # seconds the lights take to ease down from a roll's top level when it ends
@@ -1617,7 +1619,7 @@ class _LightShow:
         self.flashCount = 0    # beats flashed, which slow lights count to take every 2nd, 4th... one
         self.slow = {}         # each slow light's [flash 1..0, when it last flashed, beats per flash, smoothed bass _Envelope]
         self.slowRoll = {}     # each slow light's [accent 1..0, roll hits per flash] while a roll plays
-        self.chaseStep = 0     # in a Chase roll, deep flashes so far: which light of each group it is on
+        self.chaseFrom = None  # in a Chase roll, the roll position (in hits) the sweep started from
         self.chaseLimiters = {}  # each chase group's _FlashLimiter, counting its lights as one area (their brightest at each frame)
         self.beatHit = 1.0     # how hard the bass hit around the last beat, 0..1
         self.beatPeriod = 0.5  # seconds between beats, measured from the kicks when nothing predicts them
@@ -1839,10 +1841,9 @@ class _LightShow:
             self.rollFlash = 1.0
             if hitIdx % perAccent == 0:
                 self.rollAccent = 1.0
-                self.chaseStep += 1
         elif self.rollPos is None:
             self.rollFlash = self.rollAccent = 0.0
-            self.chaseStep = 0
+            self.chaseFrom = None
             self.slowRoll.clear()
         else:
             self.rollFlash = max(0.0, self.rollFlash - dt / (ROLL_FLASH_SHARE * self.rollHit))
@@ -1892,9 +1893,9 @@ class _LightShow:
             self.limiters.clear()
             self.chaseLimiters.clear()
         groups = self._chaseGroups(targets, places)
-        chaseOn = self._chaseLit(groups) if self.rollPos is not None and mode in ROLL_MODES and e.rollStyle == "Chase" else None
         groupTop = {}
         beatPeriod = src.beatPeriod() if src is not None else self.beatPeriod
+        chase = self._chaseWeights(groups, beatPeriod) if self.rollPos is not None and mode in ROLL_MODES and e.rollStyle == "Chase" else {}
         offset = max(0.0, min(1.0, float(e.offset)))
         for pos, idx in enumerate(targets):
             gap = self._lightGap(idx)
@@ -1909,7 +1910,7 @@ class _LightShow:
             if self.rollPos is not None and mode in ROLL_MODES:
                 # a slow light can't show every hit, so it strobes on every Nth one, on hits the quick lights flash on too
                 accent = self._slowRollAccent(idx, gap, dt, rollHit, hitIdx, perAccent, src) if gap > SLOW_LIGHT else None
-                bri, self.rollTop[idx] = self._rollBrightness(now, lo, hiB, h, sat, amt, accent, chaseOn is None or idx in chaseOn or not any(idx in g for g in groups.values()))
+                bri, self.rollTop[idx] = self._rollBrightness(now, lo, hiB, h, sat, amt, accent, chase.get(idx))
             else:
                 bri = lo + (hiB - lo) * max(0.0, min(1.0, amt))
                 if rollFade and mode in ROLL_MODES and idx in self.rollTop:
@@ -1923,7 +1924,7 @@ class _LightShow:
                     groupTop[key] = max(groupTop.get(key, bri), bri)
             cmd = (int(round(h)) % 361, int(round(sat)), int(round(bri)))
             # Offset: each light shows what it would have a share of a beat ago, further back down the line, so changes ripple across them
-            cmd = self._delayed(idx, now, cmd, offset * min(2.0, max(0.1, beatPeriod)) * places[idx])
+            cmd = self._delayed(idx, now, cmd, offset * min(2.0, max(0.1, beatPeriod)) * places[idx], dt)
             if cmd is None:
                 continue  # nothing old enough yet: it keeps what it shows
             # Only send when something visibly changed.
@@ -2030,11 +2031,43 @@ class _LightShow:
                 members.sort(key=lambda idx: (places.get(idx, 0.0), rank[idx]))
         return {key: members for key, members in groups.items() if len(members) > 1}
 
-    def _chaseLit(self, groups):
-        """The lights a Chase roll's deep flash is on, one per group, moving to the next at each deep flash."""
-        if self.chaseStep <= 0:
-            return set()
-        return {members[(self.chaseStep - 1) % len(members)] for members in groups.values()}
+    def _fewestHits(self, need, beatPeriod):
+        """The fewest roll hits that take at least need seconds, counted so steps of that many stay on the beat."""
+        perBeat = max(1, round(beatPeriod / self.rollHit))
+        divisors = [hits for hits in range(1, perBeat + 1) if perBeat % hits == 0]
+        return next((hits for hits in divisors if hits * self.rollHit >= need), perBeat * math.ceil(need / beatPeriod))
+
+    def _chasePops(self, key, members):
+        """Does this group's Chase pop from light to light? Above Standard it may, the group as one area flashing up to
+        that level's limit, until its burst is used up (the group's or any one light's); then it sweeps instead."""
+        level = self.engine.flashLevel
+        if level == "Standard":
+            return False
+        lim = self.chaseLimiters.get(key)
+        return not ((lim is not None and lim.resting) or any(self.limiters[i].resting for i in members if i in self.limiters))
+
+    def _chaseWeights(self, groups, beatPeriod):
+        """{light: 0..1} how far into a Chase roll's deep flash each grouped light is.
+        At Standard a band sweeps round each group in time with the hits, full on the light it is over and fading over
+        one step either side, so the next light is up before the last goes down: the group's brightest never dips, and
+        the group as one area doesn't flash. Each light's rise and fall per time round stay within Standard.
+        Above Standard each step pops the next light instead, a deep flash fading before the next, as fast as the level allows."""
+        if self.chaseFrom is None:
+            self.chaseFrom = self.rollPos
+        gone = self.rollPos - self.chaseFrom
+        out = {}
+        for key, members in groups.items():
+            n = len(members)
+            if self._chasePops(key, members):
+                step, frac = divmod(gone / self._fewestHits(FLASH_LEVELS[self.engine.flashLevel][1], beatPeriod), 1.0)
+                out.update((idx, 0.0) for idx in members)
+                out[members[int(step) % n]] = max(0.0, 1.0 - frac / ROLL_ACCENT_SHARE)
+                continue
+            pos = gone / self._fewestHits(CHASE_ROUND / n, beatPeriod) % n
+            for k, idx in enumerate(members):
+                d = abs(k - pos)
+                out[idx] = max(0.0, min(1.0, 1.5 - min(d, n - d)))
+        return out
 
     def _hitsPerAccent(self, src, now):
         """Roll hits from one deep flash to the next, always landing on the beat: as few as keep within the flash limit,
@@ -2176,18 +2209,20 @@ class _LightShow:
             return beat, countBeat and beatIdx % every == 0, every
         return beat, countBeat and (self.beatCount - 1) % every == 0, every
 
-    def _delayed(self, idx, now, cmd, delay):
-        """The command light idx should show now, delay seconds behind: the newest one at least that old,
-        None while there is none yet. With no delay, cmd itself."""
+    def _delayed(self, idx, now, cmd, delay, step=0.0):
+        """The command light idx should show now, delay seconds behind: the newest one at least that old, give or
+        take half a frame (step seconds between frames), None while there is none yet. With no delay, cmd itself."""
         if delay <= 0:
             self.delayed.pop(idx, None)
             return cmd
         q = self.delayed.setdefault(idx, deque())
         q.append((now, cmd))
-        cmd = None
-        while q and q[0][0] <= now - delay:
-            cmd = q.popleft()[1]
-        return cmd
+        # Rounded to the nearest frame (step apart), not up: rounding up puts every light with any delay at all a
+        # whole frame behind the first, which shows as that one light flashing ahead of the rest.
+        cutoff = now - delay + step / 2.0
+        while len(q) > 1 and q[1][0] <= cutoff:
+            q.popleft()  # the head stays: the command shown now, for a frame whose step came out shorter
+        return q[0][1] if q[0][0] <= cutoff else None
 
     def _places(self, targets):
         """{light index: 0..1}, where each light comes along the lights, for Offset, Colour spread, Frequency bands,
@@ -2300,10 +2335,11 @@ class _LightShow:
             return 0.0
         return fade
 
-    def _rollBrightness(self, now, lo, hi, h, sat, amt, accent=None, lit=True):
+    def _rollBrightness(self, now, lo, hi, h, sat, amt, accent=None, chase=None):
         """(brightness, top level) 0..100 while a drum roll plays: a smooth climb in Swell, one pulse per
         hit in Strobe (deep on the beat under the flash limit), and in Strobe + Swell those pulses under a ceiling that climbs like the Swell.
-        In Chase only the light the deep flash is on (lit) takes it, and the rest ripple.
+        In Chase a grouped light takes its share (chase, 0..1, from _chaseWeights) of the sweeping deep flash, rippling beneath it;
+        a light in no group keeps the Strobe.
         accent is a slow light's own strobe level: it pulses with that alone, with no ripple between."""
         style = self.engine.rollStyle
         if self.rollBegan is None:
@@ -2318,7 +2354,8 @@ class _LightShow:
         if accent is not None:
             return lo + (hi - lo) * accent, hi
         ripple = min(rollRipple(h, sat), hi - lo)  # the limit counts flashes, not their depth, so accents can use the whole range
-        return lo + (hi - ripple - lo) * (self.rollAccent if lit else 0.0) + ripple * self.rollFlash, hi
+        floor = lo + (hi - ripple - lo) * ROLL_RIPPLE_FLOOR  # the ripple can't be deeper, so it sits higher up to show
+        return floor + (hi - ripple - floor) * (self.rollAccent if chase is None else chase) + ripple * self.rollFlash, hi
 
 
 class SoundEngine:

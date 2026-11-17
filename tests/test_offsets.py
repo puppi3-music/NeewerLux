@@ -246,6 +246,19 @@ class SoundOffsetTests(unittest.TestCase):
         self.assertEqual(shown[3], ("c", 0))
         self.assertEqual(shown[7], ("c", 4))
 
+    def test_delay_rounds_to_the_nearest_frame(self):
+        """A delay under half a frame shows at once, so the first light doesn't flash a whole frame ahead of the rest."""
+        show = makeShow()
+        step = 0.01
+        self.assertEqual([show._delayed(1, t * step, t, 0.004, step) for t in range(5)], [0, 1, 2, 3, 4])
+        self.assertEqual([show._delayed(2, t * step, t, 0.007, step) for t in range(5)], [None, 0, 1, 2, 3])
+
+    def test_a_short_frame_keeps_what_is_shown(self):
+        show = makeShow()
+        show._delayed(1, 0.0, "a", 0.006, 0.01)
+        self.assertEqual(show._delayed(1, 0.01, "b", 0.006, 0.01), "a")
+        self.assertEqual(show._delayed(1, 0.012, "c", 0.006, 0.002), "a")  # a quick frame: no new command old enough
+
     def test_no_delay_passes_straight_through(self):
         show = makeShow()
         show._delayed(1, 0.0, "old", 0.5)
