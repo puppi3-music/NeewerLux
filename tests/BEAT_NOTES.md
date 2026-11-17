@@ -1,6 +1,6 @@
 # Beat tracking: working notes
 
-Notes for anyone (person or coding assistant) changing the tempo and beat tracking in `puppi3s_neewerlux_audio.py`
+Notes for anyone (person or coding assistant) changing the tempo and beat tracking in `puppi3lux_audio.py`
 (`_TempoTracker`, `_KickDetector`, the roll finder). CHANGELOG.md says what changed; this file says how it was
 checked, what is still wrong, and **what was tried and didn't work**, so the same dead ends aren't walked again.
 Add to it when you try something, whether it is kept or dropped.
@@ -189,7 +189,7 @@ Each entry: what was tried, on which problem, and what the numbers showed.
   drop, which is scored against Traktor's one 174 grid (see Open problems); from 150 s both are 100%. Scored instead
   by the share of detected kicks on the tracker's own grid, 90-140 s is even: base 43 of 99, (r) 44 of 98. Not a
   real loss, no fix; light years is the only gap left vs base.
-  **(r) kept (2026-11-16), ported into puppi3s_neewerlux_audio.py**, though light years (93.1→91.5) breaks the "about a
+  **(r) kept (2026-11-16), ported into puppi3lux_audio.py**, though light years (93.1→91.5) breaks the "about a
   point" rule: base already fails its 60-80 s, just inside the tolerance, the evidence there is split and five
   fixes failed, while (r) gains Desire +10.5, Apex +3.4, Feels Like Us +3.1, Love +2.0, Savana +1.3, messy +1.1.
   Accepted costs vs base: Sub Focus 49.4→47.9 (scoring artifact, see above); g90 Punctual 9.4→19.1 (extra 21→45),
@@ -293,6 +293,6 @@ Everything tried on a day, kept or dropped, in order. Numbers are on / g50 / g90
   synthetic/Strobe mic the same. Best variant; not kept yet (Sub Focus, light years behind base).
 - Comb-gated hold, Sub Focus under (r): its -1.5 vs base is all in the 136→174 ramp (90-140 s) scored against one
   174 grid; on detected kicks the two are even (43/99 vs 44/98). No fix; only light years still behind base.
-- Comb-gated hold (r) kept and ported into puppi3s_neewerlux_audio.py: vs base Desire 89.3→99.8, Apex 85.4→88.8, Feels Like
+- Comb-gated hold (r) kept and ported into puppi3lux_audio.py: vs base Desire 89.3→99.8, Apex 85.4→88.8, Feels Like
   Us 87.4→90.5, Love 90.8→92.8; light years 93.1→91.5 and the g90 costs accepted (see Off-beat flips). New baseline
   for later changes is this module.

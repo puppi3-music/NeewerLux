@@ -2,6 +2,11 @@
   "name": "Candlelight",
   "description": "Gentle warm candle flicker with subtle movement",
   "loop": true,
+  "suggest": {
+    "offset": 40,
+    "spread": 0,
+    "pattern": "Bottom to top"
+  },
   "keyframes": [
     {
       "hold_ms": 0,

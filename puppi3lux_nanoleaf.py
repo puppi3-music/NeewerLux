@@ -1,4 +1,4 @@
-"""Nanoleaf panel support for Puppi3's NeewerLux.
+"""Nanoleaf panel support for Puppi3Lux.
 
 Drives Nanoleaf panel controllers (Shapes, Canvas, Lines, Elements, Light Panels) through
 their local Open API: HTTP on port 16021 for state, UDP extControl streaming for per-panel
@@ -29,6 +29,7 @@ import urllib.request
 
 API_PORT = 16021
 STREAM_PORT = 60222  # extControl v2 always streams to this port
+STREAM_EFFECT = "*ExtControl*"  # what /effects/select reads while the device is in stream mode
 
 # Whole-device colours that come quickly (sound reactive, animations, a dragged slider) are streamed over UDP
 # instead of one HTTP PUT each, which takes 70-600 ms on a Shapes set; the stream keeps up with 20+ frames a second.
@@ -395,10 +396,10 @@ def discoverAll(timeout=3.0, scan=True):
 # ---------------------------------------------------------------------------
 
 def lightPrefsDir():
-    """The app's light_prefs folder, by the same rule as lightPrefsDir() in Puppi3sNeewerLux.py: next to the
+    """The app's light_prefs folder, by the same rule as lightPrefsDir() in Puppi3Lux.py: next to the
     script or program, except in the macOS app, where it is in ~/Library/Application Support."""
     if getattr(sys, "frozen", False) and sys.platform == "darwin":
-        base = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "Puppi3sNeewerLux")
+        base = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "Puppi3Lux")
     else:
         base = os.path.dirname(os.path.abspath(sys.argv[0]))
     return os.path.join(base, "light_prefs")
@@ -437,6 +438,27 @@ def updateSaved(deviceId, path=None, **fields):
             saveSaved(devices, path)
             return True
     return False
+
+
+def removeSaved(deviceId, path=None):
+    """Take one paired device out of the saved file. Returns the removed entry, or None if it was not there."""
+    devices = loadSaved(path)
+    for i, d in enumerate(devices):
+        if d["id"] == deviceId:
+            del devices[i]
+            saveSaved(devices, path)
+            return d
+    return None
+
+
+def revokeToken(ip, port, token, timeout=3.0):
+    """Ask the controller to forget a token (DELETE /api/v1/<token>). True if it did; False if it could not
+    be reached or refused, which leaves the token on the device but does no harm."""
+    try:
+        status, _ = _request("DELETE", "http://%s:%d/api/v1/%s" % (ip, int(port), token), timeout=timeout)
+    except NanoleafError:
+        return False
+    return status < 300
 
 
 def addSaved(entry, path=None):
@@ -535,24 +557,76 @@ def findMovedDevice(entry, hosts=None, port=None, timeout=0.6):
 # Controller: one per physical device
 # ---------------------------------------------------------------------------
 
+def panelPoints(layout, orientation=0):
+    """{panel id: (x, y)} for the light panels in a /panelLayout/layout body, as they sit on the wall: the
+    canvas rotation set in the Nanoleaf app (/panelLayout/globalOrientation) applied clockwise (the convention
+    LumenDesk checked against Nanoleaf's SDK), y upward. The layout's own x/y never include that rotation."""
+    angle = math.radians(float(orientation or 0) % 360)
+    c, s = math.cos(angle), math.sin(angle)
+    points = {}
+    for p in layout.get("positionData", []):
+        if p.get("shapeType") in NON_LIGHT_SHAPE_TYPES or p.get("panelId", 0) == 0:
+            continue
+        x, y = float(p.get("x", 0)), float(p.get("y", 0))
+        points[p["panelId"]] = (round(x * c + y * s, 2), round(-x * s + y * c, 2))
+    return points
+
+
+# How lights are laid out for Offset, Colour spread and the sound modes that give each light its own part.
+# "Light order" goes by the light list; the rest place a Nanoleaf's panels by where they are on the wall.
+PATTERNS = ("Light order", "Left to right", "Right to left", "Top to bottom", "Bottom to top",
+            "Centre out", "Edges in", "Around", "Random")
+LIGHT_ORDER = PATTERNS[0]
+
+
+RANDOM = "Random"  # every light gets its own place at random, see the app's lightPlaces
+
+
+def patternWraps(pattern):
+    """True when a pattern goes round and comes back to its start (Around), so its last place is not 1."""
+    return pattern in ("Around", RANDOM)
+
+
+def patternPlaces(points, pattern):
+    """{key: 0..1}, where each point (x, y with y upward) comes along a pattern: 0 the first, 1 the last.
+    Points level with each other share a place, so a sweep moves as a straight edge and Centre out in rings.
+    Around goes clockwise from straight up, round to just short of 1. Points all in one place are all 0."""
+    if not points:
+        return {}
+    xs = [p[0] for p in points.values()]
+    ys = [p[1] for p in points.values()]
+    cx, cy = (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
+    if pattern == "Around":
+        out = {}
+        for key, (x, y) in points.items():
+            dx, dy = x - cx, y - cy
+            out[key] = 0.0 if abs(dx) < 1e-6 and abs(dy) < 1e-6 else (math.atan2(dx, dy) / (2 * math.pi)) % 1.0
+        return out
+    value = {"Left to right": lambda x, y: x, "Right to left": lambda x, y: -x,
+             "Top to bottom": lambda x, y: -y, "Bottom to top": lambda x, y: y,
+             "Centre out": lambda x, y: math.hypot(x - cx, y - cy),
+             "Edges in": lambda x, y: -math.hypot(x - cx, y - cy)}.get(pattern)
+    if value is None:
+        return {key: 0.0 for key in points}
+    vals = {key: value(x, y) for key, (x, y) in points.items()}
+    lo, hi = min(vals.values()), max(vals.values())
+    if hi - lo < 1e-6:
+        return {key: 0.0 for key in points}
+    return {key: (v - lo) / (hi - lo) for key, v in vals.items()}
+
+
 def orderPanels(layout, orientation=0):
     """Light panel ids from a /panelLayout/layout body, in reading order on the wall: column by column from
     left to right, top to bottom within a column.
 
-    orientation is the canvas rotation set in the Nanoleaf app (/panelLayout/globalOrientation). The layout's
-    x/y never include it, so it is applied here, clockwise (the convention LumenDesk checked against Nanoleaf's
-    SDK). Panels whose rotated x lies within a quarter of the smallest panel side of the previous one share a
-    column, so a row of up and down triangles, or a jagged hexagon column, does not order by stray units of x."""
+    orientation is the canvas rotation set in the Nanoleaf app, applied as in panelPoints. Panels whose rotated
+    x lies within a quarter of the smallest panel side of the previous one share a column, so a row of up and
+    down triangles, or a jagged hexagon column, does not order by stray units of x."""
     panels = [p for p in layout.get("positionData", [])
               if p.get("shapeType") not in NON_LIGHT_SHAPE_TYPES and p.get("panelId", 0) != 0]
     if not panels:
         return []
-    angle = math.radians(float(orientation or 0) % 360)
-    c, s = math.cos(angle), math.sin(angle)
-    points = []
-    for p in panels:
-        x, y = float(p.get("x", 0)), float(p.get("y", 0))
-        points.append((x * c + y * s, -x * s + y * c, p["panelId"]))
+    points = [(x, y, pid) for pid, (x, y) in panelPoints(layout, orientation).items()]
     sides = [SHAPE_SIDE.get(p.get("shapeType"), 0) for p in panels]
     sides = [v for v in sides if v > 0] or [layout.get("sideLength") or 100]
     tolerance = min(sides) * 0.25
@@ -568,6 +642,18 @@ def orderPanels(layout, orientation=0):
     return [pid for _, pid in ordered]
 
 
+def _loadPositions(saved):
+    """{panel id: (x, y)} from the saved file's {"id": [x, y]}; anything malformed is left out."""
+    out = {}
+    if isinstance(saved, dict):
+        for pid, xy in saved.items():
+            try:
+                out[int(pid)] = (float(xy[0]), float(xy[1]))
+            except (TypeError, ValueError, IndexError):
+                pass
+    return out
+
+
 class NanoleafController:
     """Shared by all rows of one device: HTTP, layout, power and the UDP stream."""
 
@@ -580,6 +666,7 @@ class NanoleafController:
         self.token = entry["token"]
         self.perPanel = bool(entry.get("perPanel", False))
         self.panels = list(entry.get("panels", []))  # ordered light panel ids, cached from the layout
+        self.positions = _loadPositions(entry.get("positions"))  # panel id -> (x, y) on the wall, cached too
         self.savedPath = savedPath
         self.relocateHosts = None  # hosts to search when the device moves; None = this machine's /24 (tests narrow it)
         self.relocateInterval = 60.0  # seconds between searches, so connect retries do not rescan every time
@@ -653,8 +740,10 @@ class NanoleafController:
         orientation = body.get("globalOrientation", {})
         orientation = orientation.get("value", 0) if isinstance(orientation, dict) else 0
         panels = orderPanels(body["layout"], orientation)
-        changed = panels != self.panels
+        positions = panelPoints(body["layout"], orientation)
+        changed = panels != self.panels or positions != self.positions
         self.panels = panels
+        self.positions = positions
         self._layoutLoaded = True
         if changed and self.savedPath is not False:
             self._savePanels()
@@ -662,7 +751,8 @@ class NanoleafController:
 
     def _savePanels(self):
         try:
-            updateSaved(self.id, self.savedPath, panels=self.panels)
+            updateSaved(self.id, self.savedPath, panels=self.panels,
+                        positions={str(pid): list(xy) for pid, xy in self.positions.items()})
         except OSError:
             pass
 
@@ -936,6 +1026,28 @@ class NanoleafController:
         else:
             await asyncio.shield(self._entering)
 
+    async def checkStream(self, resume=True):
+        """Notice the device leaving stream mode behind our back: a tap or swipe on the panels, or the Nanoleaf
+        app, picks another effect and the frames we send are then ignored. Marks the stream ended and, with resume,
+        enters stream mode again and resends every panel's colour (keeping what to put back when we finish).
+        Returns True if the stream had been lost."""
+        if not self.streaming or self._entering is not None:
+            return False
+        status, effect = await self.http("GET", "/effects/select")
+        if status != 200 or not isinstance(effect, str) or effect == STREAM_EFFECT:
+            return False
+        with self._stateLock:
+            whole = self.wholeStreaming
+            # Taking it back keeps _saved, so stopping still puts back the effect from before. Otherwise the effect
+            # just picked is the one to keep: the next stream saves (and later puts back) that one instead.
+            self._endStream(restore=resume)
+            self.wholeStreaming = False
+            self._stateLock.notify_all()
+        if resume and not whole:
+            await self._ensureStreaming()
+            self._sendFrame()
+        return True
+
     async def _startStreaming(self):
         await asyncio.to_thread(self._startStreamingSync)
 
@@ -1034,6 +1146,13 @@ class NanoleafDevice:
     @property
     def token(self):
         return self.controller.token
+
+    @property
+    def position(self):
+        """This panel's (x, y) on the wall, y upward, or None for the whole device or an unknown layout."""
+        if self.panelId is None:
+            return None
+        return self.controller.positions.get(self.panelId)
 
     def __repr__(self):
         return "NanoleafDevice(%s, %s)" % (self.address, self.name)

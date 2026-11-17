@@ -1,4 +1,4 @@
-"""Visual keyframe editor dialog for Puppi3's NeewerLux animations."""
+"""Visual keyframe editor dialog for Puppi3Lux animations."""
 
 import json
 import copy
@@ -46,7 +46,7 @@ def _colorForCCT(temp, bri):
 
 
 try:
-    from puppi3s_neewerlux_ui import GradientSlider
+    from puppi3lux_ui import GradientSlider
 except ImportError:
     GradientSlider = None  # fallback handled below
 
@@ -853,9 +853,12 @@ class AnimationEditorDialog(QDialog):
 
     def getResult(self):
         """Return the edited animation data."""
-        return {
+        result = {
             "name": self._nameField.text().strip() or "Untitled",
             "description": self._descField.text().strip(),
             "loop": self._loopCheck.isChecked(),
             "keyframes": self._keyframes
         }
+        if "suggest" in self._animData:  # suggested Offset / Colour spread / Pattern, not edited here
+            result["suggest"] = self._animData["suggest"]
+        return result

@@ -2,6 +2,11 @@
   "name": "Rainbow Gradient",
   "description": "Continuous smooth rainbow sweep through the full spectrum",
   "loop": true,
+  "suggest": {
+    "offset": 0,
+    "spread": 100,
+    "pattern": "Left to right"
+  },
   "keyframes": [
     {
       "hold_ms": 0,

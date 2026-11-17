@@ -2,6 +2,11 @@
   "name": "Bass Drop",
   "description": "Rhythmic bright flash and fade like a bass drop impact",
   "loop": true,
+  "suggest": {
+    "offset": 25,
+    "spread": 0,
+    "pattern": "Centre out"
+  },
   "keyframes": [
     {
       "hold_ms": 80,

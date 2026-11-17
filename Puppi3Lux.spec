@@ -1,12 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
-# Puppi3's NeewerLux PyInstaller spec file
-# Build with:  pyinstaller Puppi3sNeewerLux.spec
+# Puppi3Lux PyInstaller spec file
+# Build with:  pyinstaller Puppi3Lux.spec
 # Produces, on the OS it is run on (PyInstaller can't cross-compile):
-#   Windows: dist/Puppi3sNeewerLux/Puppi3sNeewerLux.exe   (--onedir, no console)
-#   Linux:   dist/Puppi3sNeewerLux/Puppi3sNeewerLux       (--onedir)
-#   macOS:   dist/Puppi3sNeewerLux.app                    (app bundle, for the CPU of the build machine)
+#   Windows: dist/Puppi3Lux/Puppi3Lux.exe   (--onedir, no console)
+#   Linux:   dist/Puppi3Lux/Puppi3Lux       (--onedir)
+#   macOS:   dist/Puppi3Lux.app                    (app bundle, for the CPU of the build machine)
 # On Windows and Linux the release workflow copies light_prefs/ next to the program. The macOS app carries
-# it inside the bundle and copies it to ~/Library/Application Support/Puppi3sNeewerLux on first launch.
+# it inside the bundle and copies it to ~/Library/Application Support/Puppi3Lux on first launch.
 
 import os
 import re
@@ -14,10 +14,10 @@ import sys
 from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
-APP_ID = 'io.github.puppi3_music.Puppi3sNeewerLux'
+APP_ID = 'io.github.puppi3_music.Puppi3Lux'
 
-with open('Puppi3sNeewerLux.py', encoding='utf-8') as f:
-    VERSION = re.search(r'^NEEWERLUX_VERSION = "([^"]+)"', f.read(), re.M).group(1)
+with open('Puppi3Lux.py', encoding='utf-8') as f:
+    VERSION = re.search(r'^PUPPI3LUX_VERSION = "([^"]+)"', f.read(), re.M).group(1)
 
 # Collect all bleak subpackages/data (the WinRT, CoreBluetooth and BlueZ backends)
 bleak_datas, bleak_binaries, bleak_hiddenimports = collect_all('bleak')
@@ -49,20 +49,20 @@ else:
     icon = APP_ID + '.ico'
 
 a = Analysis(
-    ['Puppi3sNeewerLux.py'],
+    ['Puppi3Lux.py'],
     pathex=[],
     binaries=bleak_binaries,
     datas=datas + bleak_datas,
     hiddenimports=[
         'bleak',
-        'puppi3s_neewerlux_ui',
-        'puppi3s_neewerlux_theme',
-        'puppi3s_neewerlux_webui',
-        'puppi3s_neewerlux_anim_editor',
-        'puppi3s_neewerlux_audio',
+        'puppi3lux_ui',
+        'puppi3lux_theme',
+        'puppi3lux_webui',
+        'puppi3lux_anim_editor',
+        'puppi3lux_audio',
         'sounddevice',
-        'puppi3s_neewerlux_midi',
-        'puppi3s_neewerlux_nanoleaf',
+        'puppi3lux_midi',
+        'puppi3lux_nanoleaf',
         'rtmidi',
         'numpy',
         'PySide6',
@@ -88,7 +88,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='Puppi3sNeewerLux',
+    name='Puppi3Lux',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -110,26 +110,26 @@ coll = COLLECT(
     strip=False,
     upx=sys.platform == 'win32',
     upx_exclude=[],
-    name='Puppi3sNeewerLux',
+    name='Puppi3Lux',
 )
 
 if sys.platform == 'darwin':
     app = BUNDLE(
         coll,
-        name='Puppi3sNeewerLux.app',
+        name='Puppi3Lux.app',
         icon=icon,
         bundle_identifier=APP_ID,
         version=VERSION,
         info_plist={
-            'CFBundleName': 'Puppi3sNeewerLux',
-            'CFBundleDisplayName': "Puppi3's NeewerLux",
+            'CFBundleName': 'Puppi3Lux',
+            'CFBundleDisplayName': "Puppi3Lux",
             'CFBundleShortVersionString': VERSION,
             'CFBundleVersion': VERSION,
             'NSHighResolutionCapable': True,
             'LSMinimumSystemVersion': '11.0',
             # Without these, macOS refuses (or kills the app on) Bluetooth, microphone and local network access
-            'NSBluetoothAlwaysUsageDescription': "Puppi3's NeewerLux uses Bluetooth to control your Neewer lights.",
-            'NSMicrophoneUsageDescription': "Puppi3's NeewerLux listens to an audio input to drive the lights in Sound mode.",
-            'NSLocalNetworkUsageDescription': "Puppi3's NeewerLux finds and controls Nanoleaf panels on your network, and serves its web dashboard.",
+            'NSBluetoothAlwaysUsageDescription': "Puppi3Lux uses Bluetooth to control your Neewer lights.",
+            'NSMicrophoneUsageDescription': "Puppi3Lux listens to an audio input to drive the lights in Sound mode.",
+            'NSLocalNetworkUsageDescription': "Puppi3Lux finds and controls Nanoleaf panels on your network, and serves its web dashboard.",
         },
     )

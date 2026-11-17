@@ -1,7 +1,7 @@
-"""Puppi3's NeewerLux main window UI.
+"""Puppi3Lux main window UI.
 
 Builds the widget tree and layouts. Widget attribute names are the
-contract with Puppi3sNeewerLux.py, which connects the signal handlers.
+contract with Puppi3Lux.py, which connects the signal handlers.
 """
 
 import json
@@ -42,7 +42,7 @@ except ImportError:
         )
         customSignal = Signal
     except ImportError:
-        raise  # let it propagate, Puppi3sNeewerLux.py will handle the error
+        raise  # let it propagate, Puppi3Lux.py will handle the error
 
 
 # === INPUT GUARD (mouse wheel + touchscreen) ===
@@ -188,7 +188,7 @@ class SpinBoxWithButtons(QWidget):
         if suffix:
             self._spin.setSuffix(suffix)
         self._spin.setButtonSymbols(QSpinBox.NoButtons)
-        self._spin.setProperty("externalButtons", True)  # theme gives the hidden arrows a size, see puppi3s_neewerlux_theme
+        self._spin.setProperty("externalButtons", True)  # theme gives the hidden arrows a size, see puppi3lux_theme
         self._spin.valueChanged.connect(self.valueChanged.emit)
 
         btnStyle = "QPushButton { font-size: 14px; font-weight: bold; min-width: 28px; }"
@@ -1183,6 +1183,10 @@ class PaletteEditor(QWidget):
             self._edited()
 
 
+# The Pattern choices, as puppi3lux_nanoleaf.PATTERNS (kept here so the UI does not import it).
+LIGHT_PATTERNS = ["Light order", "Left to right", "Right to left", "Top to bottom", "Bottom to top", "Centre out", "Edges in", "Around", "Random"]
+
+
 def _addSliderRow(grid, row_offset, label_text, slider, value_label, min_label, max_label, gradient_bar, bold_font=None):
     """Add a slider group (gradient + slider + min/max) to a QGridLayout at row_offset.
     Uses 3 grid rows per slider: gradient row, slider row, min/max row.
@@ -1272,7 +1276,7 @@ class Ui_MainWindow(object):
         # === WINDOW ===
         MainWindow.setMinimumSize(780, 620)
         MainWindow.resize(900, 800)
-        MainWindow.setWindowTitle("Puppi3's NeewerLux")
+        MainWindow.setWindowTitle("Puppi3Lux")
 
         self.centralwidget = QWidget(MainWindow)
         MainWindow.setCentralWidget(self.centralwidget)
@@ -1573,10 +1577,15 @@ class Ui_MainWindow(object):
         # Labeled controls grid
         cg = QGridLayout(); cg.setSpacing(4)
         loopL = QLabel("Loop:"); loopL.setFont(mainFont); cg.addWidget(loopL, 0, 0)
-        self.animLoopCheck = QCheckBox(); cg.addWidget(self.animLoopCheck, 0, 1)
-        loopCountL = QLabel("Loops:"); loopCountL.setFont(mainFont); cg.addWidget(loopCountL, 1, 0)
-        self.animLoopCountSpin = SpinBoxWithButtons(minVal=0, maxVal=999, value=0)
-        self.animLoopCountSpin.setToolTip("0 = infinite (if Loop checked), N = play N times then stop")
+        self.animLoopCheck = QCheckBox("Forever"); self.animLoopCheck.setChecked(True)
+        self.animLoopCheck.setToolTip("Ticked: the animation goes round and round until you press Stop.\n"
+            "Unticked: it plays the number of Times below, then stops.")
+        cg.addWidget(self.animLoopCheck, 0, 1)
+        loopCountL = QLabel("Times:"); loopCountL.setFont(mainFont); cg.addWidget(loopCountL, 1, 0)
+        self.animLoopCountSpin = SpinBoxWithButtons(minVal=1, maxVal=999, value=1)
+        self.animLoopCountSpin.setToolTip("How many times to play the animation when Loop Forever is unticked")
+        self.animLoopCountSpin.setEnabled(False)
+        self.animLoopCheck.toggled.connect(lambda on: self.animLoopCountSpin.setEnabled(not on))
         cg.addWidget(self.animLoopCountSpin, 1, 1)
         spdL = QLabel("Speed:"); spdL.setFont(mainFont); cg.addWidget(spdL, 2, 0)
         self.animSpeedCombo = QComboBox()
@@ -1598,7 +1607,7 @@ class Ui_MainWindow(object):
         cg.addWidget(self.animBriSpin, 4, 1)
         offL = QLabel("Offset:"); offL.setFont(mainFont); cg.addWidget(offL, 5, 0)
         self.animOffsetSpin = SpinBoxWithButtons(minVal=0, maxVal=100, value=0, suffix="%")
-        self.animOffsetSpin.setToolTip("Staggers the lights through the animation, in light order.\n"
+        self.animOffsetSpin.setToolTip("Staggers the lights through the animation, in the order Pattern sets.\n"
             "0% = every light in step. 100% = spread evenly over the whole loop, so it chases from light to light.")
         cg.addWidget(self.animOffsetSpin, 5, 1)
         sprL = QLabel("Colour spread:"); sprL.setFont(mainFont); cg.addWidget(sprL, 6, 0)
@@ -1607,6 +1616,24 @@ class Ui_MainWindow(object):
             "0% = the colours the animation sets. 100% = spread evenly over the whole wheel.\n"
             "White (CCT) keyframes are left as they are.")
         cg.addWidget(self.animSpreadSpin, 6, 1)
+        patL = QLabel("Pattern:"); patL.setFont(mainFont); cg.addWidget(patL, 7, 0)
+        self.animPatternCombo = QComboBox()
+        self.animPatternCombo.addItems(LIGHT_PATTERNS)
+        self.animPatternCombo.setToolTip("How the lights are laid out for Offset and Colour spread.\n"
+            "Light order: by the light list.\n"
+            "The others place a Nanoleaf shown one light per panel by where its panels are on the wall:\n"
+            "a sweep crosses them as a straight edge, Centre out and Edges in move in rings,\n"
+            "Around turns like a clock hand. Other lights keep their place in light order.")
+        patL.setToolTip(self.animPatternCombo.toolTip())
+        cg.addWidget(self.animPatternCombo, 7, 1)
+        smL = QLabel("Smoothing:"); smL.setFont(mainFont); cg.addWidget(smL, 8, 0)
+        self.animSmoothSpin = SpinBoxWithButtons(minVal=0, maxVal=100, value=0, suffix="%")
+        self.animSmoothSpin.setToolTip("How much of each keyframe is spent gliding from the colour before it.\n"
+            "0% = the fades the animation sets. 50% = half of each step fades, half holds.\n"
+            "100% = it never holds, always moving smoothly on to the next colour.\n"
+            "The animation's timing stays the same.")
+        smL.setToolTip(self.animSmoothSpin.toolTip())
+        cg.addWidget(self.animSmoothSpin, 8, 1)
         animCtrl.addLayout(cg)
 
         self.animStatusLabel = QLabel("Stopped")
@@ -1670,6 +1697,11 @@ class Ui_MainWindow(object):
             "Changing this stops any animation or sound reactive session and re-links the device.")
         self.nanoleafPerPanelCheck.setVisible(False)
         lpLay.addWidget(self.nanoleafPerPanelCheck)
+        self.nanoleafUnpairButton = QPushButton("Unpair this Nanoleaf…")
+        self.nanoleafUnpairButton.setToolTip("Forgets this Nanoleaf: takes it out of the light table and nanoleaf.json,\n"
+            "and tells the controller to drop this app's token. Use Add Nanoleaf to pair it again.")
+        self.nanoleafUnpairButton.setVisible(False)
+        lpLay.addWidget(self.nanoleafUnpairButton, alignment=Qt.AlignLeft)
         lpLay.addStretch(1)
         self.saveLightPrefsButton = QPushButton("Save Preferences")
         lpLay.addWidget(self.saveLightPrefsButton, alignment=Qt.AlignRight)
@@ -1824,7 +1856,7 @@ class Ui_MainWindow(object):
         self.globalPrefsLay.addRow(QLabel("<br><strong>Logging</strong>"))
         self.enableLogTab_check = QCheckBox("Enable Log tab (show debug output in GUI)")
         self.enableLogTab_check.setChecked(True)
-        self.logToFile_check = QCheckBox("Also write log to file (light_prefs/Puppi3sNeewerLux.log)")
+        self.logToFile_check = QCheckBox("Also write log to file (light_prefs/Puppi3Lux.log)")
         self.logHeartbeat_check = QCheckBox("Log a background heartbeat every 30 seconds")
         self.globalPrefsLay.addRow(self.enableLogTab_check)
         self.globalPrefsLay.addRow(self.logToFile_check)
@@ -1859,14 +1891,14 @@ class Ui_MainWindow(object):
         infoLay.addWidget(self.updateBanner)
 
         self.checkUpdateButton = QPushButton("Check for Updates")
-        self.checkUpdateButton.setToolTip("Check GitHub for a newer version of Puppi3's NeewerLux")
+        self.checkUpdateButton.setToolTip("Check GitHub for a newer version of Puppi3Lux")
         infoLay.addWidget(self.checkUpdateButton)
 
         self.infoText = QTextBrowser()
         self.infoText.setReadOnly(True)
         self.infoText.setOpenExternalLinks(True)
         self.infoText.setHtml("""
-<h2>Puppi3's NeewerLux {VERSION}</h2>
+<h2>Puppi3Lux {VERSION}</h2>
 
 <h3>Lights</h3>
 <p>Scan for Neewer lights over Bluetooth and control them in CCT, HSI, or Scene mode.
@@ -1909,7 +1941,7 @@ copied between installations.</p>
 <hr>
 
 <h3>HTTP reference</h3>
-<p><b>Base URL:</b> <code>http://localhost:8080/Puppi3sNeewerLux/doAction?</code></p>
+<p><b>Base URL:</b> <code>http://localhost:8080/Puppi3Lux/doAction?</code></p>
 <table cellpadding="4">
 <tr><td><b>discover</b></td><td>Scan for new lights</td></tr>
 <tr><td><b>link=N</b></td><td>Connect to light N, or <code>all</code></td></tr>
@@ -1925,15 +1957,15 @@ copied between installations.</p>
 <tr><td><b>stop_animate</b></td><td>Stop the running animation</td></tr>
 <tr><td><b>list / list_json</b></td><td>List lights, presets, and animations</td></tr>
 </table>
-<p>POST to <code>/Puppi3sNeewerLux/batch</code> for multi-light JSON commands, or to
-<code>/Puppi3sNeewerLux/animate</code> for JSON animation control.</p>
+<p>POST to <code>/Puppi3Lux/batch</code> for multi-light JSON commands, or to
+<code>/Puppi3Lux/animate</code> for JSON animation control.</p>
 
 <hr>
 
 <p style="color:#888; font-size:0.9em;">
-<b>Repository:</b> <a href="https://github.com/puppi3-music/NeewerLux/">github.com/puppi3-music/NeewerLux</a><br>
-<b>Releases:</b> <a href="https://github.com/puppi3-music/NeewerLux/releases">github.com/puppi3-music/NeewerLux/releases</a><br><br>
-Puppi3's NeewerLux by puppi3-music. Licensed under AGPL-3.0.<br>
+<b>Repository:</b> <a href="https://github.com/puppi3-music/Puppi3Lux/">github.com/puppi3-music/Puppi3Lux</a><br>
+<b>Releases:</b> <a href="https://github.com/puppi3-music/Puppi3Lux/releases">github.com/puppi3-music/Puppi3Lux/releases</a><br><br>
+Puppi3Lux by puppi3-music. Licensed under AGPL-3.0.<br>
 Fork of NeewerLux by <a href="https://github.com/poizenjam/NeewerLux/">PoizenJam</a>.
 Based on <a href="https://github.com/taburineagle/NeewerLite-Python/">NeewerLite-Python</a> (v0.12d) by Zach Glenwright.
 Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by Xu Lian.
@@ -1965,7 +1997,7 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         self.ColorModeTabWidget.addTab(self.logTab, "Log")
 
         # --- SOUND REACTIVE ---
-        # Added last so the indexes of the tabs above (used throughout Puppi3sNeewerLux.py) stay the same.
+        # Added last so the indexes of the tabs above (used throughout Puppi3Lux.py) stay the same.
         self.soundTab = QWidget()
         sndLay = QVBoxLayout(self.soundTab)
         sndLay.setContentsMargins(10, 10, 10, 10)
@@ -2045,7 +2077,7 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         sg.addWidget(self.soundAllLightsCheck, 6, 1, 1, 3)
         offL = QLabel("Offset:"); offL.setFont(mainFont); sg.addWidget(offL, 7, 0)
         self.soundOffsetSpin = _spin(0, 100, 0, "%")
-        self.soundOffsetSpin.setToolTip("Ripples changes across the lights, in light order: each light shows them a little later than the one before.\n"
+        self.soundOffsetSpin.setToolTip("Ripples changes across the lights, in the order Pattern sets: each light shows them a little later than the one before.\n"
             "0% = every light in step. 100% = the last light trails the first by nearly a beat.")
         sg.addWidget(self.soundOffsetSpin, 7, 1)
         sprL = QLabel("Colour spread:"); sprL.setFont(mainFont); sg.addWidget(sprL, 7, 2)
@@ -2054,10 +2086,21 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
             "0% = every light the same colour. 100% = spread evenly over the whole wheel or palette.\n"
             "For Spectrum colour, Beat colour jump and Bass pulse. Frequency bands and Rainbow drift already give each light its own colour.")
         sg.addWidget(self.soundSpreadSpin, 7, 3)
-        colL = QLabel("Colours:"); colL.setFont(mainFont); sg.addWidget(colL, 8, 0)
+        patL = QLabel("Pattern:"); patL.setFont(mainFont); sg.addWidget(patL, 8, 0)
+        self.soundPatternCombo = QComboBox()
+        self.soundPatternCombo.addItems(LIGHT_PATTERNS)
+        self.soundPatternCombo.setToolTip("How the lights are laid out for Offset, Colour spread, Rainbow drift,\n"
+            "Frequency bands (a third of the lights each, so Bottom to top puts the bass at the bottom) and a Chase drum roll.\n"
+            "Light order: by the light list.\n"
+            "The others place a Nanoleaf shown one light per panel by where its panels are on the wall:\n"
+            "a sweep crosses them as a straight edge, Centre out and Edges in move in rings,\n"
+            "Around turns like a clock hand. Other lights keep their place in light order.")
+        patL.setToolTip(self.soundPatternCombo.toolTip())
+        sg.addWidget(self.soundPatternCombo, 8, 1)
+        colL = QLabel("Colours:"); colL.setFont(mainFont); sg.addWidget(colL, 9, 0)
         self.soundPalette = PaletteEditor()
-        sg.addWidget(self.soundPalette, 8, 1, 1, 3)
-        beatL = QLabel("Beats from:"); beatL.setFont(mainFont); sg.addWidget(beatL, 9, 0)
+        sg.addWidget(self.soundPalette, 9, 1, 1, 3)
+        beatL = QLabel("Beats from:"); beatL.setFont(mainFont); sg.addWidget(beatL, 10, 0)
         self.soundBeatSourceCombo = QComboBox()
         self.soundBeatSourceCombo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.soundBeatSourceCombo.setToolTip("Where beats come from. A MIDI clock input (Traktor Virtual Output, say)\n"
@@ -2069,29 +2112,29 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         beatRow = QHBoxLayout()
         beatRow.addWidget(self.soundBeatSourceCombo, 1)
         beatRow.addWidget(self.soundMidiRefreshButton)
-        sg.addLayout(beatRow, 9, 1, 1, 2)
+        sg.addLayout(beatRow, 10, 1, 1, 2)
         self.soundClockBadge = QLabel("")
         self.soundClockBadge.setToolTip("MIDI clock link: green when beats come from the clock")
-        sg.addWidget(self.soundClockBadge, 9, 3)
-        leadL = QLabel("Beat lead:"); leadL.setFont(mainFont); sg.addWidget(leadL, 10, 0)
+        sg.addWidget(self.soundClockBadge, 10, 3)
+        leadL = QLabel("Beat lead:"); leadL.setFont(mainFont); sg.addWidget(leadL, 11, 0)
         self.soundClockLeadSpin = _spin(0, 300, 50, " ms")
         self.soundClockLeadSpin.setToolTip("Fire MIDI clock beats, and beats predicted from the tempo, this much early,\nto make up for the time "
             "Bluetooth takes to reach the lights.\n\nStart around 50 ms.\n"
             "Then adjust in 10 ms steps: raise it if the lights land after the kick, lower it if they land before.\n"
             "Has no effect on beats taken straight from detected kicks.")
         leadL.setToolTip(self.soundClockLeadSpin.toolTip())
-        sg.addWidget(self.soundClockLeadSpin, 10, 1)
-        everyL = QLabel("Colour every:"); everyL.setFont(mainFont); sg.addWidget(everyL, 10, 2)
+        sg.addWidget(self.soundClockLeadSpin, 11, 1)
+        everyL = QLabel("Colour every:"); everyL.setFont(mainFont); sg.addWidget(everyL, 11, 2)
         self.soundBeatsPerColourSpin = _spin(1, 16, 8, " beats")
         self.soundBeatsPerColourSpin.setToolTip("Beat colour jump: change colour every this many beats (4 = once a bar).\n"
             "Brightness still flashes on every beat. With a MIDI clock, changes land on bar lines.")
-        sg.addWidget(self.soundBeatsPerColourSpin, 10, 3)
+        sg.addWidget(self.soundBeatsPerColourSpin, 11, 3)
         self.soundClockNeedsSoundCheck = QCheckBox("Clock beats only while kicks play")
         self.soundClockNeedsSoundCheck.setChecked(True)
         self.soundClockNeedsSoundCheck.setToolTip("Traktor keeps sending MIDI clock after the decks stop. With this on,\n"
             "clock beats pause when no kicks are heard, for example after the decks\n"
             "stop or in an off-beat bassline, and come back with the first kick on a beat.")
-        sg.addWidget(self.soundClockNeedsSoundCheck, 11, 1, 1, 3)
+        sg.addWidget(self.soundClockNeedsSoundCheck, 12, 1, 1, 3)
         self.soundPredictBeatsCheck = QCheckBox("Predict beats from the tempo")
         self.soundPredictBeatsCheck.setChecked(True)
         self.soundPredictBeatsCheck.setToolTip("Without a MIDI clock: find the tempo in the sound (about 4 s after the kicks start)\n"
@@ -2113,8 +2156,8 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         predictRow.addWidget(flashOnL)
         predictRow.addWidget(self.soundFlashOnCombo)
         predictRow.addStretch(1)
-        sg.addLayout(predictRow, 12, 1, 1, 3)
-        tempoL = QLabel("Tempo range:"); tempoL.setFont(mainFont); sg.addWidget(tempoL, 13, 0)
+        sg.addLayout(predictRow, 13, 1, 1, 3)
+        tempoL = QLabel("Tempo range:"); tempoL.setFont(mainFont); sg.addWidget(tempoL, 14, 0)
         self.soundTempoMinSpin = _spin(50, 240, 70, " BPM")
         self.soundTempoMaxSpin = _spin(50, 240, 180, " BPM")
         tempoTip = ("Without a MIDI clock: the tempos looked for in the sound. Outside 70 to 180 BPM,\n"
@@ -2128,18 +2171,18 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         tempoRow.addWidget(QLabel("to"))
         tempoRow.addWidget(self.soundTempoMaxSpin)
         tempoRow.addStretch(1)
-        sg.addLayout(tempoRow, 13, 1, 1, 3)
-        rollL = QLabel("Drum rolls:"); rollL.setFont(mainFont); sg.addWidget(rollL, 14, 0)
+        sg.addLayout(tempoRow, 14, 1, 1, 3)
+        rollL = QLabel("Drum rolls:"); rollL.setFont(mainFont); sg.addWidget(rollL, 15, 0)
         self.soundRollStyleCombo = QComboBox()
         self.soundRollStyleCombo.addItems(["Strobe", "Swell", "Strobe + Swell", "Chase"])
         self.soundRollStyleCombo.setToolTip("How drum rolls show in Beat colour jump, Bass pulse and Rainbow drift.\n"
             "Strobe: a deep flash from Max down to Min bright on the beat, with a shallow ripple on the hits between.\n"
             "Swell: brightness climbs smoothly to Max bright over about 8 s, with no pulsing.\n"
             "Strobe + Swell: the same pulses, on a brightness that climbs to Max bright over about 8 s.\n"
-            "Chase: on a Nanoleaf shown one light per panel, the deep flashes go across its panels, one at a time;\n"
+            "Chase: on a Nanoleaf shown one light per panel, the deep flashes go across its panels, one at a time, in the order Pattern sets;\n"
             "other lights keep the Strobe. The flash limit counts the panels together, so the chase goes no faster than a strobe.")
         rollL.setToolTip(self.soundRollStyleCombo.toolTip())
-        sg.addWidget(self.soundRollStyleCombo, 14, 1)
+        sg.addWidget(self.soundRollStyleCombo, 15, 1)
         self.soundFlashLevelCombo = QComboBox()
         self.soundFlashLevelCombo.addItem("Standard (4 a second)", "Standard")
         self.soundFlashLevelCombo.addItem("Show (10 a second)", "Show")
@@ -2148,9 +2191,9 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
             "Standard: at most 4. A flashing-lights notice is still recommended.\n"
             "Show: at most 10 in bursts of about 4 s, then 4 until about 8 s below that have passed. Only with a notice posted.\n"
             "Off: no limit at all, only with a notice posted.\n"
-            "Show and Off go back to Standard each time Puppi3's NeewerLux starts.")
-        flashL = QLabel("Flash limit:"); flashL.setFont(mainFont); flashL.setToolTip(self.soundFlashLevelCombo.toolTip()); sg.addWidget(flashL, 14, 2)
-        sg.addWidget(self.soundFlashLevelCombo, 14, 3)
+            "Show and Off go back to Standard each time Puppi3Lux starts.")
+        flashL = QLabel("Flash limit:"); flashL.setFont(mainFont); flashL.setToolTip(self.soundFlashLevelCombo.toolTip()); sg.addWidget(flashL, 15, 2)
+        sg.addWidget(self.soundFlashLevelCombo, 15, 3)
         sndLay.addLayout(sg)
 
         meterRow = QHBoxLayout()
@@ -2205,4 +2248,4 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         # === STATUS BAR ===
         self.statusBar = QStatusBar()
         MainWindow.setStatusBar(self.statusBar)
-        self.statusBar.showMessage("Welcome to Puppi3's NeewerLux!")
+        self.statusBar.showMessage("Welcome to Puppi3Lux!")

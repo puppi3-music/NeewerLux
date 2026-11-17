@@ -23,13 +23,13 @@ A Cargo workspace at the repo root, next to the Python files:
 
 | Path | Contents | Replaces |
 |---|---|---|
-| `crates/nl-core` | Packet building and checksum, light model and spec table, CCT clamp/fallback, colour conversion, file formats, animation interpolation and templates, command parsing (CLI, URL params, batch strings). No Bluetooth, no threads. | The pure parts of `Puppi3sNeewerLux.py` (roughly lines 4037-4700, 5467-6180, 6518-6800, 7391-7595) |
-| `crates/nl-ble` | `btleplug` transport and the **controller**: one tokio task that owns all lights. | `findDevices`, `connectToLight`, `writeToLight`, `parallelWriteToLights`, `workerThread` (`Puppi3sNeewerLux.py:4709-5465`) |
-| `crates/nl-audio` | Analyser, tempo tracker, roll finder, harmony, light show, flash limiter as a pure library with time passed in; capture (`cpal`) and MIDI clock (`midir`) behind features. | `puppi3s_neewerlux_audio.py`, `puppi3s_neewerlux_midi.py` |
-| `crates/nl-server` | `axum` server: legacy routes, new `/api` JSON + WebSocket routes, embedded UI bundle. | `NLPythonServer` (`Puppi3sNeewerLux.py:6804-7380`), `puppi3s_neewerlux_webui.py` |
+| `crates/nl-core` | Packet building and checksum, light model and spec table, CCT clamp/fallback, colour conversion, file formats, animation interpolation and templates, command parsing (CLI, URL params, batch strings). No Bluetooth, no threads. | The pure parts of `Puppi3Lux.py` (roughly lines 4037-4700, 5467-6180, 6518-6800, 7391-7595) |
+| `crates/nl-ble` | `btleplug` transport and the **controller**: one tokio task that owns all lights. | `findDevices`, `connectToLight`, `writeToLight`, `parallelWriteToLights`, `workerThread` (`Puppi3Lux.py:4709-5465`) |
+| `crates/nl-audio` | Analyser, tempo tracker, roll finder, harmony, light show, flash limiter as a pure library with time passed in; capture (`cpal`) and MIDI clock (`midir`) behind features. | `puppi3lux_audio.py`, `puppi3lux_midi.py` |
+| `crates/nl-server` | `axum` server: legacy routes, new `/api` JSON + WebSocket routes, embedded UI bundle. | `NLPythonServer` (`Puppi3Lux.py:6804-7380`), `puppi3lux_webui.py` |
 | `crates/neewerlux-cli` | Headless binary: `--list`, `--cli`, `--http`, same flags as today. | `__main__` CLI paths |
 | `tools/nl-trace` | Reads raw samples, runs `nl-audio` on a simulated clock, prints the log / fired beats / kicks as JSON. | The body of `run()` in `tests/beat_harness.py:436` |
-| `app/src-tauri`, `app/ui` | Tauri v2 shell and the Svelte + TypeScript UI. | `puppi3s_neewerlux_ui.py`, `puppi3s_neewerlux_anim_editor.py`, `puppi3s_neewerlux_theme.py`, the main-window class in `Puppi3sNeewerLux.py:434-4026` |
+| `app/src-tauri`, `app/ui` | Tauri v2 shell and the Svelte + TypeScript UI. | `puppi3lux_ui.py`, `puppi3lux_anim_editor.py`, `puppi3lux_theme.py`, the main-window class in `Puppi3Lux.py:434-4026` |
 
 ### Key design points
 
@@ -55,19 +55,19 @@ Each stage is its own branch and PR, and ends with something that runs.
 - Exit: every shipped animation, the default presets and `sound_presets.json.default` load and re-save byte-compatible or semantically equal; all fixture tests pass.
 
 ### Stage 2: controller, Bluetooth, CLI
-- `nl-ble` controller and `neewerlux-cli` with `--list` and `--cli` (same flag names and defaults as `Puppi3sNeewerLux.py:5548-5577`).
-- Animation engine on the controller (port of `animationEngineThread`, `Puppi3sNeewerLux.py:6307`).
+- `nl-ble` controller and `neewerlux-cli` with `--list` and `--cli` (same flag names and defaults as `Puppi3Lux.py:5548-5577`).
+- Animation engine on the controller (port of `animationEngineThread`, `Puppi3Lux.py:6307`).
 - Exit: on real lights, `--list`, on/off, CCT, HSI, scene and playing a shipped animation all behave as the Python CLI does.
 
 ### Stage 3: HTTP server; first shippable piece
-- Legacy routes with identical parameters and responses; `list_json` with the same shape (`Puppi3sNeewerLux.py:6880-6932`).
-- Serve the existing dashboard HTML, lifted out of `puppi3s_neewerlux_webui.py` into a static file, so the headless binary is useful immediately.
+- Legacy routes with identical parameters and responses; `list_json` with the same shape (`Puppi3Lux.py:6880-6932`).
+- Serve the existing dashboard HTML, lifted out of `puppi3lux_webui.py` into a static file, so the headless binary is useful immediately.
 - Contract tests: record responses from the Python server for a list of URLs, replay against Rust.
 - Release workflow gains a job that attaches a headless Rust binary (Windows, Linux, optionally macOS and Raspberry Pi) to releases alongside the Python zip.
 - Exit: existing dashboard and a Stream Deck URL work unchanged against the Rust binary.
 
 ### Stage 4: sound engine
-- Port in dependency order: envelopes/gain/gate, `_Decimator`, `_Analyser`, `_KickPicker`, `_TempoTracker`, `_RollFinder`, `_Harmony`, `_FlashLimiter`, `_LightShow`, then `SoundEngine` capture and `MidiClock`/`BeatTracker`. Keep the constants block (`puppi3s_neewerlux_audio.py:69-242`) one to one, with the comments.
+- Port in dependency order: envelopes/gain/gate, `_Decimator`, `_Analyser`, `_KickPicker`, `_TempoTracker`, `_RollFinder`, `_Harmony`, `_FlashLimiter`, `_LightShow`, then `SoundEngine` capture and `MidiClock`/`BeatTracker`. Keep the constants block (`puppi3lux_audio.py:69-242`) one to one, with the comments.
 - `tools/nl-trace`, and a `--engine rust` option on `tests/beat_harness.py` that swaps `run()` for a call to it. Synthetic cases and scoring stay in Python for now, so both engines are scored by the same code. This is the only Python file edited before cutover.
 - Compare in two layers: per-hop band levels and kick times (catches port bugs early), then the harness tables.
 - Tolerance for "same scores": same `ratio` and `sits` on every case; `on%`, `fire%`, `kick%` within 2 points; `grid50`, `fire50` within 2 ms; `lock` within 0.5 s. Any case outside it is investigated, not waved through.
@@ -84,7 +84,7 @@ Each stage is its own branch and PR, and ends with something that runs.
 
 ### Stage 6: cutover
 - Release as 2.0 with the same portable zip layout (`light_prefs` next to the exe, no preset file in the zip, so extracting over an install keeps presets).
-- Remove the Python sources, `Puppi3sNeewerLux.spec`, `pyproject.toml`, `uv.lock`, the `.bat` launchers; update `README.md`, `CHANGELOG.md`, `.desktop` file and `release.yml`.
+- Remove the Python sources, `Puppi3Lux.spec`, `pyproject.toml`, `uv.lock`, the `.bat` launchers; update `README.md`, `CHANGELOG.md`, `.desktop` file and `release.yml`.
 - Port the harness's synthetic cases and scoring to a Rust dev tool so `tests/BEAT_NOTES.md` stays reproducible; freeze the last Python numbers in the notes as the baseline.
 
 ## Rules while both versions exist

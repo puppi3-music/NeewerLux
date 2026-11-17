@@ -1,10 +1,10 @@
-# Build Puppi3's NeewerLux for Windows, macOS and Linux on a release tag push.
+# Build Puppi3Lux for Windows, macOS and Linux on a release tag push.
 # PyInstaller can only build for the OS (and CPU) it runs on, so each OS has its own job.
 # A v* tag creates a draft GitHub Release with:
-#   - Puppi3sNeewerLux-<version>-Windows.zip            (Puppi3sNeewerLux.exe + light_prefs/)
-#   - Puppi3sNeewerLux-<version>-macOS-AppleSilicon.zip (Puppi3sNeewerLux.app, unsigned)
-#   - Puppi3sNeewerLux-<version>-Linux-x86_64.tar.gz    (Puppi3sNeewerLux + light_prefs/)
-#   - Puppi3sNeewerLux-<version>-Source.zip             (the Python source, for any OS)
+#   - Puppi3Lux-<version>-Windows.zip            (Puppi3Lux.exe + light_prefs/)
+#   - Puppi3Lux-<version>-macOS-AppleSilicon.zip (Puppi3Lux.app, unsigned)
+#   - Puppi3Lux-<version>-Linux-x86_64.tar.gz    (Puppi3Lux + light_prefs/)
+#   - Puppi3Lux-<version>-Source.zip             (the Python source, for any OS)
 # Pull requests that touch the build run the three builds too, without making a release.
 
 name: Build Release
@@ -16,7 +16,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/release.yml'
-      - 'Puppi3sNeewerLux.spec'
+      - 'Puppi3Lux.spec'
       - 'pyproject.toml'
       - 'uv.lock'
   workflow_dispatch:
@@ -81,10 +81,10 @@ jobs:
       - name: Make the macOS icon
         if: runner.os == 'macOS'
         run: |
-          ICONSET=io.github.puppi3_music.Puppi3sNeewerLux.iconset
+          ICONSET=io.github.puppi3_music.Puppi3Lux.iconset
           mkdir "$ICONSET"
           for size in 16 32 64 128 256 512; do
-            sips -z $size $size io.github.puppi3_music.Puppi3sNeewerLux.png --out "$ICONSET/icon_${size}x${size}.png" > /dev/null
+            sips -z $size $size io.github.puppi3_music.Puppi3Lux.png --out "$ICONSET/icon_${size}x${size}.png" > /dev/null
           done
           for size in 16 32 128 256; do
             cp "$ICONSET/icon_$((size * 2))x$((size * 2)).png" "$ICONSET/icon_${size}x${size}@2x.png"
@@ -93,7 +93,7 @@ jobs:
           iconutil -c icns "$ICONSET"
 
       - name: Build with PyInstaller
-        run: uv run --locked --group build pyinstaller Puppi3sNeewerLux.spec
+        run: uv run --locked --group build pyinstaller Puppi3Lux.spec
 
       # Starts the built program far enough to import every module, print its banner and help, and quit.
       # (Not on Windows: the .exe has no console to print to.)
@@ -103,43 +103,43 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then
-            BIN=dist/Puppi3sNeewerLux.app/Contents/MacOS/Puppi3sNeewerLux
+            BIN=dist/Puppi3Lux.app/Contents/MacOS/Puppi3Lux
           else
             sudo apt-get update -q && sudo apt-get install -y -q libegl1 libgl1 libxkbcommon0 libfontconfig1 libportaudio2 > /dev/null
-            BIN=dist/Puppi3sNeewerLux/Puppi3sNeewerLux
+            BIN=dist/Puppi3Lux/Puppi3Lux
           fi
           "$BIN" --help | tee help.txt
-          grep -q "Puppi3's NeewerLux ver. " help.txt
+          grep -q "Puppi3Lux ver. " help.txt
           grep -q -- "--nanoleaf_pair" help.txt
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Copy-Item -Path "light_prefs" -Destination "dist/Puppi3sNeewerLux/light_prefs" -Recurse
-          Copy-Item -Path "README.md", "CHANGELOG.md" -Destination "dist/Puppi3sNeewerLux/"
-          Compress-Archive -Path "dist/Puppi3sNeewerLux/*" -DestinationPath "Puppi3sNeewerLux-$env:VERSION-${{ matrix.label }}.zip"
+          Copy-Item -Path "light_prefs" -Destination "dist/Puppi3Lux/light_prefs" -Recurse
+          Copy-Item -Path "README.md", "CHANGELOG.md" -Destination "dist/Puppi3Lux/"
+          Compress-Archive -Path "dist/Puppi3Lux/*" -DestinationPath "Puppi3Lux-$env:VERSION-${{ matrix.label }}.zip"
 
       # ditto keeps the app bundle's symlinks and permissions, which a plain zip can lose
       - name: Package (macOS)
         if: runner.os == 'macOS'
-        run: ditto -c -k --sequesterRsrc --keepParent dist/Puppi3sNeewerLux.app "Puppi3sNeewerLux-$VERSION-${{ matrix.label }}.zip"
+        run: ditto -c -k --sequesterRsrc --keepParent dist/Puppi3Lux.app "Puppi3Lux-$VERSION-${{ matrix.label }}.zip"
 
       # tar keeps the program's executable bit, which the artifact upload's own zip would drop
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |
-          cp -R light_prefs dist/Puppi3sNeewerLux/light_prefs
-          cp README.md CHANGELOG.md dist/Puppi3sNeewerLux/
-          tar -czf "Puppi3sNeewerLux-$VERSION-${{ matrix.label }}.tar.gz" -C dist Puppi3sNeewerLux
+          cp -R light_prefs dist/Puppi3Lux/light_prefs
+          cp README.md CHANGELOG.md dist/Puppi3Lux/
+          tar -czf "Puppi3Lux-$VERSION-${{ matrix.label }}.tar.gz" -C dist Puppi3Lux
 
       - name: Upload build
         uses: actions/upload-artifact@v4
         with:
           name: build-${{ matrix.label }}
           path: |
-            Puppi3sNeewerLux-*.zip
-            Puppi3sNeewerLux-*.tar.gz
+            Puppi3Lux-*.zip
+            Puppi3Lux-*.tar.gz
           if-no-files-found: error
 
   build-source:
@@ -151,22 +151,22 @@ jobs:
       - name: Create source zip
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then VERSION="${GITHUB_REF_NAME#v}"; else VERSION="dev-${GITHUB_SHA::7}"; fi
-          zip -r "Puppi3sNeewerLux-${VERSION}-Source.zip" \
-            Puppi3sNeewerLux.py \
-            puppi3s_neewerlux_ui.py \
-            puppi3s_neewerlux_theme.py \
-            puppi3s_neewerlux_webui.py \
-            puppi3s_neewerlux_anim_editor.py \
-            puppi3s_neewerlux_audio.py \
-            puppi3s_neewerlux_midi.py \
-            puppi3s_neewerlux_nanoleaf.py \
-            Puppi3sNeewerLux.bat \
-            Puppi3sNeewerLux-HTTP.bat \
+          zip -r "Puppi3Lux-${VERSION}-Source.zip" \
+            Puppi3Lux.py \
+            puppi3lux_ui.py \
+            puppi3lux_theme.py \
+            puppi3lux_webui.py \
+            puppi3lux_anim_editor.py \
+            puppi3lux_audio.py \
+            puppi3lux_midi.py \
+            puppi3lux_nanoleaf.py \
+            Puppi3Lux.bat \
+            Puppi3Lux-HTTP.bat \
             pyproject.toml \
             uv.lock \
-            io.github.puppi3_music.Puppi3sNeewerLux.desktop \
-            io.github.puppi3_music.Puppi3sNeewerLux.ico \
-            io.github.puppi3_music.Puppi3sNeewerLux.png \
+            io.github.puppi3_music.Puppi3Lux.desktop \
+            io.github.puppi3_music.Puppi3Lux.ico \
+            io.github.puppi3_music.Puppi3Lux.png \
             README.md \
             CHANGELOG.md \
             LICENSE \
@@ -177,7 +177,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: source-zip
-          path: Puppi3sNeewerLux-*-Source.zip
+          path: Puppi3Lux-*-Source.zip
 
   # Runs even if a build failed or never got a machine (GitHub's macOS runners are sometimes all busy), so a
   # slow Mac queue can't hold up a release: the draft gets whichever builds finished. Re-running a failed build
@@ -199,5 +199,5 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: false
           files: |
-            Puppi3sNeewerLux-*.zip
-            Puppi3sNeewerLux-*.tar.gz
+            Puppi3Lux-*.zip
+            Puppi3Lux-*.tar.gz

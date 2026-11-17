@@ -1,4 +1,4 @@
-"""Nanoleaf paths through Puppi3sNeewerLux.py itself, against tests/fake_nanoleaf.py. Run from the repo root:
+"""Nanoleaf paths through Puppi3Lux.py itself, against tests/fake_nanoleaf.py. Run from the repo root:
 
     uv run --no-sync python -m unittest tests.test_app_nanoleaf
 
@@ -21,11 +21,11 @@ sys.path.insert(0, HERE)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import puppi3s_neewerlux_nanoleaf as nl  # noqa: E402
+import puppi3lux_nanoleaf as nl  # noqa: E402
 from fake_nanoleaf import FakeNanoleaf, TOKEN  # noqa: E402
 
 try:
-    import Puppi3sNeewerLux as app
+    import Puppi3Lux as app
 except Exception:  # bleak or PySide missing
     app = None
 
@@ -37,7 +37,7 @@ async def noBluetooth(*args, **kwargs):
     raise OSError("Bluetooth simulated as unavailable by the test")
 
 
-@unittest.skipIf(app is None, "Puppi3sNeewerLux.py could not be imported")
+@unittest.skipIf(app is None, "Puppi3Lux.py could not be imported")
 class AppTestCase(unittest.TestCase):
     """Fresh fake, saved file and app globals for each test."""
 
@@ -131,8 +131,8 @@ class AppPathTests(AppTestCase):
         self.assertEqual(app.availableLights, [])
 
     def test_nanoleaf_pair_argument(self):
-        for argv, expected in ((["Puppi3sNeewerLux.py", "--nanoleaf_pair", "10.0.0.152"], "10.0.0.152"),
-                               (["Puppi3sNeewerLux.py", "nanoleaf_pair=10.0.0.152:16021"], "10.0.0.152:16021")):
+        for argv, expected in ((["Puppi3Lux.py", "--nanoleaf_pair", "10.0.0.152"], "10.0.0.152"),
+                               (["Puppi3Lux.py", "nanoleaf_pair=10.0.0.152:16021"], "10.0.0.152:16021")):
             with mock.patch.object(sys, "argv", argv):
                 self.assertEqual(app.processCommands(), ["NANOLEAF_PAIR", True, expected])
 
@@ -145,7 +145,7 @@ class PerPanelTests(AppTestCase):
     def setUp(self):
         super().setUp()
         # sidecar prefs live next to sys.argv[0]; keep them in the temporary folder
-        patcher = mock.patch.object(sys, "argv", [os.path.join(self.tmp.name, "Puppi3sNeewerLux.py")])
+        patcher = mock.patch.object(sys, "argv", [os.path.join(self.tmp.name, "Puppi3Lux.py")])
         patcher.start()
         self.addCleanup(patcher.stop)
         lightAliases = mock.patch.object(app, "lightAliases", {})
@@ -352,7 +352,7 @@ class LightTableGroupTests(AppTestCase):
 
     def setUp(self):
         super().setUp()
-        patcher = mock.patch.object(sys, "argv", [os.path.join(self.tmp.name, "Puppi3sNeewerLux.py")])
+        patcher = mock.patch.object(sys, "argv", [os.path.join(self.tmp.name, "Puppi3Lux.py")])
         patcher.start()
         self.addCleanup(patcher.stop)
         # one device per panel (its panels already known, so nothing needs to link) and one whole device
@@ -436,6 +436,29 @@ class LightTableGroupTests(AppTestCase):
         self.assertTrue(self.table.item(0, 0).text().startswith("▾ Fake Shapes"))
         self.window._toggleGroupAt(4)  # a light on its own: nothing to collapse
         self.assertFalse(any(self.table.isRowHidden(r) for r in range(5)))
+
+    def test_the_selection_follows_its_lights_when_rows_move(self):
+        self.selectTableRow(4)  # "Other", availableLights index 3
+        # a panel came off the front: every row moves up one (what refreshNanoleafPanels does)
+        app.availableLights.pop(0)
+        self.window._onLightsChanged()
+        self.assertEqual([app.availableLights[a][0].address for a in self.window.selectedLights()], ["NL:S99999"])
+
+    def test_a_selected_device_takes_in_new_panels(self):
+        self.selectTableRow(0)  # the device row: all three panels
+        controller = app.nanoleafControllers["S12345"]
+        controller.panels = controller.panels + [5004]
+        app.addNanoleafLights()
+        self.window._onLightsChanged()
+        selected = {app.availableLights[a][0].address for a in self.window.selectedLights()}
+        self.assertIn("NL:S12345-P5004", selected)
+        self.assertNotIn("NL:S99999", selected)
+
+    def test_the_device_row_counts_as_one_nanoleaf(self):
+        self.selectTableRow(0)  # selects its three panels
+        self.assertEqual(self.window._selectedNanoleafDevice().controller.id, "S12345")
+        self.window.selectRows([0, 3])  # a panel and another device
+        self.assertIsNone(self.window._selectedNanoleafDevice())
 
 
 if __name__ == "__main__":

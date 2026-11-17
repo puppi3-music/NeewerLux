@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 ############################################################
-## Puppi3's NeewerLux
+## Puppi3Lux
 ## A fork of NeewerLux by PoizenJam, a NeewerLite-Python Extension
 ############################################################
 ## Based on NeewerLite-Python ver. 0.12d by Zach Glenwright
@@ -10,7 +10,7 @@
 ## > https://github.com/keefo/NeewerLite <
 ##
 ## This fork with sound reactive mode: Copyright (c) 2026 puppi3-music
-## > https://github.com/puppi3-music/NeewerLux/ <
+## > https://github.com/puppi3-music/Puppi3Lux/ <
 ## Licensed under AGPL-3.0-only, see LICENSE. Includes MIT-licensed
 ## code by Zach Glenwright and PoizenJam, see LICENSE-MIT.
 ############################################################
@@ -20,15 +20,18 @@
 ##          Windows, Linux/Ubuntu, MacOS and RPi
 ############################################################
 
-NEEWERLUX_VERSION = "1.4.0"
-NEEWERLUX_REPO_URL = "https://github.com/puppi3-music/NeewerLux/"
-NEEWERLUX_RELEASES_API = "https://api.github.com/repos/puppi3-music/NeewerLux/releases/latest"
-APP_NAME = "Puppi3's NeewerLux" # the name users see; file names, modules and URLs use "Puppi3sNeewerLux"
+PUPPI3LUX_VERSION = "1.5.0"
+PUPPI3LUX_REPO_URL = "https://github.com/puppi3-music/Puppi3Lux/"
+PUPPI3LUX_RELEASES_API = "https://api.github.com/repos/puppi3-music/Puppi3Lux/releases/latest"
+APP_NAME = "Puppi3Lux" # the name users see, and the one file names, modules and URLs use
 
-# HTTP API paths. Versions up to 1.3 served /NeewerLux/, and NeewerLite-Python /NeewerLite-Python/.
-# Both are still accepted, so saved Stream Deck buttons and scripts keep working.
-HTTP_PATH_PREFIX = "/Puppi3sNeewerLux/"
-LEGACY_HTTP_PATH_PREFIXES = ("/NeewerLux/", "/NeewerLite-Python/")
+# Names used for files and URLs before Puppi3Lux, newest first: Puppi3's NeewerLux, then NeewerLux.
+OLD_FILE_NAMES = ("Puppi3sNeewerLux", "NeewerLux")
+
+# HTTP API paths. Earlier versions served /Puppi3sNeewerLux/ and /NeewerLux/, and NeewerLite-Python
+# /NeewerLite-Python/. All are still accepted, so saved Stream Deck buttons and scripts keep working.
+HTTP_PATH_PREFIX = "/Puppi3Lux/"
+LEGACY_HTTP_PATH_PREFIXES = tuple("/" + name + "/" for name in OLD_FILE_NAMES) + ("/NeewerLite-Python/",)
 
 def modernHTTPPath(path):
     """Rewrite a request path that starts with an old prefix to the current one."""
@@ -48,6 +51,7 @@ if sys.stderr is None:
     sys.stderr = open(os.devnull, 'w')
 
 import math # used for calculating the RGB values of color temperatures
+import random # the Random pattern
 import json # used for animation files and HTTP batch/animation APIs
 import shutil # used to seed the default preset file on first run
 import tempfile
@@ -84,7 +88,7 @@ except ModuleNotFoundError as e:
 
 # NANOLEAF PANEL SUPPORT (standard library only; stand-ins for the Bleak objects)
 try:
-    import puppi3s_neewerlux_nanoleaf as nanoleaf
+    import puppi3lux_nanoleaf as nanoleaf
 except Exception as e:
     print(f"  [DEBUG] Nanoleaf module import failed: {type(e).__name__}: {e}")
     nanoleaf = None
@@ -126,9 +130,9 @@ except Exception as e:
 
 # IMPORT THE GUI ITSELF
 try:
-    from puppi3s_neewerlux_ui import Ui_MainWindow
-    from puppi3s_neewerlux_theme import getThemeQSS
-    from puppi3s_neewerlux_webui import getWebDashboardHTML
+    from puppi3lux_ui import Ui_MainWindow
+    from puppi3lux_theme import getThemeQSS
+    from puppi3lux_webui import getWebDashboardHTML
 except Exception as e:
     print(f"  [DEBUG] GUI module import failed: {type(e).__name__}: {e}")
     if importError != 1: # if we don't already have a PySide issue
@@ -136,7 +140,7 @@ except Exception as e:
 
 # IMPORT SYSTEM TRAY SUPPORT
 try:
-    from puppi3s_neewerlux_ui import QSystemTrayIcon, QMenu
+    from puppi3lux_ui import QSystemTrayIcon, QMenu
 except ImportError:
     QSystemTrayIcon = None
     QMenu = None
@@ -144,12 +148,12 @@ except ImportError:
 # SET WINDOWS APP ID SO THE TASKBAR SHOWS OUR ICON INSTEAD OF PYTHON'S
 try:
     import ctypes
-    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("puppi3-music.Puppi3sNeewerLux." + NEEWERLUX_VERSION)
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("puppi3-music.Puppi3Lux." + PUPPI3LUX_VERSION)
 except Exception:
     pass  # not Windows
 
 # CONSOLE MANAGEMENT
-# When launched via pythonw.exe (or Puppi3sNeewerLux.bat), there is no console, these are no-ops.
+# When launched via pythonw.exe (or Puppi3Lux.bat), there is no console, these are no-ops.
 # When launched via python.exe directly, SW_HIDE works on legacy conhost but NOT on
 # Windows Terminal (which intercepts and downgrades to minimize).
 _hasConsole = False
@@ -187,7 +191,7 @@ except Exception as e:
 
 # IMPORT WEB DASHBOARD
 try:
-    from puppi3s_neewerlux_webui import getWebDashboardHTML
+    from puppi3lux_webui import getWebDashboardHTML
 except ImportError:
     getWebDashboardHTML = None
 
@@ -209,10 +213,10 @@ _isFrozenExe = getattr(sys, 'frozen', False)
 
 def lightPrefsDir():
     """The light_prefs folder: next to the script or program, except in the macOS app, whose bundle can be
-    read-only and is replaced on update. There it is ~/Library/Application Support/Puppi3sNeewerLux/light_prefs.
-    puppi3s_neewerlux_nanoleaf.lightPrefsDir() follows the same rule."""
+    read-only and is replaced on update. There it is ~/Library/Application Support/Puppi3Lux/light_prefs.
+    puppi3lux_nanoleaf.lightPrefsDir() follows the same rule."""
     if _isFrozenExe and sys.platform == "darwin":
-        base = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "Puppi3sNeewerLux")
+        base = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "Puppi3Lux")
     else:
         base = os.path.dirname(os.path.abspath(sys.argv[0]))
     return os.path.join(base, "light_prefs")
@@ -230,7 +234,7 @@ def seedBundledPrefs():
     marker = os.path.join(target, ".bundle_seeded")
     try:
         with open(marker) as f:
-            newVersion = f.read().strip() != NEEWERLUX_VERSION
+            newVersion = f.read().strip() != PUPPI3LUX_VERSION
     except OSError:
         newVersion = True
     try:
@@ -242,7 +246,7 @@ def seedBundledPrefs():
                 if name.endswith(".default") or (newVersion and not os.path.exists(destination)):
                     shutil.copyfile(os.path.join(root, name), destination)
         with open(marker, "w") as f:
-            f.write(NEEWERLUX_VERSION)
+            f.write(PUPPI3LUX_VERSION)
     except OSError as e:
         print("Could not copy the shipped presets and animations to " + target + " (" + str(e) + ")")
 
@@ -309,6 +313,7 @@ soundLatestLights = set()  # lights holding a sound colour the worker hasn't wri
 soundLatestLock = threading.Lock()
 nanoleafPerPanelRequests = []  # (Nanoleaf device id, perPanel) for the worker to apply, see setNanoleafPerPanel
 nanoleafPerPanelLock = threading.Lock()
+nanoleafUnpairRequests = []  # Nanoleaf device ids for the worker to forget, see unpairNanoleaf (under nanoleafPerPanelLock)
 animParallelWrites = True  # send BLE commands to all lights simultaneously during animations
 animRevertOnFinish = True  # revert lights to pre-animation state when a non-looping animation finishes
 preAnimationStates = {}    # {light_index: byte_list} saved before animation starts
@@ -365,9 +370,9 @@ customKeys = [] # custom keymappings for keyboard shortcuts, set on launch by th
 whiteListedMACs = [] # whitelisted list of MAC addresses to add to the light list
 enableTabsOnLaunch = False # whether or not to enable tabs on startup (even with no lights connected)
 
-lockFile = tempfile.gettempdir() + os.sep + "Puppi3sNeewerLux.lock"
+lockFile = tempfile.gettempdir() + os.sep + "Puppi3Lux.lock"
 anotherInstance = False # whether or not we're using a new instance (for the Singleton check)
-globalPrefsFile = lightPrefsDir() + os.sep + "Puppi3sNeewerLux.prefs" # the global preferences file for saving/loading
+globalPrefsFile = lightPrefsDir() + os.sep + "Puppi3Lux.prefs" # the global preferences file for saving/loading
 customLightPresetsFile = lightPrefsDir() + os.sep + "customLights.prefs"
 # Shipped template used to seed customLightPresetsFile on first run. The live file is
 # user state and is not tracked in the repository, so the defaults live here instead.
@@ -375,26 +380,32 @@ defaultLightPresetsFile = customLightPresetsFile + ".default"
 # Records that seeding already happened, so a later deliberate reset or delete is not
 # undone by copying the shipped presets back in.
 presetsSeededMarkerFile = lightPrefsDir() + os.sep + ".presets_seeded"
-geometryPrefsFile = lightPrefsDir() + os.sep + "Puppi3sNeewerLux.geometry"
+geometryPrefsFile = lightPrefsDir() + os.sep + "Puppi3Lux.geometry"
 soundPresetsFile = lightPrefsDir() + os.sep + "sound_presets.json"
 # Shipped Sound presets, shown until the user first saves, updates or deletes one. That
 # writes the whole list to soundPresetsFile, which is read from then on, so deleting
 # every preset leaves an empty file and the shipped ones don't come back.
 defaultSoundPresetsFile = soundPresetsFile + ".default"
 soundPalettesFile = lightPrefsDir() + os.sep + "sound_palettes.json"  # palettes saved from the Colours menu
-logFilePath = lightPrefsDir() + os.sep + "Puppi3sNeewerLux.log"
+logFilePath = lightPrefsDir() + os.sep + "Puppi3Lux.log"
 
 def migrateRenamedPrefsFiles():
-    """Versions up to 1.3 (named NeewerLux) saved NeewerLux.prefs, .geometry and .log in light_prefs.
-    Rename each to its Puppi3sNeewerLux.* name, unless a file with the new name is already there."""
+    """Earlier versions saved their .prefs, .geometry and .log in light_prefs as Puppi3sNeewerLux.* or,
+    up to 1.3, NeewerLux.*. Rename the newest old file to its Puppi3Lux.* name, unless a file with the
+    new name is already there."""
     for newPath in (globalPrefsFile, geometryPrefsFile, logFilePath):
-        oldPath = os.path.join(os.path.dirname(newPath), "NeewerLux" + os.path.splitext(newPath)[1])
-        if os.path.exists(oldPath) and not os.path.exists(newPath):
+        if os.path.exists(newPath):
+            continue
+        for oldName in OLD_FILE_NAMES:
+            oldPath = os.path.join(os.path.dirname(newPath), oldName + os.path.splitext(newPath)[1])
+            if not os.path.exists(oldPath):
+                continue
             try:
                 os.replace(oldPath, newPath)
                 print("Renamed " + oldPath + " to " + os.path.basename(newPath))
             except OSError as e:
                 print("Could not rename " + oldPath + " (" + str(e) + "), starting from defaults")
+            break
 
 # FILE LOCKING FOR SINGLE INSTANCE
 def singleInstanceLock():
@@ -533,9 +544,9 @@ try: # try to load the GUI
         def __init__(self):
             QMainWindow.__init__(self)
             self.setupUi(self) # set up the main UI
-            self.setWindowTitle(APP_NAME + " " + NEEWERLUX_VERSION)
+            self.setWindowTitle(APP_NAME + " " + PUPPI3LUX_VERSION)
             # Inject version into Info tab
-            self.infoText.setHtml(self.infoText.toHtml().replace("{VERSION}", NEEWERLUX_VERSION))
+            self.infoText.setHtml(self.infoText.toHtml().replace("{VERSION}", PUPPI3LUX_VERSION))
             self.connectMe() # connect the function handlers to the widgets
 
             # The light table can hold group rows (a Nanoleaf shown one row per panel), so table rows and
@@ -572,7 +583,7 @@ try: # try to load the GUI
             self._fitToolbar()
 
             # Set window icon (shown in taskbar and title bar)
-            for _iconName in ("io.github.puppi3_music.Puppi3sNeewerLux.png", "io.github.puppi3_music.Puppi3sNeewerLux.ico"):
+            for _iconName in ("io.github.puppi3_music.Puppi3Lux.png", "io.github.puppi3_music.Puppi3Lux.ico"):
                 _iconPath = _resource_path(_iconName)
                 if os.path.exists(_iconPath):
                     self.setWindowIcon(QIcon(_iconPath))
@@ -604,7 +615,7 @@ try: # try to load the GUI
 
         def createPresetButtons(self):
             """Create (or recreate) all preset button widgets in an 8-column grid with a + placeholder."""
-            from puppi3s_neewerlux_ui import customPresetButton
+            from puppi3lux_ui import customPresetButton
 
             # Clear existing layout
             for btn in self.presetButtons:
@@ -774,7 +785,7 @@ try: # try to load the GUI
         def _openPresetEditor(self, idx):
             """Open a dialog to edit preset settings. Mirrors the animation editor layout."""
             global customLightPresets
-            from puppi3s_neewerlux_ui import GradientSlider as GSL
+            from puppi3lux_ui import GradientSlider as GSL
             if PYSIDE_VERSION == 6:
                 from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QVBoxLayout, QHBoxLayout,
                     QGridLayout as QGL, QLabel, QLineEdit, QComboBox, QSpinBox,
@@ -1436,6 +1447,14 @@ try: # try to load the GUI
                 return items[0].data(Qt.UserRole)
             return None
 
+        def animApplySuggestion(self):
+            """Set Offset, Colour spread and Pattern to what the picked animation suggests, if it suggests any."""
+            sug = animationSuggestion(self.animGetSelectedName() or "")
+            if sug is not None:
+                self.animOffsetSpin.setValue(sug[0])
+                self.animSpreadSpin.setValue(sug[1])
+                self.animPatternCombo.setCurrentText(sug[2])
+
         def animPlay(self):
             """Play the selected animation."""
             name = self.animGetSelectedName()
@@ -1443,7 +1462,11 @@ try: # try to load the GUI
                 self.animStatusLabel.setText("Select an animation first")
                 return
 
-            loopOverride = self.animLoopCheck.isChecked()
+            # Loop forever ticked: round and round until stopped. Otherwise play the Times count (at least once).
+            forever = self.animLoopCheck.isChecked()
+            times = max(1, self.animLoopCountSpin.value())
+            loopOverride = forever or times > 1
+            maxLoops = 0 if forever else times
             speedText = self.animSpeedCombo.currentText().replace("x", "")
             try:
                 speedMult = float(speedText)
@@ -1460,10 +1483,10 @@ try: # try to load the GUI
             global animParallelWrites, animRevertOnFinish
             animParallelWrites = self.animParallelCheck.isChecked()
             animRevertOnFinish = self.animRevertCheck.isChecked()
-            maxLoops = self.animLoopCountSpin.value()
 
             startAnimation(name, asyncioEventLoop, speedMult, loopOverride, fps=fps, briScale=briScale, maxLoops=maxLoops,
-                           offset=self.animOffsetSpin.value() / 100.0, colourSpread=self.animSpreadSpin.value() / 100.0)
+                           offset=self.animOffsetSpin.value() / 100.0, colourSpread=self.animSpreadSpin.value() / 100.0,
+                           pattern=self.animPatternCombo.currentText(), smoothing=self.animSmoothSpin.value() / 100.0)
 
         def animStop(self):
             """Stop the currently playing animation."""
@@ -1576,9 +1599,9 @@ try: # try to load the GUI
                 return
 
             try:
-                from puppi3s_neewerlux_anim_editor import AnimationEditorDialog
+                from puppi3lux_anim_editor import AnimationEditorDialog
             except ImportError:
-                printDebugString("Could not import puppi3s_neewerlux_anim_editor, falling back to JSON editor")
+                printDebugString("Could not import puppi3lux_anim_editor, falling back to JSON editor")
                 self._animEditJSON(name)
                 return
 
@@ -1653,7 +1676,7 @@ try: # try to load the GUI
 
             layout.addWidget(QL("<b>Keyframes (JSON)</b>, edit directly:"))
             jsonEdit = QTE()
-            from puppi3s_neewerlux_ui import _monoFont
+            from puppi3lux_ui import _monoFont
             jsonEdit.setFont(_monoFont(9))
             jsonEdit.setPlainText(json.dumps(anim.get("keyframes", []), indent=2))
             layout.addWidget(jsonEdit)
@@ -1763,6 +1786,7 @@ try: # try to load the GUI
 
             # ANIMATION TAB CONNECTIONS
             self.animPlayButton.clicked.connect(self.animPlay)
+            self.animList.itemSelectionChanged.connect(self.animApplySuggestion)
             self.animStopButton.clicked.connect(self.animStop)
             self.animNewButton.clicked.connect(self.animNew)
             self.animEditButton.clicked.connect(self.animEdit)
@@ -1794,6 +1818,7 @@ try: # try to load the GUI
             self.colorTempRange.clicked.connect(self.checkLightPrefsEnables)
             self.saveLightPrefsButton.clicked.connect(self.checkLightPrefs)
             self.nanoleafPerPanelCheck.clicked.connect(self.toggleNanoleafPerPanel)
+            self.nanoleafUnpairButton.clicked.connect(self.unpairSelectedNanoleaf)
 
             self.resetGlobalPrefsButton.clicked.connect(lambda: self.setupGlobalLightPrefsTab(True))
             self.saveGlobalPrefsButton.clicked.connect(self.saveGlobalPrefs)
@@ -2245,17 +2270,27 @@ try: # try to load the GUI
             isNanoleaf = nanoleaf is not None and isinstance(device, nanoleaf.NanoleafDevice)
             self.onlyCCTModeCheck.setVisible(not isNanoleaf)
             self.nanoleafPerPanelCheck.setVisible(isNanoleaf)
+            self.nanoleafUnpairButton.setVisible(isNanoleaf)
             if isNanoleaf:
                 self.nanoleafPerPanelCheck.setChecked(device.controller.perPanel)
 
             self.checkLightPrefsEnables() # set up which fields on the panel are enabled
 
+        def _selectedNanoleafDevice(self):
+            """A NanoleafDevice of the one Nanoleaf the selection is on, or None. Selecting a per-panel device's row
+            selects all its panels, so any selection whose lights are all on one Nanoleaf counts."""
+            if nanoleaf is None:
+                return None
+            devices = [availableLights[a][0] for a in self.selectedLights() if a < len(availableLights)]
+            if not devices or not all(isinstance(d, nanoleaf.NanoleafDevice) for d in devices):
+                return None
+            if len({d.controller.id for d in devices}) != 1:
+                return None
+            return devices[0]
+
         def toggleNanoleafPerPanel(self, checked):
-            selectedRows = self.selectedLights()
-            if len(selectedRows) != 1 or nanoleaf is None:
-                return
-            device = availableLights[selectedRows[0]][0]
-            if not isinstance(device, nanoleaf.NanoleafDevice) or bool(checked) == device.controller.perPanel:
+            device = self._selectedNanoleafDevice()
+            if device is None or bool(checked) == device.controller.perPanel:
                 return
             # the rows are about to change under any animation or sound session, so stop them first
             if soundEngine is not None and soundEngine.running:
@@ -2265,6 +2300,26 @@ try: # try to load the GUI
                 showAnimationStopped()
             requestNanoleafPerPanel(device.controller.id, checked) # the worker swaps the rows
             self.statusBar.showMessage("Changing how " + device.controller.name + " is listed...")
+
+        def unpairSelectedNanoleaf(self):
+            device = self._selectedNanoleafDevice()
+            if device is None:
+                self.statusBar.showMessage("Select the Nanoleaf (or its panels) to unpair")
+                return
+            controller = device.controller
+            answer = QMessageBox.question(self, "Unpair Nanoleaf",
+                "Unpair " + controller.name + " (NL:" + controller.id + ")?\n\n"
+                "It leaves the light table and will need pairing again (Add Nanoleaf) to use it.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if answer != QMessageBox.Yes:
+                return
+            if soundEngine is not None and soundEngine.running:
+                self.soundStop()
+            if animationRunning:
+                stopAnimation()
+                showAnimationStopped()
+            requestNanoleafUnpair(controller.id)
+            self.statusBar.showMessage("Unpairing " + controller.name + "...")
 
         def checkLightPrefsEnables(self): # enable/disable fields when clicking on checkboxes
             # allow/deny typing in the "custom name" field if the option is clicked
@@ -2717,7 +2772,7 @@ try: # try to load the GUI
                 print("There are no preferences to save (all preferences are currently set to their default values).")
                 
                 if os.path.exists(globalPrefsFile): # if a previous preferences file exists
-                    print("Since all preferences are set to their defaults, we are deleting the Puppi3sNeewerLux.prefs file.")
+                    print("Since all preferences are set to their defaults, we are deleting the Puppi3Lux.prefs file.")
                     os.remove(globalPrefsFile) # ...delete it!
 
         def setupShortcutKeys(self):
@@ -2999,12 +3054,12 @@ try: # try to load the GUI
             def _doCheck():
                 try:
                     import urllib.request, json as _json
-                    req = urllib.request.Request(NEEWERLUX_RELEASES_API,
-                        headers={"User-Agent": "Puppi3sNeewerLux/" + NEEWERLUX_VERSION, "Accept": "application/vnd.github.v3+json"})
+                    req = urllib.request.Request(PUPPI3LUX_RELEASES_API,
+                        headers={"User-Agent": "Puppi3Lux/" + PUPPI3LUX_VERSION, "Accept": "application/vnd.github.v3+json"})
                     with urllib.request.urlopen(req, timeout=10) as resp:
                         data = _json.loads(resp.read().decode("utf-8"))
                     tag = data.get("tag_name", "").lstrip("vV")
-                    url = data.get("html_url", NEEWERLUX_REPO_URL + "releases")
+                    url = data.get("html_url", PUPPI3LUX_REPO_URL + "releases")
                     body = data.get("body", "")[:200]
                     self._updateResultSignal.emit(tag, url, body, "")
                 except Exception as e:
@@ -3021,10 +3076,10 @@ try: # try to load the GUI
                 self.updateBanner.setText("Could not check for updates: " + err)
                 self.updateBanner.setStyleSheet("QLabel { background-color: #3a2a1a; color: #ff9800; padding: 8px; border: 1px solid #ff9800; border-radius: 4px; }")
                 self.updateBanner.setVisible(True)
-            elif tag and tag != NEEWERLUX_VERSION:
+            elif tag and tag != PUPPI3LUX_VERSION:
                 try:
                     remote = tuple(int(x) for x in tag.split("."))
-                    local = tuple(int(x) for x in NEEWERLUX_VERSION.split("."))
+                    local = tuple(int(x) for x in PUPPI3LUX_VERSION.split("."))
                     if remote > local:
                         notePreview = (": " + body.split("\n")[0]) if body else ""
                         self.updateBanner.setText(
@@ -3035,11 +3090,11 @@ try: # try to load the GUI
                         return
                 except (ValueError, TypeError):
                     pass
-                self.updateBanner.setText("You are running " + APP_NAME + " v" + NEEWERLUX_VERSION + " (latest: v" + tag + ")")
+                self.updateBanner.setText("You are running " + APP_NAME + " v" + PUPPI3LUX_VERSION + " (latest: v" + tag + ")")
                 self.updateBanner.setStyleSheet("QLabel { background-color: #1a2a3a; color: #64b5f6; padding: 8px; border: 1px solid #64b5f6; border-radius: 4px; }")
                 self.updateBanner.setVisible(True)
             else:
-                self.updateBanner.setText("You are running the latest version (v" + NEEWERLUX_VERSION + ")")
+                self.updateBanner.setText("You are running the latest version (v" + PUPPI3LUX_VERSION + ")")
                 self.updateBanner.setStyleSheet("QLabel { background-color: #1a3a1a; color: #4caf50; padding: 8px; border: 1px solid #4caf50; border-radius: 4px; }")
                 self.updateBanner.setVisible(True)
 
@@ -3077,7 +3132,7 @@ try: # try to load the GUI
         # NANOLEAF PAIRING: the dialog asks, the network work runs on its own thread,
         # and the results come back to the GUI thread through runOnGui
         def openNanoleafPairDialog(self):
-            from puppi3s_neewerlux_ui import NanoleafPairDialog
+            from puppi3lux_ui import NanoleafPairDialog
             dlg = getattr(self, "_nanoleafDialog", None)
             if dlg is None:
                 dlg = NanoleafPairDialog(nanoleaf.PAIRING_HINT, self)
@@ -3333,8 +3388,28 @@ try: # try to load the GUI
             return selectionList # the availableLights indexes of the selected lights, or an empty array ([]) otherwise
 
         def _onLightsChanged(self):
-            # The worker already reordered availableLights, so rows stay stable while it links
+            # The worker already reordered availableLights, so rows stay stable while it links.
+            # Rebuilding the table drops the selection, and the rows may have moved (Nanoleaf panels added or
+            # taken off), so keep it by address: sound reactive on the selected lights follows the selection.
+            addresses, groups = set(), set()
+            for index in self.lightTable.selectionModel().selectedRows():
+                row = index.row()
+                if row >= len(self._tableRows):
+                    continue
+                entry = self._tableRows[row]
+                if entry[0] == "group":
+                    groups.add(entry[1].address)  # stands for all its panels, new ones too
+                elif self.lightTable.item(row, 1) is not None:
+                    addresses.add(self.lightTable.item(row, 1).text())
             self.updateLights(True, False)
+            if addresses or groups:
+                def keep(light):
+                    device = light[0]
+                    if device.address in addresses:
+                        return True
+                    return (nanoleaf is not None and isinstance(device, nanoleaf.NanoleafDevice)
+                            and device.controller.address in groups)
+                self.selectRows([a for a, light in enumerate(availableLights) if keep(light)])
 
         def _onStatusMessage(self, message):
             self.statusBar.showMessage(message)
@@ -3430,7 +3505,7 @@ try: # try to load the GUI
                 return self.DEFAULT_FONT_SCALE
 
         def setFontScale(self, scale):
-            from puppi3s_neewerlux_theme import FONT_SCALE_MIN, FONT_SCALE_MAX
+            from puppi3lux_theme import FONT_SCALE_MIN, FONT_SCALE_MAX
             self._fontScale = round(max(FONT_SCALE_MIN, min(FONT_SCALE_MAX, scale)), 2)
             QApplication.instance().setStyleSheet(getThemeQSS(self._isDarkTheme, self._fontScale))
             self._fitToolbar()
@@ -3439,11 +3514,12 @@ try: # try to load the GUI
 
         # === SOUND REACTIVE ===
         def soundSetup(self):
-            from puppi3s_neewerlux_audio import MODES, MODE_HELP, AUDIO_AVAILABLE, AUDIO_IMPORT_ERROR
+            from puppi3lux_audio import MODES, MODE_HELP, AUDIO_AVAILABLE, AUDIO_IMPORT_ERROR
             self._soundModeHelp = MODE_HELP
             self.soundModeCombo.addItems(MODES)
             self.soundModeCombo.currentTextChanged.connect(self._soundSettingsChanged)
             self.soundRollStyleCombo.currentTextChanged.connect(self._soundSettingsChanged)
+            self.soundPatternCombo.currentTextChanged.connect(self._soundSettingsChanged)
             for sp in (self.soundBrightSensSpin, self.soundKickSensSpin, self.soundSmoothSpin, self.soundMinBriSpin, self.soundMaxBriSpin,
                        self.soundSatSpin, self.soundRateSpin, self.soundColourFadeSpin, self.soundOffsetSpin, self.soundSpreadSpin):
                 sp.valueChanged.connect(self._soundSettingsChanged)
@@ -3534,6 +3610,7 @@ try: # try to load the GUI
             d.update({
                 "mode": self.soundModeCombo.currentText(),
                 "rollStyle": self.soundRollStyleCombo.currentText(),
+                "pattern": self.soundPatternCombo.currentText(),
                 "flashOn": self.soundFlashOnCombo.currentText(),
                 "palettePreset": self.soundPalette.presetName(),
                 # Colours too unless built in, so a preset using a saved palette survives that palette being deleted.
@@ -3551,6 +3628,7 @@ try: # try to load the GUI
             if pos >= 0:
                 self.soundModeCombo.setCurrentIndex(pos)
             self.soundRollStyleCombo.setCurrentText(snd.get("rollStyle", "Strobe"))
+            self.soundPatternCombo.setCurrentText(resolvePattern(snd.get("pattern")))
             self.soundFlashOnCombo.setCurrentText(snd.get("flashOn", "Beats"))
             for key, attr in self._SOUND_SPINS:
                 if key in snd or key in self._SOUND_DEFAULTS:
@@ -3645,7 +3723,7 @@ try: # try to load the GUI
                 self._soundPresetsRefresh()
 
         def soundRefreshDevices(self):
-            from puppi3s_neewerlux_audio import listInputDevices, preferredDeviceIndex, AUDIO_AVAILABLE
+            from puppi3lux_audio import listInputDevices, preferredDeviceIndex, AUDIO_AVAILABLE
             current = self.soundDeviceCombo.currentText()
             self.soundDeviceCombo.clear()
             devices = listInputDevices(rescan=soundEngine is None or not soundEngine.running)
@@ -3662,7 +3740,7 @@ try: # try to load the GUI
             self.soundRefreshMidi()
 
         def soundRefreshMidi(self):
-            from puppi3s_neewerlux_midi import listPorts, MIDI_AVAILABLE
+            from puppi3lux_midi import listPorts, MIDI_AVAILABLE
             combo = self.soundBeatSourceCombo
             want = getattr(self, "_soundSavedBeatSource", None)
             if want is None:
@@ -3690,7 +3768,7 @@ try: # try to load the GUI
             return ports
 
         def _soundMidiRefreshClicked(self):
-            from puppi3s_neewerlux_midi import MIDI_AVAILABLE
+            from puppi3lux_midi import MIDI_AVAILABLE
             n = len(self.soundRefreshMidi())
             if MIDI_AVAILABLE:
                 self.statusBar.showMessage("Found " + str(n) + " MIDI input" + ("" if n == 1 else "s"), 3000)
@@ -3707,7 +3785,7 @@ try: # try to load the GUI
             err = ""
             if port and soundEngine is not None and soundEngine.running:
                 if clock is None:
-                    from puppi3s_neewerlux_midi import MidiClock
+                    from puppi3lux_midi import MidiClock
                     clock = self._midiClock = MidiClock()
                 if clock.portName != port:
                     err = clock.open(port)
@@ -3757,6 +3835,7 @@ try: # try to load the GUI
             e.colourFade = self.soundColourFadeSpin.value() / 100.0
             e.offset = self.soundOffsetSpin.value() / 100.0
             e.colourSpread = self.soundSpreadSpin.value() / 100.0
+            e.pattern = self.soundPatternCombo.currentText()
             e.rollStyle = self.soundRollStyleCombo.currentText()
             e.flashLevel = self.soundFlashLevelCombo.currentData()
             e.minBri = self.soundMinBriSpin.value()
@@ -3781,6 +3860,7 @@ try: # try to load the GUI
                 self.animStop()
             global animParallelWrites
             animParallelWrites = self.animParallelCheck.isChecked()
+            resetRandomPattern()
             engine = getSoundEngine()
             self._soundSettingsChanged()
             err = engine.start(self.soundDeviceCombo.currentData())
@@ -3924,15 +4004,15 @@ try: # try to load the GUI
             self._trayIcon = QSystemTrayIcon(self)
 
             # Try to use the app icon, fall back to a generic one
-            iconPath = _resource_path("io.github.puppi3_music.Puppi3sNeewerLux.png")
+            iconPath = _resource_path("io.github.puppi3_music.Puppi3Lux.png")
             if not os.path.exists(iconPath):
-                iconPath = _resource_path("io.github.puppi3_music.Puppi3sNeewerLux.ico")
+                iconPath = _resource_path("io.github.puppi3_music.Puppi3Lux.ico")
             if os.path.exists(iconPath):
                 self._trayIcon.setIcon(QIcon(iconPath))
             else:
                 self._trayIcon.setIcon(self.windowIcon())
 
-            self._trayIcon.setToolTip(APP_NAME + " " + NEEWERLUX_VERSION)
+            self._trayIcon.setToolTip(APP_NAME + " " + PUPPI3LUX_VERSION)
 
             trayMenu = QMenu()
             showAction = trayMenu.addAction("Show / Hide")
@@ -3970,6 +4050,8 @@ try: # try to load the GUI
                     "animBri": self.animBriSpin.value(),
                     "animOffset": self.animOffsetSpin.value(),
                     "animSpread": self.animSpreadSpin.value(),
+                    "animPattern": self.animPatternCombo.currentText(),
+                    "animSmooth": self.animSmoothSpin.value(),
                     "animLoop": self.animLoopCheck.isChecked(),
                     "animLoopCount": self.animLoopCountSpin.value(),
                     "animParallel": self.animParallelCheck.isChecked(),
@@ -4039,6 +4121,10 @@ try: # try to load the GUI
                         self.animOffsetSpin.setValue(geo["animOffset"])
                     if "animSpread" in geo:
                         self.animSpreadSpin.setValue(geo["animSpread"])
+                    if "animPattern" in geo:
+                        self.animPatternCombo.setCurrentText(resolvePattern(geo["animPattern"]))
+                    if "animSmooth" in geo:
+                        self.animSmoothSpin.setValue(geo["animSmooth"])
                     if "animLoop" in geo:
                         self.animLoopCheck.setChecked(geo["animLoop"])
                     if "animLoopCount" in geo:
@@ -5291,6 +5377,162 @@ def setNanoleafPerPanel(_loop, deviceId, perPanel, updateGUI=True):
         _loop.run_until_complete(parallelAction("connect", newRows, updateGUI and mainWindow is not None))
     return newRows
 
+NANOLEAF_LAYOUT_CHECK = 5.0  # seconds between looks at a linked per-panel Nanoleaf's layout for panels added or taken off
+NANOLEAF_CHECK_BACKOFF = 60.0  # seconds a Nanoleaf that failed a check is left alone: each try can hold the worker for its timeout
+nanoleafCheckBackoff = {}  # Nanoleaf device id -> time.monotonic() before which the timed checks skip it
+
+def _nanoleafCheckDue(controller):
+    return time.monotonic() >= nanoleafCheckBackoff.get(controller.id, 0.0)
+
+def _nanoleafCheckFailed(controller):
+    nanoleafCheckBackoff[controller.id] = time.monotonic() + NANOLEAF_CHECK_BACKOFF
+
+def _remapPreAnimationStates(change):
+    """Run change() (which moves rows about) keeping preAnimationStates on the same lights, by address."""
+    global preAnimationStates
+    byAddress = {availableLights[i][0].address: s for i, s in preAnimationStates.items() if i < len(availableLights)}
+    change()
+    preAnimationStates = {i: byAddress[light[0].address] for i, light in enumerate(availableLights)
+                          if light[0].address in byAddress}
+
+def refreshNanoleafPanels(_loop, updateGUI=True, includeUnlinked=False):
+    """Look again at the layout of every linked per-panel Nanoleaf, and when panels were added or taken off,
+    add or drop their rows without touching the others, so a running animation carries straight on and takes
+    the new panels in (it notices nanoleafLayoutGeneration). Sound reactive carries on too: its lights are
+    remapped to their new rows (see SoundEngine.remapLights). New rows are linked. Runs on the worker thread."""
+    global nanoleafLayoutGeneration
+    if nanoleaf is None:
+        return
+    for controller in list(nanoleafControllers.values()):
+        if not controller.perPanel or not (controller._clients or includeUnlinked):  # a rescan looks at unlinked ones too
+            continue
+        if not includeUnlinked and not _nanoleafCheckDue(controller):  # failed lately: a rescan still tries
+            continue
+        before = list(controller.panels)
+        beforePositions = dict(controller.positions)
+        try:
+            _loop.run_until_complete(controller.loadLayout())
+        except Exception as e:
+            printDebugString("Nanoleaf [" + controller.name + "] layout check failed: " + str(e))
+            _nanoleafCheckFailed(controller)
+            continue
+        nanoleafCheckBackoff.pop(controller.id, None)
+        if not controller.panels:
+            continue
+        if controller.panels == before:
+            if controller.positions != beforePositions:  # panels moved or the canvas was rotated in the Nanoleaf app
+                nanoleafLayoutGeneration += 1  # a running animation works out its patterns again
+                printDebugString("Nanoleaf [" + controller.name + "] panels were rearranged")
+                if updateGUI and mainWindow is not None:
+                    mainWindow._lightsChangedSignal.emit()
+                    mainWindow._statusMessageSignal.emit(controller.name + ": panel layout changed")
+            continue
+        wanted = {d.address: d for d in controller.devices()}
+        rows = nanoleafRows(controller.id)
+        gone = [i for i in rows if availableLights[i][0].address not in wanted]
+        if gone:
+            _loop.run_until_complete(parallelAction("disconnect", gone, False))
+        with soundLatestLock:
+            soundLatestLights.clear()
+
+        def change():
+            global nanoleafLayoutGeneration
+            for i in reversed(gone):
+                del availableLights[i]
+            for light in availableLights:  # panel numbers follow the new reading order
+                device = wanted.get(light[0].address)
+                if device is not None and isinstance(light[0], nanoleaf.NanoleafDevice):
+                    light[0].panelNumber = device.panelNumber
+            addNanoleafLights()
+            reorderByPreferredID()
+            loadLightAliases()
+            nanoleafLayoutGeneration += 1  # as soon as the rows are in place, so a running animation stops using the old ones
+        known ={light[0].address for light in availableLights}
+        oldRows = {light[0].address: i for i, light in enumerate(availableLights)}
+        soundAll = soundEngine is not None and set(soundEngine.targets) >= set(range(len(availableLights)))
+        _remapPreAnimationStates(change)
+        added = [i for i in nanoleafRows(controller.id) if availableLights[i][0].address not in known]
+        if soundEngine is not None and soundEngine.running:
+            soundEngine.remapLights({oldRows[light[0].address]: i for i, light in enumerate(availableLights)
+                                     if light[0].address in oldRows})
+            if added and soundAll:  # it was driving every light, so it takes the new panels in too
+                soundEngine.targets = sorted(set(soundEngine.targets) | set(added))
+        if animationRunning:  # new panels revert to what they showed before, too
+            for i in added:
+                if isinstance(availableLights[i][3], list) and availableLights[i][3]:
+                    preAnimationStates[i] = list(availableLights[i][3])
+        printDebugString("Nanoleaf [" + controller.name + "] panels changed: " + str(len(added)) + " added, "
+                         + str(len(gone)) + " removed")
+        if updateGUI and mainWindow is not None:
+            mainWindow._lightsChangedSignal.emit()
+            mainWindow._statusMessageSignal.emit(controller.name + ": " + str(len(added)) + " panel(s) added, "
+                                                 + str(len(gone)) + " removed")
+        if added and controller._clients:
+            _loop.run_until_complete(parallelAction("connect", added, updateGUI and mainWindow is not None))
+
+def checkNanoleafStreams(_loop, updateGUI=True):
+    """A tap or swipe on a Nanoleaf's panels switches its effect and ends the stream the app drives it with.
+    Notice that, and while an animation or sound session is running take the panels back at once; otherwise
+    just note the stream has ended, so the next colour sent starts it again instead of going nowhere."""
+    if nanoleaf is None:
+        return
+    busy = animationRunning or (soundEngine is not None and soundEngine.running)
+    for controller in list(nanoleafControllers.values()):
+        if not (controller._clients and controller.streaming) or not _nanoleafCheckDue(controller):
+            continue
+        try:
+            lost = _loop.run_until_complete(controller.checkStream(resume=busy))
+        except nanoleaf.NanoleafError as e:
+            printDebugString("Nanoleaf [" + controller.name + "] stream check failed: " + str(e))
+            _nanoleafCheckFailed(controller)
+            continue
+        if lost:
+            printDebugString("Nanoleaf [" + controller.name + "] left stream mode (an effect was picked on the panels"
+                             " or in the Nanoleaf app)" + ("; taking it back" if busy else ""))
+            if updateGUI and mainWindow is not None and busy:
+                mainWindow._statusMessageSignal.emit(controller.name + " changed effect; taking it back")
+
+def requestNanoleafUnpair(deviceId):
+    """Ask the worker thread to forget a paired Nanoleaf (see unpairNanoleaf). Stops animations and sound first."""
+    stopAnimation()
+    stopSoundReactive()
+    with nanoleafPerPanelLock:
+        nanoleafUnpairRequests.append(deviceId)
+    workerWakeEvent.set()
+
+def unpairNanoleaf(_loop, deviceId, updateGUI=True):
+    """Forget a paired Nanoleaf: unlink and drop its rows (putting back its effect from before streaming),
+    take it out of nanoleaf.json and ask the controller to revoke the token. Runs on the worker thread.
+    Its per-light prefs files are kept, so pairing it again brings back its names and IDs."""
+    controller = nanoleafControllers.get(deviceId) if nanoleaf is not None else None
+    if controller is None:
+        printDebugString("Unpair: no saved Nanoleaf " + str(deviceId))
+        return False
+    with soundLatestLock:
+        soundLatestLights.clear()
+    rows = nanoleafRows(deviceId)
+    if rows:
+        _loop.run_until_complete(parallelAction("disconnect", rows, False))
+    _remapPreAnimationStates(lambda: [availableLights.pop(i) for i in reversed(rows)])
+    del nanoleafControllers[deviceId]
+    try:
+        if controller.savedPath is not False:
+            nanoleaf.removeSaved(deviceId, controller.savedPath)
+    except OSError as e:
+        # Still in the file, so the next rescan brings it back: keep its token working on the controller.
+        printDebugString("Unpair: could not save nanoleaf.json: " + str(e))
+        if updateGUI and mainWindow is not None:
+            mainWindow._lightsChangedSignal.emit()
+            mainWindow._statusMessageSignal.emit("Could not unpair " + controller.name + ": " + str(e))
+        return False
+    revoked = nanoleaf.revokeToken(controller.ip, controller.port, controller.token)
+    printDebugString("Unpaired Nanoleaf [" + controller.name + "] NL:" + deviceId
+                     + ("" if revoked else " (the controller could not be told; its token stays on the device)"))
+    if updateGUI and mainWindow is not None:
+        mainWindow._lightsChangedSignal.emit()
+        mainWindow._statusMessageSignal.emit("Unpaired " + controller.name)
+    return True
+
 def findNanoleafDevice(address):
     """The NanoleafDevice for an NL: address, from the saved devices, or None."""
     if nanoleaf is None or not nanoleaf.isAddress(address):
@@ -5827,6 +6069,7 @@ def workerThread(_loop):
     delayTicks = 1 # count a few ticks before checking light information
     reconnectCooldown = {} # {light_index: ticks_remaining} to avoid spamming reconnect attempts
     allDisconnectedSince = 0  # ticks since all known lights were seen as disconnected (for rescan-after-wake)
+    nextLayoutCheck = time.monotonic() + NANOLEAF_LAYOUT_CHECK  # see refreshNanoleafPanels
 
     while True:
         if delayTicks < 12:
@@ -5928,7 +6171,28 @@ def workerThread(_loop):
                     setNanoleafPerPanel(_loop, deviceId, perPanel, hasGUI)
                 except Exception as e:
                     printDebugString("Per-panel mode change failed: " + str(e))
-            if perPanelRequests:
+            with nanoleafPerPanelLock:
+                unpairRequests = list(nanoleafUnpairRequests)
+                nanoleafUnpairRequests.clear()
+            for deviceId in unpairRequests:
+                try:
+                    unpairNanoleaf(_loop, deviceId, hasGUI)
+                except Exception as e:
+                    printDebugString("Unpairing the Nanoleaf failed: " + str(e))
+            if time.monotonic() >= nextLayoutCheck:  # panels added to (or taken off) a Nanoleaf in use
+                nextLayoutCheck = time.monotonic() + NANOLEAF_LAYOUT_CHECK
+                before = len(availableLights)
+                try:
+                    checkNanoleafStreams(_loop, hasGUI)
+                except Exception as e:
+                    printDebugString("Nanoleaf stream check failed: " + str(e))
+                try:
+                    refreshNanoleafPanels(_loop, hasGUI)
+                except Exception as e:
+                    printDebugString("Nanoleaf layout check failed: " + str(e))
+                if len(availableLights) != before:
+                    reconnectCooldown.clear()
+            if perPanelRequests or unpairRequests:
                 reconnectCooldown.clear() # keyed by row index, and the rows have moved
 
         if threadAction == "":  # sound frames: however many arrived during the last write, only the newest colours go out
@@ -5944,6 +6208,11 @@ def workerThread(_loop):
             break # stop the background thread before quitting the program
         elif threadAction == "discover":
             threadAction = _loop.run_until_complete(findDevices()) # add new lights to the main array
+            if threadAction != "quit":
+                try:  # and look again at each per-panel Nanoleaf for panels added or taken off
+                    refreshNanoleafPanels(_loop, False, includeUnlinked=True)
+                except Exception as e:
+                    printDebugString("Nanoleaf layout check failed: " + str(e))
 
             if threadAction != "quit":
                 if hasGUI: # tell the GUI to update its list of available lights
@@ -6252,7 +6521,7 @@ def pairNanoleafFromCLI(hostText, waitSeconds=60):
         singleInstanceUnlockandQuit(code)
 
     if nanoleaf is None:
-        print("The Nanoleaf module (puppi3s_neewerlux_nanoleaf.py) could not be loaded.")
+        print("The Nanoleaf module (puppi3lux_nanoleaf.py) could not be loaded.")
         _finish(1)
     try:
         ip, port = nanoleaf.parseHostPort(hostText)
@@ -6366,7 +6635,9 @@ def processHTMLCommands(paramsList, loop):
             loopOverride = None
             maxLoops = 0
             revertOverride = None
-            offset = spread = 0.0
+            sug = animationSuggestion(animName.split("|")[0])
+            offset, spread, pattern = (sug[0] / 100.0, sug[1] / 100.0, sug[2]) if sug else (0.0, 0.0, LIGHT_ORDER)
+            smoothing = 0.0
             if "|" in animName:
                 parts = animName.split("|")
                 animName = parts[0]
@@ -6398,12 +6669,16 @@ def processHTMLCommands(paramsList, loop):
                 except (ValueError, IndexError): pass
                 try: spread = float(parts[8]) / 100.0
                 except (ValueError, IndexError): pass
+                if len(parts) > 9 and parts[9].strip():  # left empty (to reach smoothing): keep the suggested one
+                    pattern = parts[9]
+                try: smoothing = float(parts[10]) / 100.0
+                except (ValueError, IndexError): pass
             # Apply revert override if specified
             if revertOverride is not None:
                 global animRevertOnFinish
                 animRevertOnFinish = revertOverride
             startAnimation(animName, loop, speedMult, loopOverride=loopOverride, fps=fps, briScale=briScale, maxLoops=maxLoops,
-                           offset=offset, colourSpread=spread)
+                           offset=offset, colourSpread=spread, pattern=pattern, smoothing=smoothing)
         else:
             printDebugString("HTTP: no animation name specified")
 
@@ -6472,12 +6747,9 @@ def reorderByPreferredID():
     # Sort preferred-ID lights by their ID
     withPrefID.sort(key=lambda x: x[0])
 
-    # Rebuild: preferred-ID lights first, then discovery-order lights
-    availableLights.clear()
-    for _, light in withPrefID:
-        availableLights.append(light)
-    for _, light in withoutPrefID:
-        availableLights.append(light)
+    # Rebuild: preferred-ID lights first, then discovery-order lights. One slice assignment, so the animation
+    # and sound threads (which may be running while Nanoleaf panels come and go) never see the list half built.
+    availableLights[:] = [light for _, light in withPrefID] + [light for _, light in withoutPrefID]
 
 
 def returnLightIndexesFromMacAddress(addresses):
@@ -6904,7 +7176,7 @@ def signalWorkerSend(changedLights, waitSeconds=2.0):
 
 
 # ============================================================================
-# SOUND REACTIVE - puppi3s_neewerlux_audio analyses an input device, this sends the colours
+# SOUND REACTIVE - puppi3lux_audio analyses an input device, this sends the colours
 # ============================================================================
 
 soundEngine = None  # created on first use, see getSoundEngine()
@@ -6938,6 +7210,74 @@ def soundLightInterval(lightIdx):
     return getattr(availableLights[lightIdx][1], "updateInterval", 0.0)
 
 
+LIGHT_ORDER = "Light order"
+RANDOM_PATTERN = "Random"  # every light (Nanoleaf panel or not) takes a random place
+nanoleafLayoutGeneration = 0  # goes up when a Nanoleaf's panel rows change under an animation
+randomPatternRanks = {}  # light address -> random rank for the Random pattern
+
+
+def resetRandomPattern():
+    """Shuffle again: the next lightPlaces with Random deals every light a new place."""
+    randomPatternRanks.clear()
+
+
+def resolvePattern(name):
+    """The pattern name (see nanoleaf.PATTERNS) matching name in any case, with - or _ for spaces
+    ("left-to-right", "CENTRE_OUT"; "center" works too); Light order if none matches."""
+    if not name:
+        return LIGHT_ORDER
+    key = str(name).strip().lower().replace("-", " ").replace("_", " ").replace("center", "centre")
+    if key == RANDOM_PATTERN.lower():
+        return RANDOM_PATTERN
+    if nanoleaf is None:
+        return LIGHT_ORDER
+    return next((p for p in nanoleaf.PATTERNS if p.lower() == key), LIGHT_ORDER)
+
+
+def lightPosition(lightIdx):
+    """(group, (x, y)) for a Nanoleaf panel whose place on the wall is known, else None."""
+    if nanoleaf is None or lightIdx >= len(availableLights):
+        return None
+    device = availableLights[lightIdx][0]
+    if isinstance(device, nanoleaf.NanoleafDevice) and device.position is not None:
+        return device.controller.id, device.position
+    return None
+
+
+def lightPlaces(order, pattern=LIGHT_ORDER):
+    """{light index: 0..1}, where each light of order comes for Offset, Colour spread and the sound modes
+    that give each light its own part: its place in order, pos / len(order). With a pattern other than
+    Light order, a Nanoleaf's panels keep the stretch of places they hold in order but are spread over it
+    by where they are on the wall, so a sweep crosses the panels as a straight edge, Centre out moves in
+    rings and Around turns like a clock hand. Other lights keep their place."""
+    n = max(1, len(order))
+    if pattern == RANDOM_PATTERN:
+        # each light keeps one random rank (by address, so it survives rows moving) until resetRandomPattern
+        def key(idx):
+            return availableLights[idx][0].address if idx < len(availableLights) else idx
+        # the ranks as taken here, so a reshuffle on another thread part way through cannot leave one missing
+        ranks = {idx: randomPatternRanks.setdefault(key(idx), random.random()) for idx in order}
+        ranked = sorted(order, key=ranks.get)
+        return {idx: pos / n for pos, idx in enumerate(ranked)}
+    places = {idx: pos / n for pos, idx in enumerate(order)}
+    if pattern == LIGHT_ORDER or nanoleaf is None:
+        return places
+    groups = {}
+    for pos, idx in enumerate(order):
+        found = lightPosition(idx)
+        if found is not None:
+            groups.setdefault(found[0], []).append((pos, idx, found[1]))
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        first, last = members[0][0], members[-1][0]
+        span = last - first + (1 if nanoleaf.patternWraps(pattern) else 0)
+        along = nanoleaf.patternPlaces({idx: point for _, idx, point in members}, pattern)
+        for _, idx, _ in members:
+            places[idx] = (first + along[idx] * span) / n
+    return places
+
+
 def soundLightGroup(lightIdx):
     """The group a light chases round in a Chase drum roll: a Nanoleaf panel's device. Other lights keep the Strobe."""
     if lightIdx >= len(availableLights):
@@ -6951,10 +7291,11 @@ def soundLightGroup(lightIdx):
 def getSoundEngine():
     global soundEngine
     if soundEngine is None:
-        from puppi3s_neewerlux_audio import SoundEngine
+        from puppi3lux_audio import SoundEngine
         soundEngine = SoundEngine(soundSendFrame, printDebugString)
         soundEngine.lightInterval = soundLightInterval
         soundEngine.lightGroup = soundLightGroup
+        soundEngine.lightPlaces = lightPlaces
     return soundEngine
 
 
@@ -6971,11 +7312,23 @@ class AnimationTimeline:
     pass frame 0 has nothing to fade from; on later passes of a loop it fades in from the last frame,
     taking the last frame's fade if it has none of its own, so loops are seamless."""
 
-    def __init__(self, keyframes, speed=1.0, loop=False, maxLoops=0):
+    def __init__(self, keyframes, speed=1.0, loop=False, maxLoops=0, smoothing=0.0):
+        """smoothing: 0-1, at least that share of each keyframe's time (fade + hold) is spent fading into it
+        from the one before, taken from its hold so the timing stays the same. 1 = it never holds, always
+        gliding on to the next colour; 0 = the fades as the keyframes set them."""
         speed = speed if speed > 0 else 1.0
+        smoothing = max(0.0, min(1.0, float(smoothing or 0)))
         self.count = len(keyframes)
         self.holds = [max(50, int(kf.get("hold_ms", 200) / speed)) for kf in keyframes]
         fades = [max(0, int(kf.get("fade_ms", 0) / speed)) for kf in keyframes]
+        firstHolds = list(self.holds)  # frame 0 has nothing to fade from on the first pass, so smoothing leaves it be
+        if smoothing > 0:
+            for k in range(self.count):
+                total = fades[k] + self.holds[k]
+                fade = max(fades[k], int(total * smoothing))
+                fades[k], self.holds[k] = fade, total - fade
+                if k > 0:
+                    firstHolds[k] = self.holds[k]
         first = list(fades)
         steady = list(fades)
         if self.count:
@@ -6983,7 +7336,8 @@ class AnimationTimeline:
             if steady[0] == 0:
                 steady[0] = fades[-1]
         self.fades = (first, steady)  # [pass][frame]: pass 0 is the first, 1 any later one
-        self.firstLen = sum(first) + sum(self.holds)
+        self.passHolds = (firstHolds, self.holds)  # [pass][frame], as fades
+        self.firstLen = sum(first) + sum(firstHolds)
         self.loopLen = sum(steady) + sum(self.holds)
         self.loop = loop
         # passes played: None = for ever
@@ -7013,17 +7367,17 @@ class AnimationTimeline:
             kind, u = 0, t
         else:
             kind, u = 1, (t - self.firstLen) % self.loopLen
-        fades = self.fades[kind]
+        fades, holds = self.fades[kind], self.passHolds[kind]
         k = 0
         for k in range(self.count):
-            span = fades[k] + self.holds[k]
+            span = fades[k] + holds[k]
             if u < span:
                 break
             u -= span
         else:
             u = span - 0.001
         if until is None:
-            until = (fades[k] - u) if u < fades[k] else (fades[k] + self.holds[k] - u)
+            until = (fades[k] - u) if u < fades[k] else (fades[k] + holds[k] - u)
         return kind, k, u, until
 
     def fading(self, kind, k, u):
@@ -7082,22 +7436,40 @@ def animationLightCommand(state, briScale=1.0, hueShift=0):
     return cmd
 
 
-def animationOffsets(order, spanMs, offset, colourSpread):
+def animationSuggestion(animName):
+    """(offset 0-100, colour spread 0-100, pattern) an animation file suggests in its "suggest" entry, or None.
+    Picking the animation in the app or on the dashboard sets the controls to these, and the HTTP API uses them
+    when a request leaves them out. Fields it leaves out are 0 and Light order."""
+    anim = next((a for k, a in savedAnimations.items() if k.lower() == str(animName).lower()), None)
+    sug = anim.get("suggest") if isinstance(anim, dict) else None
+    if not isinstance(sug, dict):
+        return None
+    def pct(key):
+        try:
+            return max(0, min(100, int(round(float(sug.get(key, 0))))))
+        except (TypeError, ValueError):
+            return 0
+    return pct("offset"), pct("spread"), resolvePattern(sug.get("pattern"))
+
+
+def animationOffsets(order, spanMs, offset, colourSpread, pattern=LIGHT_ORDER):
     """({light: delay ms}, {light: hue shift}) for lights in order: offset spreads them over that share
-    of the loop (1 = evenly round it, a chase), colourSpread over that share of the colour wheel."""
-    n = max(1, len(order))
-    delays = {idx: offset * spanMs * pos / n for pos, idx in enumerate(order)}
-    shifts = {idx: int(round(colourSpread * 360 * pos / n)) % 360 for pos, idx in enumerate(order)}
+    of the loop (1 = evenly round it, a chase), colourSpread over that share of the colour wheel.
+    pattern lays a Nanoleaf's panels out by where they are on the wall (see lightPlaces)."""
+    places = lightPlaces(order, pattern)
+    delays = {idx: offset * spanMs * places[idx] for idx in order}
+    shifts = {idx: int(round(colourSpread * 360 * places[idx])) % 360 for idx in order}
     return delays, shifts
 
 
 def animationEngineThread(animation, loop, speedMultiplier=1.0, loopOverride=None, fps=5, briScale=1.0, maxLoops=0,
-                          offset=0.0, colourSpread=0.0):
+                          offset=0.0, colourSpread=0.0, pattern=LIGHT_ORDER, smoothing=0.0):
     """Main animation playback thread. Each light's colour is worked out from the time since the start,
     so lights can run offset from each other, and sent when it changes.
     maxLoops: 0 = infinite (if shouldLoop), N>0 = play exactly N times then stop.
     offset: 0-1, how far the lights are spread through the loop (0 = all in step).
-    colourSpread: 0-1, how far their hues are spread round the colour wheel."""
+    colourSpread: 0-1, how far their hues are spread round the colour wheel.
+    pattern: how the lights are laid out for both (see lightPlaces)."""
     global animationRunning, animationStopFlag, currentAnimationName, preAnimationStates, threadAction, _animChainStop
 
     animationRunning = True
@@ -7120,23 +7492,24 @@ def animationEngineThread(animation, loop, speedMultiplier=1.0, loopOverride=Non
         return
 
     printDebugString("Animation '" + animName + "' starting (" + str(len(keyframes)) + " keyframes, loop=" + str(shouldLoop) + ", speed=" + str(speedMultiplier) + "x, rate=" + str(fps) + "/s, bri=" + str(int(briScale * 100)) + "%"
-                     + (", offset=" + str(int(offset * 100)) + "%" if offset else "") + (", colour spread=" + str(int(colourSpread * 100)) + "%" if colourSpread else "") + ")")
+                     + (", offset=" + str(int(offset * 100)) + "%" if offset else "") + (", colour spread=" + str(int(colourSpread * 100)) + "%" if colourSpread else "")
+                     + (", pattern=" + pattern if pattern != LIGHT_ORDER else "") + (", smoothing=" + str(int(smoothing * 100)) + "%" if smoothing else "") + ")")
 
-    timeline = AnimationTimeline(keyframes, speedMultiplier, shouldLoop, maxLoops)
+    timeline = AnimationTimeline(keyframes, speedMultiplier, shouldLoop, maxLoops, smoothing)
     spanMs = timeline.loopLen if shouldLoop else timeline.firstLen
     totalFrames = len(keyframes)
-    lightCount = -1
+    lightCount = None
     params, order, delays, shifts, lastSent = {}, [], {}, {}, {}
     lastGUIUpdate = 0  # throttle GUI updates to avoid cross-thread blocking
     start = time.perf_counter()
 
     try:
         while not animationStopFlag:
-            if len(availableLights) != lightCount:  # a light connected or dropped: work out who is where again
-                lightCount = len(availableLights)
+            if (len(availableLights), nanoleafLayoutGeneration) != lightCount:  # a light connected or dropped, or Nanoleaf panels came or went: work out who is where again
+                lightCount = (len(availableLights), nanoleafLayoutGeneration)
                 params = animationLightParams(keyframes)
                 order = sorted(params)
-                delays, shifts = animationOffsets(order, spanMs, offset, colourSpread)
+                delays, shifts = animationOffsets(order, spanMs, offset, colourSpread, pattern)
                 lastSent = {}
 
             now = (time.perf_counter() - start) * 1000.0
@@ -7210,10 +7583,11 @@ def animationEngineThread(animation, loop, speedMultiplier=1.0, loopOverride=Non
 
 
 def startAnimation(animName, loop, speedMultiplier=1.0, loopOverride=None, fps=5, briScale=1.0, maxLoops=0,
-                   offset=0.0, colourSpread=0.0):
+                   offset=0.0, colourSpread=0.0, pattern=LIGHT_ORDER, smoothing=0.0):
     """Start an animation by name. Stops any currently running animation first.
     maxLoops: 0 = use animation's loop setting, N>0 = play N times then stop.
-    offset, colourSpread: 0-1, how far the lights are spread through the loop and round the colour wheel."""
+    offset, colourSpread: 0-1, how far the lights are spread through the loop and round the colour wheel.
+    pattern: how the lights are laid out for both, a name from nanoleaf.PATTERNS (see lightPlaces)."""
     global animationStopFlag, savedAnimations, preAnimationStates, _animChainStop
 
     # Case-insensitive name lookup, HTTP args get lowercased by the argument parser
@@ -7241,9 +7615,11 @@ def startAnimation(animName, loop, speedMultiplier=1.0, loopOverride=None, fps=5
             if light[3] is not None and isinstance(light[3], list) and len(light[3]) > 0:
                 preAnimationStates[i] = list(light[3])
 
+    resetRandomPattern()  # a Random pattern deals the lights new places each time one starts
     animation = savedAnimations[animName].copy()
     t = threading.Thread(target=animationEngineThread,
-                         args=(animation, asyncioEventLoop, speedMultiplier, loopOverride, fps, briScale, maxLoops, offset, colourSpread),
+                         args=(animation, asyncioEventLoop, speedMultiplier, loopOverride, fps, briScale, maxLoops, offset, colourSpread,
+                               resolvePattern(pattern), smoothing),
                          name="animationThread", daemon=True)
     t.start()
     return True
@@ -7497,10 +7873,13 @@ def loadLightAliases():
     Prefs file format: customName|colorTempRange|onlyCCTMode[|lastSettings][|preferredID]
     """
     global lightAliases
-    lightAliases = {}
+    # Built aside and swapped in whole: the animation and HTTP threads read the table while the worker
+    # reloads it (rows moving under a running animation), and must never see it half filled.
+    aliases = {}
 
     prefsDir = lightPrefsDir()
     if not os.path.isdir(prefsDir):
+        lightAliases = aliases
         return
 
     for filename in os.listdir(prefsDir):
@@ -7528,13 +7907,14 @@ def loadLightAliases():
                     pass
 
             if customName or preferredID > 0:
-                lightAliases[mac] = {"id": preferredID, "name": customName}
+                aliases[mac] = {"id": preferredID, "name": customName}
         except (IOError, OSError):
             pass
 
-    if lightAliases:
+    lightAliases = aliases
+    if aliases:
         parts = []
-        for mac, info in lightAliases.items():
+        for mac, info in aliases.items():
             label = info["name"] if info["name"] else mac
             if info["id"] > 0:
                 label += " (#" + str(info["id"]) + ")"
@@ -7553,6 +7933,22 @@ def deleteAnimationFile(name):
             return True
     except OSError as e:
         printDebugString("Error deleting animation: " + str(e))
+    return False
+
+
+def httpIPAccepted(clientIP):
+    """True if clientIP is one of acceptable_HTTP_IPs, or in a range given by its first parts ("192.168.",
+    "10." or "10"). Whole parts from the start, not a substring: "10." must not let in 8.8.10.1, and
+    "192.168.1.1" does not let in 192.168.1.10. Blank entries (an empty line in the field) match nothing."""
+    clientIP = str(clientIP)
+    if clientIP.lower().startswith("::ffff:"):  # an IPv4 address seen through an IPv6 socket
+        clientIP = clientIP[7:]
+    for entry in acceptable_HTTP_IPs:
+        entry = (entry or "").strip()
+        if not entry:
+            continue
+        if clientIP == entry or clientIP.startswith(entry if entry.endswith(".") else entry + "."):
+            return True
     return False
 
 
@@ -7590,12 +7986,7 @@ class NLPythonServer(BaseHTTPRequestHandler):
 
             # CHECK TO SEE IF THE IP REQUESTING ACCESS IS IN THE LIST OF "acceptable_HTTP_IPs"
             clientIP = self.client_address[0] # the IP address of the machine making the request
-            acceptedIP = False
-
-            for check in range(len(acceptable_HTTP_IPs)): # check all the "accepted" IP addresses against the current requesting IP
-                if acceptedIP != True: # if we haven't found the IP in the accepted list, then keep checking
-                    if acceptable_HTTP_IPs[check] in clientIP:
-                        acceptedIP = True # if we're good to go, then we can just move on
+            acceptedIP = httpIPAccepted(clientIP)
 
             # IF THE IP MAKING THE REQUEST IS NOT IN THE LIST OF APPROVED ADDRESSES, THEN RETURN A "FORBIDDEN" ERROR
             if acceptedIP == False:
@@ -7612,21 +8003,21 @@ class NLPythonServer(BaseHTTPRequestHandler):
                     self.send_header("Content-Type", "text/html;charset=UTF-8")
                     self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
                     self.end_headers()
-                    self.wfile.write(getWebDashboardHTML(version=NEEWERLUX_VERSION).encode("utf-8"))
+                    self.wfile.write(getWebDashboardHTML(version=PUPPI3LUX_VERSION).encode("utf-8"))
                 else:
                     self.send_response(302)
                     self.send_header('Location', acceptableURL)
                     self.end_headers()
 
                 return
-            else: # if the URL contains "/Puppi3sNeewerLux/doAction?" then it's a valid URL
+            else: # if the URL contains "/Puppi3Lux/doAction?" then it's a valid URL
                 # Check for JSON API endpoints first
                 queryPart = self.path.replace(acceptableURL, "")
 
                 # Redirect old ?list to new dashboard
                 if queryPart == "list" or queryPart.startswith("list&"):
                     self.send_response(302)
-                    self.send_header('Location', '/Puppi3sNeewerLux/')
+                    self.send_header('Location', '/Puppi3Lux/')
                     self.end_headers()
                     return
 
@@ -7671,7 +8062,8 @@ class NLPythonServer(BaseHTTPRequestHandler):
                                          "description": aData.get("description", ""),
                                          "frames": len(aData.get("keyframes", [])),
                                          "loop": aData.get("loop", False),
-                                         "modes": sorted(modes)})
+                                         "modes": sorted(modes),
+                                         "suggest": animationSuggestion(aName)})
 
                     import json as _json
                     # Build preset data for web dashboard
@@ -7807,7 +8199,7 @@ class NLPythonServer(BaseHTTPRequestHandler):
                         self.wfile.write(bytes("        document.getElementById('refreshDisplay').innerText = 'This page will auto-refresh in 1 second';\n", "utf-8"))
                         self.wfile.write(bytes("      }\n", "utf-8"))
                         self.wfile.write(bytes("    } else {\n", "utf-8"))
-                        self.wfile.write(bytes("      location.assign('/Puppi3sNeewerLux/doAction?list');\n", "utf-8"))
+                        self.wfile.write(bytes("      location.assign('/Puppi3Lux/doAction?list');\n", "utf-8"))
                         self.wfile.write(bytes("    }\n", "utf-8"))
                         self.wfile.write(bytes("  }\n\n", "utf-8"))
                         self.wfile.write(bytes("  function editLight(lightNum, lightType, previousName) {\n", "utf-8"))
@@ -7894,9 +8286,9 @@ class NLPythonServer(BaseHTTPRequestHandler):
                 writeHTMLSections(self, "htmlendheaders") # add the ending section to the very bottom
 
     def do_POST(self):
-        """Handle JSON POSTs to /Puppi3sNeewerLux/batch and /Puppi3sNeewerLux/animate.
+        """Handle JSON POSTs to /Puppi3Lux/batch and /Puppi3Lux/animate.
 
-        POST /Puppi3sNeewerLux/batch
+        POST /Puppi3Lux/batch
         Content-Type: application/json
 
         Request body:
@@ -7913,11 +8305,7 @@ class NLPythonServer(BaseHTTPRequestHandler):
         """
         # IP CHECK (same as do_GET)
         clientIP = self.client_address[0]
-        acceptedIP = False
-        for check in range(len(acceptable_HTTP_IPs)):
-            if acceptedIP != True:
-                if acceptable_HTTP_IPs[check] in clientIP:
-                    acceptedIP = True
+        acceptedIP = httpIPAccepted(clientIP)
 
         if acceptedIP == False:
             self.send_error(403, "Forbidden - IP " + clientIP + " is not in the list of accepted addresses")
@@ -7925,8 +8313,8 @@ class NLPythonServer(BaseHTTPRequestHandler):
 
         # ONLY ACCEPT REQUESTS TO SUPPORTED POST ENDPOINTS (the old /NeewerLux/ and /NeewerLite-Python/ paths still work)
         self.path = modernHTTPPath(self.path)
-        if self.path not in ("/Puppi3sNeewerLux/batch", "/Puppi3sNeewerLux/animate"):
-            self.send_error(404, "POST requests are supported at /Puppi3sNeewerLux/batch and /Puppi3sNeewerLux/animate")
+        if self.path not in ("/Puppi3Lux/batch", "/Puppi3Lux/animate"):
+            self.send_error(404, "POST requests are supported at /Puppi3Lux/batch and /Puppi3Lux/animate")
             return
 
         # READ AND PARSE THE JSON BODY
@@ -7947,7 +8335,7 @@ class NLPythonServer(BaseHTTPRequestHandler):
 
         resultData = {}
 
-        if self.path == "/Puppi3sNeewerLux/batch":
+        if self.path == "/Puppi3Lux/batch":
             commands = body.get("commands", [])
             if not isinstance(commands, list) or len(commands) == 0:
                 self.send_error(400, "Request must contain a non-empty 'commands' array")
@@ -7967,7 +8355,7 @@ class NLPythonServer(BaseHTTPRequestHandler):
                 finally:
                     threadAction = ""
 
-        elif self.path == "/Puppi3sNeewerLux/animate":
+        elif self.path == "/Puppi3Lux/animate":
             action = body.get("action", "play")  # play, stop, list, create
             printDebugString("POST animate request from " + clientIP + ": " + action)
 
@@ -7980,6 +8368,7 @@ class NLPythonServer(BaseHTTPRequestHandler):
                 if "parallel" in body:
                     global animParallelWrites
                     animParallelWrites = bool(body.get("parallel", True))
+                resolvedAnimName = None  # stays None with no name given: answered as not found below
                 if animName:
                     # Case-insensitive name resolution
                     resolvedAnimName = None
@@ -7990,12 +8379,15 @@ class NLPythonServer(BaseHTTPRequestHandler):
                 if resolvedAnimName:
                     animName = resolvedAnimName
                     maxLoops = int(body.get("maxLoops", body.get("max_loops", 0)))
+                    sug = animationSuggestion(animName) or (0, 0, LIGHT_ORDER)
                     # Handle revert flag from web UI
                     if "revert" in body:
                         global animRevertOnFinish
                         animRevertOnFinish = bool(body.get("revert", True))
                     startAnimation(animName, asyncioEventLoop, speed, loop, fps=int(fps), briScale=briScale, maxLoops=maxLoops,
-                                   offset=float(body.get("offset", 0)) / 100.0, colourSpread=float(body.get("spread", 0)) / 100.0)
+                                   offset=float(body.get("offset", sug[0])) / 100.0, colourSpread=float(body.get("spread", sug[1])) / 100.0,
+                                   pattern=str(body.get("pattern", sug[2])),
+                                   smoothing=float(body.get("smoothing", 0)) / 100.0)
                     resultData = {"success": True, "action": "play", "animation": animName}
                 else:
                     resultData = {"success": False, "error": "Animation '" + str(animName) + "' not found",
@@ -8052,7 +8444,7 @@ def writeHTMLSections(self, theSection, errorMsg = ""):
     elif theSection == "htmlheaders":
         self.wfile.write(bytes("<!DOCTYPE html>\n", "utf-8"))
         self.wfile.write(bytes("<HTML>\n<HEAD>\n", "utf-8"))
-        self.wfile.write(bytes("<TITLE>" + APP_NAME + " " + NEEWERLUX_VERSION + ", based on NeewerLite-Python by Zach Glenwright / NeewerLite by Xu Lian</TITLE>\n</HEAD>\n", "utf-8"))
+        self.wfile.write(bytes("<TITLE>" + APP_NAME + " " + PUPPI3LUX_VERSION + ", based on NeewerLite-Python by Zach Glenwright / NeewerLite by Xu Lian</TITLE>\n</HEAD>\n", "utf-8"))
         self.wfile.write(bytes("<BODY>\n", "utf-8"))
     elif theSection == "errorHelp":
         self.wfile.write(bytes("<H1>Invalid request!</H1>\n", "utf-8"))
@@ -8060,38 +8452,38 @@ def writeHTMLSections(self, theSection, errorMsg = ""):
         self.wfile.write(bytes(errorMsg + "<BR><BR>\n", "utf-8"))
         self.wfile.write(bytes("Valid parameters to use -<BR>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>list</STRONG> - list the current lights " + APP_NAME + " has available to it and the custom presets it can use<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?list</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?list</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>discover</STRONG> - tell " + APP_NAME + " to scan for new lights<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?discover</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?discover</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>nopage</STRONG> - send a command to the HTTP server, but don't render the webpage showing the results (<EM>useful, for example, on a headless Raspberry Pi where you don't necessarily want to see the results page</EM>)<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?nopage</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?nopage</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>link=</STRONG> - (value: <EM>index of light to link to</EM>) manually link to a specific light - you can specify multiple lights with semicolons (so link=1;2 would try to link to both lights 1 and 2)<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?link=1</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?link=1</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>light=</STRONG> - the MAC address (or current index of the light) you want to send a command to - you can specify multiple lights with semicolons (so light=1;2 would send a command to both lights 1 and 2)<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?light=11:22:33:44:55:66</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?light=11:22:33:44:55:66</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>mode=</STRONG> - the mode (value: <EM>HSI, CCT, and either ANM or SCENE</EM>) - the color mode to switch the light to<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?mode=CCT</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?mode=CCT</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>use_preset=</STRONG> - (value: <EM>1-" + str(numOfPresets) + "</EM>) - use a custom global or snapshot preset<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?use_preset=2</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?use_preset=2</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("(CCT mode only) <STRONG>temp=</STRONG> or <STRONG>temperature=</STRONG> - (value: <EM>3200 to 8500</EM>) the color temperature in CCT mode to set the light to<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?temp=5200</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?temp=5200</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("(HSI mode only) <STRONG>hue=</STRONG> - (value: <EM>0 to 360</EM>) the hue value in HSI mode to set the light to<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?hue=240</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?hue=240</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("(HSI mode only) <STRONG>sat=</STRONG> or <STRONG>saturation=</STRONG> - (value: <EM>0 to 100</EM>) the color saturation value in HSI mode to set the light to<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?sat=65</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?sat=65</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("(ANM/SCENE mode only) <STRONG>scene=</STRONG> - (value: <EM>1 to 9</EM>) which animation (scene) to switch the light to<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?scene=3</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?scene=3</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("(CCT/HSI/ANM modes) <STRONG>bri=</STRONG>, <STRONG>brightness=</STRONG> or <STRONG>intensity=</STRONG> - (value: <EM>0 to 100</EM>) how bright you want the light<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?brightness=80</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?brightness=80</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<BR><BR>More examples -<BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Set the light with MAC address <EM>11:22:33:44:55:66</EM> to <EM>CCT</EM> mode, with a color temperature of <EM>5200</EM> and brightness of <EM>40</EM><BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3sNeewerLux/doAction?light=11:22:33:44:55:66&mode=CCT&temp=5200&bri=40</EM><BR><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3Lux/doAction?light=11:22:33:44:55:66&mode=CCT&temp=5200&bri=40</EM><BR><BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Set the light with MAC address <EM>11:22:33:44:55:66</EM> to <EM>HSI</EM> mode, with a hue of <EM>70</EM>, saturation of <EM>50</EM> and brightness of <EM>10</EM><BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3sNeewerLux/doAction?light=11:22:33:44:55:66&mode=HSI&hue=70&sat=50&bri=10</EM><BR><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3Lux/doAction?light=11:22:33:44:55:66&mode=HSI&hue=70&sat=50&bri=10</EM><BR><BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Set the first light available to <EM>SCENE</EM> mode, using the <EM>first</EM> animation and brightness of <EM>55</EM><BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3sNeewerLux/doAction?light=1&mode=SCENE&scene=1&bri=55</EM><BR><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3Lux/doAction?light=1&mode=SCENE&scene=1&bri=55</EM><BR><BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Use the 2nd custom preset, but don't render the webpage showing the results<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3sNeewerLux/doAction?use_preset=2&nopage</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3Lux/doAction?use_preset=2&nopage</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<BR><HR><BR>\n", "utf-8"))
         self.wfile.write(bytes("<H2>Batch Commands (multiple lights, different settings)</H2>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>batch=</STRONG> - send different commands to different lights in a single request<BR>\n", "utf-8"))
@@ -8101,26 +8493,26 @@ def writeHTMLSections(self, theSection, errorMsg = ""):
         self.wfile.write(bytes("&nbsp;&nbsp;CCT temp values: use either short (56) or full (5600) format; both become 5600K<BR><BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Examples:<BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Set light 1 to red and light 2 to blue:<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3sNeewerLux/doAction?batch=1:HSI:0:100:100;2:HSI:240:100:100</EM><BR><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3Lux/doAction?batch=1:HSI:0:100:100;2:HSI:240:100:100</EM><BR><BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Set light 1 to warm CCT, turn light 2 off:<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3sNeewerLux/doAction?batch=1:CCT:32:80;2:OFF</EM><BR><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3Lux/doAction?batch=1:CCT:32:80;2:OFF</EM><BR><BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Set all lights to 5600K at 50% brightness:<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3sNeewerLux/doAction?batch=*:CCT:56:50</EM><BR><BR>\n", "utf-8"))
-        self.wfile.write(bytes("<STRONG>POST /Puppi3sNeewerLux/batch</STRONG> - same as above, but using a JSON body for richer control<BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3Lux/doAction?batch=*:CCT:56:50</EM><BR><BR>\n", "utf-8"))
+        self.wfile.write(bytes("<STRONG>POST /Puppi3Lux/batch</STRONG> - same as above, but using a JSON body for richer control<BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Send a POST request with Content-Type: application/json<BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Body: <EM>{\"commands\": [{\"light\": \"1\", \"mode\": \"HSI\", \"hue\": 0, \"sat\": 100, \"bri\": 50}, ...]}</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Returns a JSON response with per-command results<BR>\n", "utf-8"))
         self.wfile.write(bytes("<BR><HR><BR>\n", "utf-8"))
         self.wfile.write(bytes("<H2>Custom Animations</H2>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>list_animations</STRONG> - list all saved custom animations<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?list_animations</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?list_animations</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>animate=</STRONG> - play a saved animation by name (URL-encode spaces as %20)<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;Optionally append |speed|rate|brightness|loop|maxLoops|revert|offset|spread (e.g. animate=Police%20Flash|2.0|10|50); offset and spread (0-100) stagger the lights through the loop and round the colour wheel<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?animate=Police%20Flash</EM><BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?animate=Color%20Cycle|0.5</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;Optionally append |speed|rate|brightness|loop|maxLoops|revert|offset|spread|pattern|smoothing (e.g. animate=Police%20Flash|2.0|10|50); offset and spread (0-100) stagger the lights through the loop and round the colour wheel; pattern (left-to-right, right-to-left, top-to-bottom, bottom-to-top, centre-out, edges-in, around) lays a Nanoleaf's panels out by where they are on the wall, random gives every light a random place; smoothing (0-100) is how much of each keyframe glides from the one before<BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?animate=Police%20Flash</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?animate=Color%20Cycle|0.5</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>stop_animate</STRONG> - stop the currently playing animation<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?stop_animate</EM><BR>\n", "utf-8"))
-        self.wfile.write(bytes("<STRONG>POST /Puppi3sNeewerLux/animate</STRONG> - JSON API for animation control<BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?stop_animate</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("<STRONG>POST /Puppi3Lux/animate</STRONG> - JSON API for animation control<BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Actions: play, stop, list, create, status<BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Play: <EM>{\"action\": \"play\", \"name\": \"Police Flash\", \"speed\": 1.0, \"loop\": true, \"rate\": 5}</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Create: <EM>{\"action\": \"create\", \"animation\": {\"name\": \"...\", \"loop\": true, \"keyframes\": [...]}}</EM><BR>\n", "utf-8"))
@@ -8134,7 +8526,7 @@ def writeHTMLSections(self, theSection, errorMsg = ""):
         if theSection == "quicklinks-timer": # write the "This page will refresh..." timer
             self.wfile.write(bytes("<CENTER><strong><em><span id='refreshDisplay'><BR></span></em></strong></CENTER><HR>\n", "utf-8"))
     elif theSection == "htmlendheaders":
-        self.wfile.write(bytes("<CENTER><A HREF='https://github.com/puppi3-music/NeewerLux/'>" + APP_NAME + " " + NEEWERLUX_VERSION + "</A> (source, AGPL-3.0) by puppi3-music<BR>fork of <A HREF='https://github.com/poizenjam/NeewerLux/'>NeewerLux</A> by PoizenJam, based on <A HREF='https://github.com/taburineagle/NeewerLite-Python/'>NeewerLite-Python</A> (v0.12d) by Zach Glenwright / originally from <A HREF='https://github.com/keefo/NeewerLite'>NeewerLite</A> by Xu Lian<BR></CENTER>\n", "utf-8"))
+        self.wfile.write(bytes("<CENTER><A HREF='https://github.com/puppi3-music/Puppi3Lux/'>" + APP_NAME + " " + PUPPI3LUX_VERSION + "</A> (source, AGPL-3.0) by puppi3-music<BR>fork of <A HREF='https://github.com/poizenjam/NeewerLux/'>NeewerLux</A> by PoizenJam, based on <A HREF='https://github.com/taburineagle/NeewerLite-Python/'>NeewerLite-Python</A> (v0.12d) by Zach Glenwright / originally from <A HREF='https://github.com/keefo/NeewerLite'>NeewerLite</A> by Xu Lian<BR></CENTER>\n", "utf-8"))
         self.wfile.write(bytes("</BODY>\n</HTML>", "utf-8"))
 
 def formatStringForConsole(theString, maxLength):
@@ -8355,9 +8747,9 @@ def loadPrefsFile(globalPrefsFile = ""):
 if __name__ == '__main__':
     # Display the version we're running
     print("---------------------------------------------------------")
-    print("          " + APP_NAME + " ver. " + NEEWERLUX_VERSION)
+    print("          " + APP_NAME + " ver. " + PUPPI3LUX_VERSION)
     print("  Cross-platform Neewer and Nanoleaf light control")
-    print("  https://github.com/puppi3-music/NeewerLux/")
+    print("  https://github.com/puppi3-music/Puppi3Lux/")
     print("  By puppi3-music, licensed under AGPL-3.0")
     print("")
     print("  Fork of NeewerLux by PoizenJam")
@@ -8368,7 +8760,7 @@ if __name__ == '__main__':
 
     singleInstanceLock() # make a lockfile if one doesn't exist yet, and quit out if one does
     seedBundledPrefs() # macOS app: shipped presets and animations, from the bundle to Application Support
-    migrateRenamedPrefsFiles() # pick up settings saved under the old NeewerLux name
+    migrateRenamedPrefsFiles() # pick up settings saved under the old Puppi3sNeewerLux or NeewerLux names
 
     if os.path.exists(globalPrefsFile):
         loadPrefsFile(globalPrefsFile) # if a preferences file exists, process it and load the preferences
@@ -8435,7 +8827,7 @@ if __name__ == '__main__':
         if cmdReturn[0] == "LIST":
             doAnotherInstanceCheck() # check to see if another instance is running, and if it is, then error out and quit
 
-            print(APP_NAME + " " + NEEWERLUX_VERSION + ", fork of NeewerLux by PoizenJam, based on NeewerLite-Python 0.12d by Zach Glenwright / NeewerLite by Xu Lian")
+            print(APP_NAME + " " + PUPPI3LUX_VERSION + ", fork of NeewerLux by PoizenJam, based on NeewerLite-Python 0.12d by Zach Glenwright / NeewerLite by Xu Lian")
             print("Searching for nearby lights...")
             asyncioEventLoop.run_until_complete(findDevices())
 
@@ -8520,7 +8912,7 @@ if __name__ == '__main__':
 
                 # Mouse wheel scrolls the page instead of changing sliders/dropdowns; touch drag-to-scroll
                 try:
-                    from puppi3s_neewerlux_ui import installInputGuard
+                    from puppi3lux_ui import installInputGuard
                     app._inputGuard = installInputGuard(app)
                 except Exception as e:
                     print(f"  [DEBUG] Input guard not installed: {type(e).__name__}: {e}")
@@ -8615,9 +9007,9 @@ if __name__ == '__main__':
                 print(" but using " + APP_NAME + " with the GUI requires PySide6 (or PySide2).")
                 print()
                 print(" If you have already installed PySide6 but are still getting this error message,")
-                print(" Make sure you have the puppi3s_neewerlux_ui.py script in the same directory as Puppi3sNeewerLux.py")
+                print(" Make sure you have the puppi3lux_ui.py script in the same directory as Puppi3Lux.py")
                 print(" If you don't know where that file is, redownload the " + APP_NAME + " package from GitHub here:")
-                print("    https://github.com/puppi3-music/NeewerLux/")
+                print("    https://github.com/puppi3-music/Puppi3Lux/")
 
                 sys.exit(1) # quit out, we can't run the program without PySide or the GUI (for the GUI version, at least)
     else: # don't launch the GUI, send command to a light/lights and quit out

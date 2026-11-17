@@ -14,21 +14,21 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import puppi3s_neewerlux_nanoleaf as nanoleaf  # noqa: E402
+import puppi3lux_nanoleaf as nanoleaf  # noqa: E402
 
 try:
-    import Puppi3sNeewerLux as app
+    import Puppi3Lux as app
 except Exception:  # bleak or PySide missing
     app = None
 
 
-@unittest.skipIf(app is None, "Puppi3sNeewerLux.py could not be imported")
+@unittest.skipIf(app is None, "Puppi3Lux.py could not be imported")
 class TestPrefsDir(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.home = os.path.join(self.tmp.name, "home")
-        self.macDir = os.path.join(self.home, "Library", "Application Support", "Puppi3sNeewerLux", "light_prefs")
+        self.macDir = os.path.join(self.home, "Library", "Application Support", "Puppi3Lux", "light_prefs")
 
     def patchMacApp(self):
         for patcher in (mock.patch.object(app, "_isFrozenExe", True),
@@ -39,7 +39,7 @@ class TestPrefsDir(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def test_next_to_the_program(self):
-        with mock.patch.object(sys, "argv", [os.path.join(self.tmp.name, "Puppi3sNeewerLux.py")]):
+        with mock.patch.object(sys, "argv", [os.path.join(self.tmp.name, "Puppi3Lux.py")]):
             expected = os.path.join(self.tmp.name, "light_prefs")
             self.assertEqual(app.lightPrefsDir(), expected)
             self.assertEqual(nanoleaf.defaultSavedPath(), os.path.join(expected, "nanoleaf.json"))
@@ -84,14 +84,14 @@ class TestPrefsDir(unittest.TestCase):
         self.assertEqual(self.read("customLights.prefs.default"), "template v2")  # templates always refresh
 
         # A new version adds missing shipped animations, still without overwriting the user's
-        with mock.patch.object(app, "NEEWERLUX_VERSION", "99.0.0"):
+        with mock.patch.object(app, "PUPPI3LUX_VERSION", "99.0.0"):
             app.seedBundledPrefs()
         self.assertEqual(self.read("animations/Strobe.json"), "shipped strobe")
         self.assertEqual(self.read("animations/Breathe.json"), "mine")
 
     def test_seeding_does_nothing_outside_the_macos_app(self):
         self.makeBundle()
-        with mock.patch.object(sys, "argv", [os.path.join(self.tmp.name, "Puppi3sNeewerLux.py")]):
+        with mock.patch.object(sys, "argv", [os.path.join(self.tmp.name, "Puppi3Lux.py")]):
             app.seedBundledPrefs()
             self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "light_prefs")))
 

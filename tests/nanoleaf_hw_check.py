@@ -1,4 +1,4 @@
-"""Check puppi3s_neewerlux_nanoleaf against a real Nanoleaf before the app integration. A dev tool.
+"""Check puppi3lux_nanoleaf against a real Nanoleaf before the app integration. A dev tool.
 
 Run from the repo root:
 
@@ -21,7 +21,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import puppi3s_neewerlux_nanoleaf as nl  # noqa: E402
+import puppi3lux_nanoleaf as nl  # noqa: E402
 
 UUID = "nanoleaf-check"
 SAVED = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "light_prefs", "nanoleaf.json")
