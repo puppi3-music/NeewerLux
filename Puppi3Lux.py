@@ -20,7 +20,7 @@
 ##          Windows, Linux/Ubuntu, MacOS and RPi
 ############################################################
 
-PUPPI3LUX_VERSION = "1.5.0"
+PUPPI3LUX_VERSION = "1.5.1"
 PUPPI3LUX_REPO_URL = "https://github.com/puppi3-music/Puppi3Lux/"
 PUPPI3LUX_RELEASES_API = "https://api.github.com/repos/puppi3-music/Puppi3Lux/releases/latest"
 APP_NAME = "Puppi3Lux" # the name users see, and the one file names, modules and URLs use
@@ -2930,28 +2930,42 @@ try: # try to load the GUI
             def current(column):
                 return self.lightTable.item(currentRow, column).text() if rowToChange != -1 else ""
 
+            # Sound and animation frames call this for every light many times a second, so only the
+            # cells whose text changed are touched, and the rows are measured again (every row, which is
+            # slow with a Nanoleaf's panels listed) only when a cell gains or loses a line.
+            heightMayChange = rowToChange == -1
+
+            def put(column, text):
+                nonlocal heightMayChange
+                item = self.lightTable.item(currentRow, column)
+                if item.text().count("\n") != text.count("\n"):
+                    heightMayChange = True
+                item.setText(text)
+
             # THIS SECTION BELOW LIMITS UPDATING THE TABLE **ONLY** IF THE DATA SUPPLIED IS DIFFERENT THAN IT WAS ORIGINALLY
             if infoArray[0] != "": # the name of the light
                 if rowToChange == -1 or infoArray[0] != current(0):
-                    self.lightTable.item(currentRow, 0).setText(infoArray[0])
+                    put(0, infoArray[0])
             if infoArray[1] != "": # the MAC address of the light
                 if rowToChange == -1 or infoArray[1] != current(1):
-                    self.lightTable.item(currentRow, 1).setText(infoArray[1])
+                    put(1, infoArray[1])
             if infoArray[2] != "": # the Linked status of the light
                 currentLinked = current(2)
                 # a plain "LINKED" doesn't overwrite a "LINKED\nON / ch. 1" that already says more
                 keepDetail = infoArray[2] == "LINKED" and currentLinked.startswith("LINKED")
                 if rowToChange == -1 or (infoArray[2] != currentLinked and not keepDetail):
-                    self.lightTable.item(currentRow, 2).setText(infoArray[2])
+                    put(2, infoArray[2])
                     self.lightTable.item(currentRow, 2).setTextAlignment(Qt.AlignCenter) # align the light status info to be center-justified
             if infoArray[3] != "": # the current status message of the light
                 if rowToChange == -1 or infoArray[3] != current(3):
-                    self.lightTable.item(currentRow, 3).setText(infoArray[3])
+                    put(3, infoArray[3])
 
             if rowToChange != -1 and rowToChange in self._groupRowOf: # a panel: its device's row counts linked panels
-                self._refreshGroupRow(self._groupRowOf[rowToChange])
+                if self._refreshGroupRow(self._groupRowOf[rowToChange]):
+                    heightMayChange = True
 
-            self.lightTable.resizeRowsToContents()
+            if heightMayChange:
+                self.lightTable.resizeRowsToContents()
 
         def returnTableInfo(self, lightIndex, column):
             """The text in one column of a light's row (lightIndex is an availableLights index)."""
@@ -2968,7 +2982,8 @@ try: # try to load the GUI
             return label
 
         def _refreshGroupRow(self, row):
-            """Redraw a device's group row: arrow, name, panel count and how many panels are linked."""
+            """Redraw a device's group row: arrow, name, panel count and how many panels are linked.
+            Touches only what changed, and returns whether any of its text gained or lost a line."""
             _kind, controller, members = self._tableRows[row]
             collapsed = controller.address in self._collapsedGroups
             linked = sum(1 for a in members if availableLights[a][1] != "" and availableLights[a][1].is_connected)
@@ -2981,14 +2996,20 @@ try: # try to load the GUI
             texts = [("▸ " if collapsed else "▾ ") + controller.name + "\n  [LAN] · " + str(len(members)) + " panels",
                      controller.address, linkedText,
                      "Double-click to " + ("show" if collapsed else "hide") + " its panels"]
+            linesChanged = False
             for column, text in enumerate(texts):
                 item = self.lightTable.item(row, column)
                 if item.text() != text:
+                    linesChanged = linesChanged or item.text().count("\n") != text.count("\n")
                     item.setText(text)
-            self.lightTable.item(row, 2).setTextAlignment(Qt.AlignCenter)
+            linkedItem = self.lightTable.item(row, 2)
+            if linkedItem.textAlignment() != Qt.AlignCenter:
+                linkedItem.setTextAlignment(Qt.AlignCenter)
             header = self.lightTable.verticalHeaderItem(row)
-            if header is not None:
-                header.setText("▸" if collapsed else "▾")
+            arrow = "▸" if collapsed else "▾"
+            if header is not None and header.text() != arrow:
+                header.setText(arrow)
+            return linesChanged
 
         def _toggleGroupAt(self, row, column = 0):
             """Collapse or expand the device on this row (double-click, or a click on its row number)."""

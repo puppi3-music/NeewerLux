@@ -2,6 +2,17 @@
 
 Changes relative to upstream [NeewerLite-Python v0.12d](https://github.com/taburineagle/NeewerLite-Python).
 
+## v1.5.1 - 2026-11-17
+
+### Changed
+- **Chase drum rolls are faster.** The deep flash now sweeps round a Nanoleaf's panels as a band, so the next panel is already up before the last one goes down. The panels together never dim between steps, so as one area they no longer count as flashing. That lets the chase move a panel per hit, even at the Standard flash limit, where it used to step once a beat. Each panel's own flashes stay within Standard. Sets of two or three panels step every 2 or 4 hits to keep within it. At **Show** and **Off** the chase pops instead: a deep flash on each panel in turn, fading before the next, as fast as the level allows. At Show that's every hit up to 10 a second. It goes back to the sweep once its 4-second burst is used up.
+- **Drum roll ripples are brighter.** Between deep flashes, lights ripple a fifth of the way up from Min bright instead of from Min bright itself, so the roll shows on every panel and stays under the deep flash. The ripple's depth is still 8 points, too little to count as a flash.
+
+### Fixed
+- **With a small sound Offset, the first light no longer flashes ahead of the rest.** The offset's delay was rounded up to whole sound frames, so every light but the first fell a full frame behind it. It now rounds to the nearest frame.
+- **The window no longer lags while sound mode flashes a Nanoleaf's panels.** Each light's Status update in the light table re-measured every row, and with a row per panel, beat flashes sent hundreds of updates a second. The window fell up to a second behind, most of all with a MIDI clock linked to the kicks. Rows are now re-measured only when a cell gains or loses a line.
+- **MIDI clock works from source on Windows.** `python-rtmidi` has no prebuilt packages for Python 3.13, so on 3.13 `uv sync` couldn't install it without a C++ compiler, and no MIDI inputs were listed. `.python-version` now pins uv to Python 3.12, as release builds already use.
+
 ## v1.5.0 - 2026-11-16
 
 ### Renamed
