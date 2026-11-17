@@ -2,6 +2,11 @@
   "name": "Ocean Waves",
   "description": "Slow blue-green undulation simulating ocean light",
   "loop": true,
+  "suggest": {
+    "offset": 40,
+    "spread": 0,
+    "pattern": "Left to right"
+  },
   "keyframes": [
     {
       "hold_ms": 0,

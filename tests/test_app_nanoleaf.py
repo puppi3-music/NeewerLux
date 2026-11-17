@@ -434,6 +434,29 @@ class LightTableGroupTests(AppTestCase):
         self.window._toggleGroupAt(4)  # a light on its own: nothing to collapse
         self.assertFalse(any(self.table.isRowHidden(r) for r in range(5)))
 
+    def test_the_selection_follows_its_lights_when_rows_move(self):
+        self.selectTableRow(4)  # "Other", availableLights index 3
+        # a panel came off the front: every row moves up one (what refreshNanoleafPanels does)
+        app.availableLights.pop(0)
+        self.window._onLightsChanged()
+        self.assertEqual([app.availableLights[a][0].address for a in self.window.selectedLights()], ["NL:S99999"])
+
+    def test_a_selected_device_takes_in_new_panels(self):
+        self.selectTableRow(0)  # the device row: all three panels
+        controller = app.nanoleafControllers["S12345"]
+        controller.panels = controller.panels + [5004]
+        app.addNanoleafLights()
+        self.window._onLightsChanged()
+        selected = {app.availableLights[a][0].address for a in self.window.selectedLights()}
+        self.assertIn("NL:S12345-P5004", selected)
+        self.assertNotIn("NL:S99999", selected)
+
+    def test_the_device_row_counts_as_one_nanoleaf(self):
+        self.selectTableRow(0)  # selects its three panels
+        self.assertEqual(self.window._selectedNanoleafDevice().controller.id, "S12345")
+        self.window.selectRows([0, 3])  # a panel and another device
+        self.assertIsNone(self.window._selectedNanoleafDevice())
+
 
 if __name__ == "__main__":
     unittest.main()

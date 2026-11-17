@@ -2,6 +2,11 @@
   "name": "Lava Lamp",
   "description": "Deep saturated colors slowly morphing like a lava lamp",
   "loop": true,
+  "suggest": {
+    "offset": 30,
+    "spread": 0,
+    "pattern": "Bottom to top"
+  },
   "keyframes": [
     {
       "hold_ms": 0,

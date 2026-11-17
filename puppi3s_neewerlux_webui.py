@@ -480,6 +480,18 @@ select:focus, input:focus { border-color: var(--accent); outline: none; }
                 </div>
             </div>
             <div class="control-group">
+                <label>Pattern</label>
+                <select id="animPattern" title="How the lights are laid out for Offset and Colour spread. Light order goes by the light list; the others place a Nanoleaf shown one light per panel by where its panels are on the wall">
+                    <option>Light order</option><option>Left to right</option><option>Right to left</option>
+                    <option>Top to bottom</option><option>Bottom to top</option><option>Centre out</option>
+                    <option>Edges in</option><option>Around</option><option>Random</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label>Smoothing (%)</label>
+                <input type="number" id="animSmooth" value="0" min="0" max="100" style="width:60px" title="How much of each keyframe is spent gliding from the colour before it: 0 = the fades the animation sets, 100 = always moving smoothly on to the next colour">
+            </div>
+            <div class="control-group">
                 <label style="display:flex;align-items:center;gap:6px;text-transform:none;color:var(--text)">
                     <input type="checkbox" id="animLoop"> Loop animation
                 </label>
@@ -561,7 +573,7 @@ select:focus, input:focus { border-color: var(--accent); outline: none; }
             </div>
             <div class="api-section">
                 <h3>Animations</h3>
-                <div class="api-desc">Play by name (GET). Format: <code>Name|speed|rate|bri|loop|maxLoops|revert|offset|spread</code> (offset, spread: 0-100%, staggering the lights through the loop and round the colour wheel)</div>
+                <div class="api-desc">Play by name (GET). Format: <code>Name|speed|rate|bri|loop|maxLoops|revert|offset|spread|pattern|smoothing</code> (offset, spread: 0-100%, staggering the lights through the loop and round the colour wheel; pattern: left-to-right, right-to-left, top-to-bottom, bottom-to-top, centre-out, edges-in or around, laying a Nanoleaf's panels out by where they are on the wall, or random; smoothing: 0-100%, how much of each keyframe glides from the one before)</div>
                 <div class="api-code">GET /Puppi3sNeewerLux/doAction?animate=Concert%20Sweep|1.0|10|80</div>
                 <div class="api-desc">With loop control: play twice then revert</div>
                 <div class="api-code">GET /Puppi3sNeewerLux/doAction?animate=Halloween|1.0|10|50|true|2|true</div>
@@ -676,11 +688,13 @@ function playAnimation() {
     const revert = document.getElementById('animRevert').checked;
     const offset = parseFloat(document.getElementById('animOffset').value) || 0;
     const spread = parseFloat(document.getElementById('animSpread').value) || 0;
+    const pattern = document.getElementById('animPattern').value;
+    const smoothing = parseFloat(document.getElementById('animSmooth').value) || 0;
 
     fetch('/Puppi3sNeewerLux/animate', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({action:'play', name:selectedAnim, speed:parseFloat(speed), rate:parseInt(rate), brightness:parseInt(bri), loop:loop, maxLoops:maxLoops, revert:revert, offset:offset, spread:spread})
+        body: JSON.stringify({action:'play', name:selectedAnim, speed:parseFloat(speed), rate:parseInt(rate), brightness:parseInt(bri), loop:loop, maxLoops:maxLoops, revert:revert, offset:offset, spread:spread, pattern:pattern, smoothing:smoothing})
     }).then(r => r.json()).then(d => {
         let msg = '▶ Playing: ' + selectedAnim;
         if (loop) msg += maxLoops > 0 ? ' (' + maxLoops + ' loops)' : ' (looping)';
@@ -944,6 +958,11 @@ function loadAnimationsJSON(data) {
                 item.classList.add('selected');
                 selectedAnim = a.name;
                 document.getElementById('selectedAnimLabel').textContent = 'Selected: ' + a.name;
+                if (a.suggest) {  // [offset %, colour spread %, pattern] the animation suggests
+                    document.getElementById('animOffset').value = a.suggest[0];
+                    document.getElementById('animSpread').value = a.suggest[1];
+                    document.getElementById('animPattern').value = a.suggest[2];
+                }
             };
             animDiv.appendChild(item);
         });

@@ -2,6 +2,22 @@
 
 Changes relative to upstream [NeewerLite-Python v0.12d](https://github.com/taburineagle/NeewerLite-Python).
 
+## Unreleased
+
+### Added
+- **Animation Smoothing.** A new **Smoothing** setting in the Animations tab spends at least that share of each keyframe gliding from the colour before it, taken from its hold so the timing stays the same. 0% plays the fades as set; 100% never holds and always moves smoothly on to the next colour. On the web dashboard too, and in the HTTP API (`animate=Name|...|pattern|smoothing`, or `"smoothing"` in the POST body).
+- **Random pattern.** Pattern has a new **Random** choice that gives every light, Nanoleaf panel or not, its own place at random. The lights are dealt new places each time an animation or sound session starts.
+- **Loop forever.** The Animations tab's Loop setting is now a **Forever** tick box, on by default: the animation goes round until Stop. Untick it to play a number of **Times**.
+- **Panels added while in use.** A linked Nanoleaf shown one light per panel is checked every 5 seconds for panels added or taken off. New panels get their own rows, are linked and join a running animation straight away; removed panels' rows are dropped. A running sound reactive session carries on, with its lights following their rows. **Scan** checks every per-panel Nanoleaf the same way, linked or not.
+- **Unpair a Nanoleaf.** Light Preferences has an **Unpair this Nanoleaf…** button. It takes the device out of the light table and `light_prefs/nanoleaf.json` and asks the controller to forget the app's token. Its per-light prefs are kept, so pairing it again brings back names and IDs.
+- **Pattern: effects that follow a Nanoleaf's layout.** Animations and the Sound tab have a new **Pattern** setting beside Offset and Colour spread. **Light order**, the default, works as before. **Left to right**, **Right to left**, **Top to bottom**, **Bottom to top**, **Centre out**, **Edges in** and **Around** place each panel of a Nanoleaf shown one light per panel by where it sits on the wall, with the canvas rotation from the Nanoleaf app applied. Panels level with each other move together, so with some Offset a breathe or flash sweeps across the set as a straight edge, spreads out from the middle in rings, or turns like a clock hand. Colour spread lays a rainbow across the set the same way. In sound mode the Pattern also sets the order for Rainbow drift and the Chase drum roll. In Frequency bands, the set splits into thirds along the pattern, so Bottom to top shows the bass at the bottom and the highs at the top. Other lights keep their place in light order. Panel positions are cached in `light_prefs/nanoleaf.json`. Saved with the window and in sound presets, on the web dashboard, and in the HTTP API (`animate=Name|...|offset|spread|pattern`, such as `centre-out`, or `"pattern"` in the POST body).
+- **Suggested settings per animation.** An animation file can now carry `"suggest": {"offset": 50, "spread": 0, "pattern": "Centre out"}`. Picking that animation, in the app or on the dashboard, sets Offset, Colour spread and Pattern to those values, and you can still change them before playing. HTTP requests that leave those values out use them too. Animations without one leave the controls as they are. 18 built-in animations that set every light at once now suggest settings: for example, Breathe pulses out in rings, Color Cycle turns round the set, Matrix falls from the top, and the fires rise from the bottom. Animations that name lights 1–4, and strobes and sirens, have no suggestion and stay in step. The visual editor keeps a file's suggestion when you save it.
+
+### Fixed
+- **The HTTP server's accepted IP list matched too much.** An entry matched anywhere in the address, so the default `10.` let in any address containing "10." (such as 8.8.10.1), and an empty line in the list let in everyone. Entries now match whole parts from the start: `192.168.` and `10.` are ranges, and a full address matches only itself.
+- **POST /animate with no name** answered with an error page instead of `{"success": false, ...}`.
+- **A tap on the panels no longer leaves a Nanoleaf unresponsive.** Tapping or swiping the panels (or picking an effect in the Nanoleaf app) takes the device out of the stream mode the app drives it with, and every colour sent after that went nowhere. The app now notices within about 5 seconds. During an animation or sound session it takes the panels straight back; otherwise the next colour you send restarts the stream.
+
 ## v1.4.0 - 2026-11-16
 
 ### Licence

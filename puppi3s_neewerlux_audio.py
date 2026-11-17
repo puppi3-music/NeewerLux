@@ -246,6 +246,7 @@ HIT_LOUD = 0.75          # ... and the share of the loudness with kicks it must 
 HIT_MIN_GAP = 0.25       # seconds: hits closer than this count once
 HARMONY_COLOUR_BEATS = 2  # beats' worth of time each colour glide takes over when the notes set the colour
 ROLL_MODES = ("Beat colour jump", "Bass pulse", "Rainbow drift")  # the modes drum rolls take over
+LIGHT_ORDER = "Light order"  # the Pattern that goes by the light list (the others are the app's, see lightPlaces)
 
 
 def _blend(a, b, t):
@@ -1721,6 +1722,13 @@ class _LightShow:
     def step(self, now):
         """One pass of the loop. Sends a frame if one is due. Returns the seconds to wait, or 0 to go straight on."""
         a = self.analyser
+        remap = self.engine._takeRemap()
+        if remap is not None:  # rows moved (Nanoleaf panels came or went): keep each light's state with it
+            for d in (self.limiters, self.slow, self.slowRoll, self.delayed, self.lastSent, self.rollTop):
+                moved = {remap[i]: v for i, v in d.items() if i in remap}
+                d.clear()
+                d.update(moved)
+            self.chaseLimiters.clear()  # keyed by group, and the groups' panels have changed
         interval = 1.0 / max(1, min(30, int(self.engine.fps)))
         a.tempo.setRange(self.engine.tempoMin, self.engine.tempoMax)
         if self.heard:
@@ -1861,7 +1869,8 @@ class _LightShow:
         pal = list(e.palette) if e.palette else None
         jumpCol = None
         targets = list(e.targets)
-        shifts = self._spreadShifts(targets)
+        places = self._places(targets)
+        shifts = self._spreadShifts(targets, places)
         if mode == "Beat colour jump":
             jumpCol = self._jumpColour(now, src, colourBeat, pal, every, colourFade, shifts.values())
         elif mode == "Rainbow drift":
@@ -1882,7 +1891,7 @@ class _LightShow:
         if maxSwings is None:  # with the limit off nothing is counted, so turning it back on starts afresh
             self.limiters.clear()
             self.chaseLimiters.clear()
-        groups = self._chaseGroups(targets)
+        groups = self._chaseGroups(targets, places)
         chaseOn = self._chaseLit(groups) if self.rollPos is not None and mode in ROLL_MODES and e.rollStyle == "Chase" else None
         groupTop = {}
         beatPeriod = src.beatPeriod() if src is not None else self.beatPeriod
@@ -1894,7 +1903,7 @@ class _LightShow:
             else:
                 flash, lightBass = self.beatFlash, bass
                 self.slow.pop(idx, None)
-            h, sat, amt = self._lightColour(mode, pos, targets, pal, sm, lightBass, cen, colourPos, hit, jumpCol, flash, shifts[idx])
+            h, sat, amt = self._lightColour(mode, pos, targets, pal, sm, lightBass, cen, colourPos, hit, jumpCol, flash, shifts[idx], places[idx])
             lo, hiB = sorted((int(e.minBri), int(e.maxBri)))
             sat = sat * e.saturation / 100.0
             if self.rollPos is not None and mode in ROLL_MODES:
@@ -1914,7 +1923,7 @@ class _LightShow:
                     groupTop[key] = max(groupTop.get(key, bri), bri)
             cmd = (int(round(h)) % 361, int(round(sat)), int(round(bri)))
             # Offset: each light shows what it would have a share of a beat ago, further back down the line, so changes ripple across them
-            cmd = self._delayed(idx, now, cmd, offset * min(2.0, max(0.1, beatPeriod)) * pos / len(targets))
+            cmd = self._delayed(idx, now, cmd, offset * min(2.0, max(0.1, beatPeriod)) * places[idx])
             if cmd is None:
                 continue  # nothing old enough yet: it keeps what it shows
             # Only send when something visibly changed.
@@ -2002,8 +2011,9 @@ class _LightShow:
         st[0] = max(0.0, st[0] - dt / max(2.0 * gap, ROLL_ACCENT_SHARE * st[1] * self.rollHit))
         return st[0]
 
-    def _chaseGroups(self, targets):
+    def _chaseGroups(self, targets, places=None):
         """{group: its quick lights in light order} for each group of two or more driven lights, as a Nanoleaf's panels.
+        With places ({light: 0..1}, from _places) they go in that order instead, so the chase follows the Pattern.
         Lights in no group, and slow lights, keep the Strobe in a Chase."""
         fn = self.engine.lightGroup
         groups = {}
@@ -2014,6 +2024,10 @@ class _LightShow:
                 key = None
             if key is not None and self._lightGap(idx) <= SLOW_LIGHT:
                 groups.setdefault(key, []).append(idx)
+        if places:
+            rank = {idx: pos for pos, idx in enumerate(targets)}
+            for members in groups.values():
+                members.sort(key=lambda idx: (places.get(idx, 0.0), rank[idx]))
         return {key: members for key, members in groups.items() if len(members) > 1}
 
     def _chaseLit(self, groups):
@@ -2175,11 +2189,27 @@ class _LightShow:
             cmd = q.popleft()[1]
         return cmd
 
-    def _spreadShifts(self, targets):
+    def _places(self, targets):
+        """{light index: 0..1}, where each light comes along the lights, for Offset, Colour spread, Frequency bands,
+        Rainbow drift and a Chase roll: engine.lightPlaces(targets, engine.pattern) when the app gives one (it lays a
+        Nanoleaf's panels out by where they are on the wall), else each light's place in targets, pos / len."""
+        targets = list(targets)
+        fn = getattr(self.engine, "lightPlaces", None)
+        if fn is not None:
+            try:
+                places = fn(targets, getattr(self.engine, "pattern", LIGHT_ORDER))
+                if all(idx in places for idx in targets):
+                    return places
+            except Exception:
+                pass
+        n = max(1, len(targets))
+        return {idx: pos / n for pos, idx in enumerate(targets)}
+
+    def _spreadShifts(self, targets, places=None):
         """{light index: how far (0-1) its colour is moved round the wheel or palette}, from Colour spread."""
         spread = max(0.0, min(1.0, float(self.engine.colourSpread)))
-        n = max(1, len(targets))
-        return {idx: spread * pos / n for pos, idx in enumerate(targets)}
+        places = places if places is not None else self._places(targets)
+        return {idx: spread * places[idx] for idx in targets}
 
     def _jumpColour(self, now, src, colourBeat, pal, every, colourFade, shifts=(0.0,)):
         """{shift: colour shown} for each Colour spread shift. Each colour change glides over a share of the
@@ -2216,9 +2246,12 @@ class _LightShow:
             out[shift] = shown
         return out
 
-    def _lightColour(self, mode, pos, targets, pal, sm, bass, cen, colourPos, hit, jumpCol, flash=None, shift=0.0):
+    def _lightColour(self, mode, pos, targets, pal, sm, bass, cen, colourPos, hit, jumpCol, flash=None, shift=0.0, place=None):
         """(hue, saturation, brightness 0..1) for the light at this position. flash is this light's beat flash,
-        shift how far (0-1) Colour spread moves its colour round the wheel or palette."""
+        shift how far (0-1) Colour spread moves its colour round the wheel or palette, place where (0-1) it comes
+        along the Pattern (default pos / len(targets))."""
+        if place is None:
+            place = pos / max(1, len(targets))
         flash = self.beatFlash if flash is None else flash
         if mode == "Spectrum colour":
             h, sat = paletteShifted(pal, cen, False, shift) if pal else ((cen * 280.0 + shift * 360.0) % 360, 100.0)
@@ -2238,11 +2271,13 @@ class _LightShow:
                 b, m, hi = sm["bass"], sm["mid"], sm["high"]
                 h, sat = _mix(bandCols, (b, m, hi))
                 return h, sat, max(b, m, hi)
-            band = pos % 3
+            # In light order the bands take turns; along a Pattern they take a third each, so with Bottom to top
+            # a Nanoleaf shows the bass at the bottom and the highs at the top.
+            band = pos % 3 if getattr(self.engine, "pattern", LIGHT_ORDER) == LIGHT_ORDER else min(2, int(place * 3))
             h, sat = bandCols[band]
             return h, sat, sm[("bass", "mid", "high")[band]]
         # Rainbow drift
-        off = pos / max(1, len(targets))
+        off = place
         h, sat = paletteAt(pal, self.hue / 360.0 + off, True) if pal else ((self.hue + off * 360.0) % 360, 100.0)
         return h, sat, max(sm["level"], flash * 0.7)
 
@@ -2306,6 +2341,8 @@ class SoundEngine:
         self.colourFade = 0.75     # how long colour changes glide in Bass pulse and Beat colour jump, 0..0.95
         self.offset = 0.0          # 0..1: the lights spread over this share of a beat behind the first, so changes ripple across them
         self.colourSpread = 0.0    # 0..1: each light's colour moved further round the wheel (or palette), spread over the lights
+        self.pattern = LIGHT_ORDER  # how the lights are laid out for Offset, Colour spread, Frequency bands, Rainbow drift and Chase
+        self.lightPlaces = None    # fn(targets, pattern) -> {light index: 0..1}: a Nanoleaf's panels by where they are on the wall
         self.rollStyle = "Strobe"  # drum rolls: "Strobe" pulses on each hit, "Swell" climbs smoothly to Max bright, "Strobe + Swell" does both, "Chase" moves the deep flash along the lights
         self.flashLevel = "Standard"  # how many flashes a second each light is held to: a key of FLASH_LEVELS
         self.fps = 15
@@ -2333,7 +2370,23 @@ class SoundEngine:
         self._queue = deque(maxlen=1000)  # captured blocks waiting for analysis, about 10 s
         self._rate = 48000
         self._decim = 1            # keep every this-many-th sample
+        self._remap = None         # {old light index: new one} waiting for the sound thread, see remapLights
         self.running = False
+
+    def remapLights(self, mapping):
+        """The app's rows moved while running (Nanoleaf panels added or taken off): mapping is {old light index:
+        new index} for every light still there. targets follow at once; each light's own state (flash limits,
+        offset delays) follows on the sound thread's next frame. Lights not in mapping are dropped."""
+        with self._lock:
+            self.targets = [mapping[i] for i in self.targets if i in mapping]  # targets are already up to date
+            if self._remap is not None:  # two changes before a frame: the light show's state still has the old rows
+                mapping = {old: mapping[mid] for old, mid in self._remap.items() if mid in mapping}
+            self._remap = dict(mapping)
+
+    def _takeRemap(self):
+        with self._lock:
+            remap, self._remap = self._remap, None
+        return remap
 
     # --- capture ---------------------------------------------------------
 

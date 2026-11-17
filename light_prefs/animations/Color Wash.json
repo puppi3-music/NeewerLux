@@ -2,6 +2,11 @@
   "name": "Color Wash",
   "description": "Slow continuous transitions through warm and cool tones",
   "loop": true,
+  "suggest": {
+    "offset": 30,
+    "spread": 0,
+    "pattern": "Left to right"
+  },
   "keyframes": [
     {
       "hold_ms": 0,

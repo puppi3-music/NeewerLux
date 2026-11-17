@@ -2,6 +2,11 @@
   "name": "Fire Flicker",
   "description": "Warm flickering tones simulating firelight",
   "loop": true,
+  "suggest": {
+    "offset": 30,
+    "spread": 0,
+    "pattern": "Bottom to top"
+  },
   "keyframes": [
     {
       "hold_ms": 0,

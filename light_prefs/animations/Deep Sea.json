@@ -2,6 +2,7 @@
   "name": "Deep Sea",
   "description": "Dark underwater blues and teals with slow drifting movement",
   "loop": true,
+  "suggest": {"offset": 40, "spread": 0, "pattern": "Top to bottom"},
   "keyframes": [
     {"hold_ms": 1000, "fade_ms": 3000, "lights": {"*": {"mode": "HSI", "hue": 195, "sat": 90, "bri": 30}}},
     {"hold_ms": 1000, "fade_ms": 3000, "lights": {"*": {"mode": "HSI", "hue": 210, "sat": 85, "bri": 20}}},

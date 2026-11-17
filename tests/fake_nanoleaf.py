@@ -108,6 +108,9 @@ class FakeNanoleaf:
             def do_POST(self):
                 self._handle("POST")
 
+            def do_DELETE(self):
+                self._handle("DELETE")
+
         self.http = ThreadingHTTPServer((host, port), Handler)
         self.port = self.http.server_address[1]
         self.udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -176,6 +179,9 @@ class FakeNanoleaf:
         sub = path[len(prefix):].rstrip("/")
 
         with self.lock:
+            if method == "DELETE" and sub == "":  # forget the token
+                self.revoked = True
+                return 204, None
             if method == "GET" and sub == "":
                 return 200, {"name": "Fake Shapes", "serialNo": "S12345", "model": "NL42",
                              "firmwareVersion": "9.9.9", "state": self.state,

@@ -152,6 +152,10 @@ It waits up to a minute for the controller to enter pairing mode, saves the set 
 
 **Chase drum rolls.** In sound reactive mode, set **Drum rolls** to **Chase** to run a drum roll round a set shown one light per panel: each deep flash goes to the next panel, left to right. Other lights keep the Strobe. See [Sound reactive](#sound-reactive) for the flash limit, which counts a set's panels together as one area.
 
+**Effects that follow the layout.** By default Offset and Colour spread go through the panels in light order. Set **Pattern** (Animations and Sound tabs) to lay them out by where the panels are on the wall instead. The options are Left to right, Right to left, Top to bottom, Bottom to top, Centre out, Edges in, or Around (clockwise from the top). Panels level with each other move together: try Breathe or Strobe with Offset at 50–100% and Pattern on Centre out for rings, or Around with Colour spread at 100% for a turning colour wheel. In sound mode the Pattern also orders Rainbow drift and Chase drum rolls. In Frequency bands each third of the set gets one band, so Bottom to top gives an equaliser with the bass at the bottom. Neewer lights in the same effect keep their place in light order. Animations that name lights by number (1–4) only play on the panels with those numbers; use one that sets every light (`*`), such as Breathe, Strobe or Color Wash, to cover a whole set.
+
+**Suggested settings.** Some animations come with suggested Offset, Colour spread and Pattern values, and picking one sets the controls to them (Breathe, for example, picks rings from the centre). You can change them before pressing Play. To give your own animation suggestions, add `"suggest": {"offset": 40, "spread": 0, "pattern": "Bottom to top"}` to its file. Fields you leave out are 0% and Light order. HTTP and dashboard plays use the suggestions unless the request gives its own values.
+
 **Known limits.**
 
 - The Scene tab (Neewer's built-in effects) does nothing on a Nanoleaf.

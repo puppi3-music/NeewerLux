@@ -2,6 +2,11 @@
   "name": "Color Cycle",
   "description": "Continuous hue rotation through the spectrum",
   "loop": true,
+  "suggest": {
+    "offset": 0,
+    "spread": 100,
+    "pattern": "Around"
+  },
   "keyframes": [
     {
       "hold_ms": 0,

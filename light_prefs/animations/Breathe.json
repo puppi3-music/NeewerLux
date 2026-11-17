@@ -2,6 +2,11 @@
   "name": "Breathe",
   "description": "Smooth continuous warm brightness pulse",
   "loop": true,
+  "suggest": {
+    "offset": 50,
+    "spread": 0,
+    "pattern": "Centre out"
+  },
   "keyframes": [
     {
       "hold_ms": 0,

@@ -853,9 +853,12 @@ class AnimationEditorDialog(QDialog):
 
     def getResult(self):
         """Return the edited animation data."""
-        return {
+        result = {
             "name": self._nameField.text().strip() or "Untitled",
             "description": self._descField.text().strip(),
             "loop": self._loopCheck.isChecked(),
             "keyframes": self._keyframes
         }
+        if "suggest" in self._animData:  # suggested Offset / Colour spread / Pattern, not edited here
+            result["suggest"] = self._animData["suggest"]
+        return result

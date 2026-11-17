@@ -48,6 +48,7 @@ if sys.stderr is None:
     sys.stderr = open(os.devnull, 'w')
 
 import math # used for calculating the RGB values of color temperatures
+import random # the Random pattern
 import json # used for animation files and HTTP batch/animation APIs
 import shutil # used to seed the default preset file on first run
 import tempfile
@@ -270,6 +271,7 @@ soundLatestLights = set()  # lights holding a sound colour the worker hasn't wri
 soundLatestLock = threading.Lock()
 nanoleafPerPanelRequests = []  # (Nanoleaf device id, perPanel) for the worker to apply, see setNanoleafPerPanel
 nanoleafPerPanelLock = threading.Lock()
+nanoleafUnpairRequests = []  # Nanoleaf device ids for the worker to forget, see unpairNanoleaf (under nanoleafPerPanelLock)
 animParallelWrites = True  # send BLE commands to all lights simultaneously during animations
 animRevertOnFinish = True  # revert lights to pre-animation state when a non-looping animation finishes
 preAnimationStates = {}    # {light_index: byte_list} saved before animation starts
@@ -1397,6 +1399,14 @@ try: # try to load the GUI
                 return items[0].data(Qt.UserRole)
             return None
 
+        def animApplySuggestion(self):
+            """Set Offset, Colour spread and Pattern to what the picked animation suggests, if it suggests any."""
+            sug = animationSuggestion(self.animGetSelectedName() or "")
+            if sug is not None:
+                self.animOffsetSpin.setValue(sug[0])
+                self.animSpreadSpin.setValue(sug[1])
+                self.animPatternCombo.setCurrentText(sug[2])
+
         def animPlay(self):
             """Play the selected animation."""
             name = self.animGetSelectedName()
@@ -1404,7 +1414,11 @@ try: # try to load the GUI
                 self.animStatusLabel.setText("Select an animation first")
                 return
 
-            loopOverride = self.animLoopCheck.isChecked()
+            # Loop forever ticked: round and round until stopped. Otherwise play the Times count (at least once).
+            forever = self.animLoopCheck.isChecked()
+            times = max(1, self.animLoopCountSpin.value())
+            loopOverride = forever or times > 1
+            maxLoops = 0 if forever else times
             speedText = self.animSpeedCombo.currentText().replace("x", "")
             try:
                 speedMult = float(speedText)
@@ -1421,10 +1435,10 @@ try: # try to load the GUI
             global animParallelWrites, animRevertOnFinish
             animParallelWrites = self.animParallelCheck.isChecked()
             animRevertOnFinish = self.animRevertCheck.isChecked()
-            maxLoops = self.animLoopCountSpin.value()
 
             startAnimation(name, asyncioEventLoop, speedMult, loopOverride, fps=fps, briScale=briScale, maxLoops=maxLoops,
-                           offset=self.animOffsetSpin.value() / 100.0, colourSpread=self.animSpreadSpin.value() / 100.0)
+                           offset=self.animOffsetSpin.value() / 100.0, colourSpread=self.animSpreadSpin.value() / 100.0,
+                           pattern=self.animPatternCombo.currentText(), smoothing=self.animSmoothSpin.value() / 100.0)
 
         def animStop(self):
             """Stop the currently playing animation."""
@@ -1724,6 +1738,7 @@ try: # try to load the GUI
 
             # ANIMATION TAB CONNECTIONS
             self.animPlayButton.clicked.connect(self.animPlay)
+            self.animList.itemSelectionChanged.connect(self.animApplySuggestion)
             self.animStopButton.clicked.connect(self.animStop)
             self.animNewButton.clicked.connect(self.animNew)
             self.animEditButton.clicked.connect(self.animEdit)
@@ -1755,6 +1770,7 @@ try: # try to load the GUI
             self.colorTempRange.clicked.connect(self.checkLightPrefsEnables)
             self.saveLightPrefsButton.clicked.connect(self.checkLightPrefs)
             self.nanoleafPerPanelCheck.clicked.connect(self.toggleNanoleafPerPanel)
+            self.nanoleafUnpairButton.clicked.connect(self.unpairSelectedNanoleaf)
 
             self.resetGlobalPrefsButton.clicked.connect(lambda: self.setupGlobalLightPrefsTab(True))
             self.saveGlobalPrefsButton.clicked.connect(self.saveGlobalPrefs)
@@ -2206,17 +2222,27 @@ try: # try to load the GUI
             isNanoleaf = nanoleaf is not None and isinstance(device, nanoleaf.NanoleafDevice)
             self.onlyCCTModeCheck.setVisible(not isNanoleaf)
             self.nanoleafPerPanelCheck.setVisible(isNanoleaf)
+            self.nanoleafUnpairButton.setVisible(isNanoleaf)
             if isNanoleaf:
                 self.nanoleafPerPanelCheck.setChecked(device.controller.perPanel)
 
             self.checkLightPrefsEnables() # set up which fields on the panel are enabled
 
+        def _selectedNanoleafDevice(self):
+            """A NanoleafDevice of the one Nanoleaf the selection is on, or None. Selecting a per-panel device's row
+            selects all its panels, so any selection whose lights are all on one Nanoleaf counts."""
+            if nanoleaf is None:
+                return None
+            devices = [availableLights[a][0] for a in self.selectedLights() if a < len(availableLights)]
+            if not devices or not all(isinstance(d, nanoleaf.NanoleafDevice) for d in devices):
+                return None
+            if len({d.controller.id for d in devices}) != 1:
+                return None
+            return devices[0]
+
         def toggleNanoleafPerPanel(self, checked):
-            selectedRows = self.selectedLights()
-            if len(selectedRows) != 1 or nanoleaf is None:
-                return
-            device = availableLights[selectedRows[0]][0]
-            if not isinstance(device, nanoleaf.NanoleafDevice) or bool(checked) == device.controller.perPanel:
+            device = self._selectedNanoleafDevice()
+            if device is None or bool(checked) == device.controller.perPanel:
                 return
             # the rows are about to change under any animation or sound session, so stop them first
             if soundEngine is not None and soundEngine.running:
@@ -2226,6 +2252,26 @@ try: # try to load the GUI
                 showAnimationStopped()
             requestNanoleafPerPanel(device.controller.id, checked) # the worker swaps the rows
             self.statusBar.showMessage("Changing how " + device.controller.name + " is listed...")
+
+        def unpairSelectedNanoleaf(self):
+            device = self._selectedNanoleafDevice()
+            if device is None:
+                self.statusBar.showMessage("Select the Nanoleaf (or its panels) to unpair")
+                return
+            controller = device.controller
+            answer = QMessageBox.question(self, "Unpair Nanoleaf",
+                "Unpair " + controller.name + " (NL:" + controller.id + ")?\n\n"
+                "It leaves the light table and will need pairing again (Add Nanoleaf) to use it.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if answer != QMessageBox.Yes:
+                return
+            if soundEngine is not None and soundEngine.running:
+                self.soundStop()
+            if animationRunning:
+                stopAnimation()
+                showAnimationStopped()
+            requestNanoleafUnpair(controller.id)
+            self.statusBar.showMessage("Unpairing " + controller.name + "...")
 
         def checkLightPrefsEnables(self): # enable/disable fields when clicking on checkboxes
             # allow/deny typing in the "custom name" field if the option is clicked
@@ -3293,8 +3339,28 @@ try: # try to load the GUI
             return selectionList # the availableLights indexes of the selected lights, or an empty array ([]) otherwise
 
         def _onLightsChanged(self):
-            # The worker already reordered availableLights, so rows stay stable while it links
+            # The worker already reordered availableLights, so rows stay stable while it links.
+            # Rebuilding the table drops the selection, and the rows may have moved (Nanoleaf panels added or
+            # taken off), so keep it by address: sound reactive on the selected lights follows the selection.
+            addresses, groups = set(), set()
+            for index in self.lightTable.selectionModel().selectedRows():
+                row = index.row()
+                if row >= len(self._tableRows):
+                    continue
+                entry = self._tableRows[row]
+                if entry[0] == "group":
+                    groups.add(entry[1].address)  # stands for all its panels, new ones too
+                elif self.lightTable.item(row, 1) is not None:
+                    addresses.add(self.lightTable.item(row, 1).text())
             self.updateLights(True, False)
+            if addresses or groups:
+                def keep(light):
+                    device = light[0]
+                    if device.address in addresses:
+                        return True
+                    return (nanoleaf is not None and isinstance(device, nanoleaf.NanoleafDevice)
+                            and device.controller.address in groups)
+                self.selectRows([a for a, light in enumerate(availableLights) if keep(light)])
 
         def _onStatusMessage(self, message):
             self.statusBar.showMessage(message)
@@ -3404,6 +3470,7 @@ try: # try to load the GUI
             self.soundModeCombo.addItems(MODES)
             self.soundModeCombo.currentTextChanged.connect(self._soundSettingsChanged)
             self.soundRollStyleCombo.currentTextChanged.connect(self._soundSettingsChanged)
+            self.soundPatternCombo.currentTextChanged.connect(self._soundSettingsChanged)
             for sp in (self.soundBrightSensSpin, self.soundKickSensSpin, self.soundSmoothSpin, self.soundMinBriSpin, self.soundMaxBriSpin,
                        self.soundSatSpin, self.soundRateSpin, self.soundColourFadeSpin, self.soundOffsetSpin, self.soundSpreadSpin):
                 sp.valueChanged.connect(self._soundSettingsChanged)
@@ -3494,6 +3561,7 @@ try: # try to load the GUI
             d.update({
                 "mode": self.soundModeCombo.currentText(),
                 "rollStyle": self.soundRollStyleCombo.currentText(),
+                "pattern": self.soundPatternCombo.currentText(),
                 "flashOn": self.soundFlashOnCombo.currentText(),
                 "palettePreset": self.soundPalette.presetName(),
                 # Colours too unless built in, so a preset using a saved palette survives that palette being deleted.
@@ -3511,6 +3579,7 @@ try: # try to load the GUI
             if pos >= 0:
                 self.soundModeCombo.setCurrentIndex(pos)
             self.soundRollStyleCombo.setCurrentText(snd.get("rollStyle", "Strobe"))
+            self.soundPatternCombo.setCurrentText(resolvePattern(snd.get("pattern")))
             self.soundFlashOnCombo.setCurrentText(snd.get("flashOn", "Beats"))
             for key, attr in self._SOUND_SPINS:
                 if key in snd or key in self._SOUND_DEFAULTS:
@@ -3717,6 +3786,7 @@ try: # try to load the GUI
             e.colourFade = self.soundColourFadeSpin.value() / 100.0
             e.offset = self.soundOffsetSpin.value() / 100.0
             e.colourSpread = self.soundSpreadSpin.value() / 100.0
+            e.pattern = self.soundPatternCombo.currentText()
             e.rollStyle = self.soundRollStyleCombo.currentText()
             e.flashLevel = self.soundFlashLevelCombo.currentData()
             e.minBri = self.soundMinBriSpin.value()
@@ -3741,6 +3811,7 @@ try: # try to load the GUI
                 self.animStop()
             global animParallelWrites
             animParallelWrites = self.animParallelCheck.isChecked()
+            resetRandomPattern()
             engine = getSoundEngine()
             self._soundSettingsChanged()
             err = engine.start(self.soundDeviceCombo.currentData())
@@ -3930,6 +4001,8 @@ try: # try to load the GUI
                     "animBri": self.animBriSpin.value(),
                     "animOffset": self.animOffsetSpin.value(),
                     "animSpread": self.animSpreadSpin.value(),
+                    "animPattern": self.animPatternCombo.currentText(),
+                    "animSmooth": self.animSmoothSpin.value(),
                     "animLoop": self.animLoopCheck.isChecked(),
                     "animLoopCount": self.animLoopCountSpin.value(),
                     "animParallel": self.animParallelCheck.isChecked(),
@@ -3999,6 +4072,10 @@ try: # try to load the GUI
                         self.animOffsetSpin.setValue(geo["animOffset"])
                     if "animSpread" in geo:
                         self.animSpreadSpin.setValue(geo["animSpread"])
+                    if "animPattern" in geo:
+                        self.animPatternCombo.setCurrentText(resolvePattern(geo["animPattern"]))
+                    if "animSmooth" in geo:
+                        self.animSmoothSpin.setValue(geo["animSmooth"])
                     if "animLoop" in geo:
                         self.animLoopCheck.setChecked(geo["animLoop"])
                     if "animLoopCount" in geo:
@@ -5251,6 +5328,162 @@ def setNanoleafPerPanel(_loop, deviceId, perPanel, updateGUI=True):
         _loop.run_until_complete(parallelAction("connect", newRows, updateGUI and mainWindow is not None))
     return newRows
 
+NANOLEAF_LAYOUT_CHECK = 5.0  # seconds between looks at a linked per-panel Nanoleaf's layout for panels added or taken off
+NANOLEAF_CHECK_BACKOFF = 60.0  # seconds a Nanoleaf that failed a check is left alone: each try can hold the worker for its timeout
+nanoleafCheckBackoff = {}  # Nanoleaf device id -> time.monotonic() before which the timed checks skip it
+
+def _nanoleafCheckDue(controller):
+    return time.monotonic() >= nanoleafCheckBackoff.get(controller.id, 0.0)
+
+def _nanoleafCheckFailed(controller):
+    nanoleafCheckBackoff[controller.id] = time.monotonic() + NANOLEAF_CHECK_BACKOFF
+
+def _remapPreAnimationStates(change):
+    """Run change() (which moves rows about) keeping preAnimationStates on the same lights, by address."""
+    global preAnimationStates
+    byAddress = {availableLights[i][0].address: s for i, s in preAnimationStates.items() if i < len(availableLights)}
+    change()
+    preAnimationStates = {i: byAddress[light[0].address] for i, light in enumerate(availableLights)
+                          if light[0].address in byAddress}
+
+def refreshNanoleafPanels(_loop, updateGUI=True, includeUnlinked=False):
+    """Look again at the layout of every linked per-panel Nanoleaf, and when panels were added or taken off,
+    add or drop their rows without touching the others, so a running animation carries straight on and takes
+    the new panels in (it notices nanoleafLayoutGeneration). Sound reactive carries on too: its lights are
+    remapped to their new rows (see SoundEngine.remapLights). New rows are linked. Runs on the worker thread."""
+    global nanoleafLayoutGeneration
+    if nanoleaf is None:
+        return
+    for controller in list(nanoleafControllers.values()):
+        if not controller.perPanel or not (controller._clients or includeUnlinked):  # a rescan looks at unlinked ones too
+            continue
+        if not includeUnlinked and not _nanoleafCheckDue(controller):  # failed lately: a rescan still tries
+            continue
+        before = list(controller.panels)
+        beforePositions = dict(controller.positions)
+        try:
+            _loop.run_until_complete(controller.loadLayout())
+        except Exception as e:
+            printDebugString("Nanoleaf [" + controller.name + "] layout check failed: " + str(e))
+            _nanoleafCheckFailed(controller)
+            continue
+        nanoleafCheckBackoff.pop(controller.id, None)
+        if not controller.panels:
+            continue
+        if controller.panels == before:
+            if controller.positions != beforePositions:  # panels moved or the canvas was rotated in the Nanoleaf app
+                nanoleafLayoutGeneration += 1  # a running animation works out its patterns again
+                printDebugString("Nanoleaf [" + controller.name + "] panels were rearranged")
+                if updateGUI and mainWindow is not None:
+                    mainWindow._lightsChangedSignal.emit()
+                    mainWindow._statusMessageSignal.emit(controller.name + ": panel layout changed")
+            continue
+        wanted = {d.address: d for d in controller.devices()}
+        rows = nanoleafRows(controller.id)
+        gone = [i for i in rows if availableLights[i][0].address not in wanted]
+        if gone:
+            _loop.run_until_complete(parallelAction("disconnect", gone, False))
+        with soundLatestLock:
+            soundLatestLights.clear()
+
+        def change():
+            global nanoleafLayoutGeneration
+            for i in reversed(gone):
+                del availableLights[i]
+            for light in availableLights:  # panel numbers follow the new reading order
+                device = wanted.get(light[0].address)
+                if device is not None and isinstance(light[0], nanoleaf.NanoleafDevice):
+                    light[0].panelNumber = device.panelNumber
+            addNanoleafLights()
+            reorderByPreferredID()
+            loadLightAliases()
+            nanoleafLayoutGeneration += 1  # as soon as the rows are in place, so a running animation stops using the old ones
+        known ={light[0].address for light in availableLights}
+        oldRows = {light[0].address: i for i, light in enumerate(availableLights)}
+        soundAll = soundEngine is not None and set(soundEngine.targets) >= set(range(len(availableLights)))
+        _remapPreAnimationStates(change)
+        added = [i for i in nanoleafRows(controller.id) if availableLights[i][0].address not in known]
+        if soundEngine is not None and soundEngine.running:
+            soundEngine.remapLights({oldRows[light[0].address]: i for i, light in enumerate(availableLights)
+                                     if light[0].address in oldRows})
+            if added and soundAll:  # it was driving every light, so it takes the new panels in too
+                soundEngine.targets = sorted(set(soundEngine.targets) | set(added))
+        if animationRunning:  # new panels revert to what they showed before, too
+            for i in added:
+                if isinstance(availableLights[i][3], list) and availableLights[i][3]:
+                    preAnimationStates[i] = list(availableLights[i][3])
+        printDebugString("Nanoleaf [" + controller.name + "] panels changed: " + str(len(added)) + " added, "
+                         + str(len(gone)) + " removed")
+        if updateGUI and mainWindow is not None:
+            mainWindow._lightsChangedSignal.emit()
+            mainWindow._statusMessageSignal.emit(controller.name + ": " + str(len(added)) + " panel(s) added, "
+                                                 + str(len(gone)) + " removed")
+        if added and controller._clients:
+            _loop.run_until_complete(parallelAction("connect", added, updateGUI and mainWindow is not None))
+
+def checkNanoleafStreams(_loop, updateGUI=True):
+    """A tap or swipe on a Nanoleaf's panels switches its effect and ends the stream the app drives it with.
+    Notice that, and while an animation or sound session is running take the panels back at once; otherwise
+    just note the stream has ended, so the next colour sent starts it again instead of going nowhere."""
+    if nanoleaf is None:
+        return
+    busy = animationRunning or (soundEngine is not None and soundEngine.running)
+    for controller in list(nanoleafControllers.values()):
+        if not (controller._clients and controller.streaming) or not _nanoleafCheckDue(controller):
+            continue
+        try:
+            lost = _loop.run_until_complete(controller.checkStream(resume=busy))
+        except nanoleaf.NanoleafError as e:
+            printDebugString("Nanoleaf [" + controller.name + "] stream check failed: " + str(e))
+            _nanoleafCheckFailed(controller)
+            continue
+        if lost:
+            printDebugString("Nanoleaf [" + controller.name + "] left stream mode (an effect was picked on the panels"
+                             " or in the Nanoleaf app)" + ("; taking it back" if busy else ""))
+            if updateGUI and mainWindow is not None and busy:
+                mainWindow._statusMessageSignal.emit(controller.name + " changed effect; taking it back")
+
+def requestNanoleafUnpair(deviceId):
+    """Ask the worker thread to forget a paired Nanoleaf (see unpairNanoleaf). Stops animations and sound first."""
+    stopAnimation()
+    stopSoundReactive()
+    with nanoleafPerPanelLock:
+        nanoleafUnpairRequests.append(deviceId)
+    workerWakeEvent.set()
+
+def unpairNanoleaf(_loop, deviceId, updateGUI=True):
+    """Forget a paired Nanoleaf: unlink and drop its rows (putting back its effect from before streaming),
+    take it out of nanoleaf.json and ask the controller to revoke the token. Runs on the worker thread.
+    Its per-light prefs files are kept, so pairing it again brings back its names and IDs."""
+    controller = nanoleafControllers.get(deviceId) if nanoleaf is not None else None
+    if controller is None:
+        printDebugString("Unpair: no saved Nanoleaf " + str(deviceId))
+        return False
+    with soundLatestLock:
+        soundLatestLights.clear()
+    rows = nanoleafRows(deviceId)
+    if rows:
+        _loop.run_until_complete(parallelAction("disconnect", rows, False))
+    _remapPreAnimationStates(lambda: [availableLights.pop(i) for i in reversed(rows)])
+    del nanoleafControllers[deviceId]
+    try:
+        if controller.savedPath is not False:
+            nanoleaf.removeSaved(deviceId, controller.savedPath)
+    except OSError as e:
+        # Still in the file, so the next rescan brings it back: keep its token working on the controller.
+        printDebugString("Unpair: could not save nanoleaf.json: " + str(e))
+        if updateGUI and mainWindow is not None:
+            mainWindow._lightsChangedSignal.emit()
+            mainWindow._statusMessageSignal.emit("Could not unpair " + controller.name + ": " + str(e))
+        return False
+    revoked = nanoleaf.revokeToken(controller.ip, controller.port, controller.token)
+    printDebugString("Unpaired Nanoleaf [" + controller.name + "] NL:" + deviceId
+                     + ("" if revoked else " (the controller could not be told; its token stays on the device)"))
+    if updateGUI and mainWindow is not None:
+        mainWindow._lightsChangedSignal.emit()
+        mainWindow._statusMessageSignal.emit("Unpaired " + controller.name)
+    return True
+
 def findNanoleafDevice(address):
     """The NanoleafDevice for an NL: address, from the saved devices, or None."""
     if nanoleaf is None or not nanoleaf.isAddress(address):
@@ -5787,6 +6020,7 @@ def workerThread(_loop):
     delayTicks = 1 # count a few ticks before checking light information
     reconnectCooldown = {} # {light_index: ticks_remaining} to avoid spamming reconnect attempts
     allDisconnectedSince = 0  # ticks since all known lights were seen as disconnected (for rescan-after-wake)
+    nextLayoutCheck = time.monotonic() + NANOLEAF_LAYOUT_CHECK  # see refreshNanoleafPanels
 
     while True:
         if delayTicks < 12:
@@ -5888,7 +6122,28 @@ def workerThread(_loop):
                     setNanoleafPerPanel(_loop, deviceId, perPanel, hasGUI)
                 except Exception as e:
                     printDebugString("Per-panel mode change failed: " + str(e))
-            if perPanelRequests:
+            with nanoleafPerPanelLock:
+                unpairRequests = list(nanoleafUnpairRequests)
+                nanoleafUnpairRequests.clear()
+            for deviceId in unpairRequests:
+                try:
+                    unpairNanoleaf(_loop, deviceId, hasGUI)
+                except Exception as e:
+                    printDebugString("Unpairing the Nanoleaf failed: " + str(e))
+            if time.monotonic() >= nextLayoutCheck:  # panels added to (or taken off) a Nanoleaf in use
+                nextLayoutCheck = time.monotonic() + NANOLEAF_LAYOUT_CHECK
+                before = len(availableLights)
+                try:
+                    checkNanoleafStreams(_loop, hasGUI)
+                except Exception as e:
+                    printDebugString("Nanoleaf stream check failed: " + str(e))
+                try:
+                    refreshNanoleafPanels(_loop, hasGUI)
+                except Exception as e:
+                    printDebugString("Nanoleaf layout check failed: " + str(e))
+                if len(availableLights) != before:
+                    reconnectCooldown.clear()
+            if perPanelRequests or unpairRequests:
                 reconnectCooldown.clear() # keyed by row index, and the rows have moved
 
         if threadAction == "":  # sound frames: however many arrived during the last write, only the newest colours go out
@@ -5904,6 +6159,11 @@ def workerThread(_loop):
             break # stop the background thread before quitting the program
         elif threadAction == "discover":
             threadAction = _loop.run_until_complete(findDevices()) # add new lights to the main array
+            if threadAction != "quit":
+                try:  # and look again at each per-panel Nanoleaf for panels added or taken off
+                    refreshNanoleafPanels(_loop, False, includeUnlinked=True)
+                except Exception as e:
+                    printDebugString("Nanoleaf layout check failed: " + str(e))
 
             if threadAction != "quit":
                 if hasGUI: # tell the GUI to update its list of available lights
@@ -6326,7 +6586,9 @@ def processHTMLCommands(paramsList, loop):
             loopOverride = None
             maxLoops = 0
             revertOverride = None
-            offset = spread = 0.0
+            sug = animationSuggestion(animName.split("|")[0])
+            offset, spread, pattern = (sug[0] / 100.0, sug[1] / 100.0, sug[2]) if sug else (0.0, 0.0, LIGHT_ORDER)
+            smoothing = 0.0
             if "|" in animName:
                 parts = animName.split("|")
                 animName = parts[0]
@@ -6358,12 +6620,16 @@ def processHTMLCommands(paramsList, loop):
                 except (ValueError, IndexError): pass
                 try: spread = float(parts[8]) / 100.0
                 except (ValueError, IndexError): pass
+                if len(parts) > 9 and parts[9].strip():  # left empty (to reach smoothing): keep the suggested one
+                    pattern = parts[9]
+                try: smoothing = float(parts[10]) / 100.0
+                except (ValueError, IndexError): pass
             # Apply revert override if specified
             if revertOverride is not None:
                 global animRevertOnFinish
                 animRevertOnFinish = revertOverride
             startAnimation(animName, loop, speedMult, loopOverride=loopOverride, fps=fps, briScale=briScale, maxLoops=maxLoops,
-                           offset=offset, colourSpread=spread)
+                           offset=offset, colourSpread=spread, pattern=pattern, smoothing=smoothing)
         else:
             printDebugString("HTTP: no animation name specified")
 
@@ -6432,12 +6698,9 @@ def reorderByPreferredID():
     # Sort preferred-ID lights by their ID
     withPrefID.sort(key=lambda x: x[0])
 
-    # Rebuild: preferred-ID lights first, then discovery-order lights
-    availableLights.clear()
-    for _, light in withPrefID:
-        availableLights.append(light)
-    for _, light in withoutPrefID:
-        availableLights.append(light)
+    # Rebuild: preferred-ID lights first, then discovery-order lights. One slice assignment, so the animation
+    # and sound threads (which may be running while Nanoleaf panels come and go) never see the list half built.
+    availableLights[:] = [light for _, light in withPrefID] + [light for _, light in withoutPrefID]
 
 
 def returnLightIndexesFromMacAddress(addresses):
@@ -6898,6 +7161,74 @@ def soundLightInterval(lightIdx):
     return getattr(availableLights[lightIdx][1], "updateInterval", 0.0)
 
 
+LIGHT_ORDER = "Light order"
+RANDOM_PATTERN = "Random"  # every light (Nanoleaf panel or not) takes a random place
+nanoleafLayoutGeneration = 0  # goes up when a Nanoleaf's panel rows change under an animation
+randomPatternRanks = {}  # light address -> random rank for the Random pattern
+
+
+def resetRandomPattern():
+    """Shuffle again: the next lightPlaces with Random deals every light a new place."""
+    randomPatternRanks.clear()
+
+
+def resolvePattern(name):
+    """The pattern name (see nanoleaf.PATTERNS) matching name in any case, with - or _ for spaces
+    ("left-to-right", "CENTRE_OUT"; "center" works too); Light order if none matches."""
+    if not name:
+        return LIGHT_ORDER
+    key = str(name).strip().lower().replace("-", " ").replace("_", " ").replace("center", "centre")
+    if key == RANDOM_PATTERN.lower():
+        return RANDOM_PATTERN
+    if nanoleaf is None:
+        return LIGHT_ORDER
+    return next((p for p in nanoleaf.PATTERNS if p.lower() == key), LIGHT_ORDER)
+
+
+def lightPosition(lightIdx):
+    """(group, (x, y)) for a Nanoleaf panel whose place on the wall is known, else None."""
+    if nanoleaf is None or lightIdx >= len(availableLights):
+        return None
+    device = availableLights[lightIdx][0]
+    if isinstance(device, nanoleaf.NanoleafDevice) and device.position is not None:
+        return device.controller.id, device.position
+    return None
+
+
+def lightPlaces(order, pattern=LIGHT_ORDER):
+    """{light index: 0..1}, where each light of order comes for Offset, Colour spread and the sound modes
+    that give each light its own part: its place in order, pos / len(order). With a pattern other than
+    Light order, a Nanoleaf's panels keep the stretch of places they hold in order but are spread over it
+    by where they are on the wall, so a sweep crosses the panels as a straight edge, Centre out moves in
+    rings and Around turns like a clock hand. Other lights keep their place."""
+    n = max(1, len(order))
+    if pattern == RANDOM_PATTERN:
+        # each light keeps one random rank (by address, so it survives rows moving) until resetRandomPattern
+        def key(idx):
+            return availableLights[idx][0].address if idx < len(availableLights) else idx
+        # the ranks as taken here, so a reshuffle on another thread part way through cannot leave one missing
+        ranks = {idx: randomPatternRanks.setdefault(key(idx), random.random()) for idx in order}
+        ranked = sorted(order, key=ranks.get)
+        return {idx: pos / n for pos, idx in enumerate(ranked)}
+    places = {idx: pos / n for pos, idx in enumerate(order)}
+    if pattern == LIGHT_ORDER or nanoleaf is None:
+        return places
+    groups = {}
+    for pos, idx in enumerate(order):
+        found = lightPosition(idx)
+        if found is not None:
+            groups.setdefault(found[0], []).append((pos, idx, found[1]))
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        first, last = members[0][0], members[-1][0]
+        span = last - first + (1 if nanoleaf.patternWraps(pattern) else 0)
+        along = nanoleaf.patternPlaces({idx: point for _, idx, point in members}, pattern)
+        for _, idx, _ in members:
+            places[idx] = (first + along[idx] * span) / n
+    return places
+
+
 def soundLightGroup(lightIdx):
     """The group a light chases round in a Chase drum roll: a Nanoleaf panel's device. Other lights keep the Strobe."""
     if lightIdx >= len(availableLights):
@@ -6915,6 +7246,7 @@ def getSoundEngine():
         soundEngine = SoundEngine(soundSendFrame, printDebugString)
         soundEngine.lightInterval = soundLightInterval
         soundEngine.lightGroup = soundLightGroup
+        soundEngine.lightPlaces = lightPlaces
     return soundEngine
 
 
@@ -6931,11 +7263,23 @@ class AnimationTimeline:
     pass frame 0 has nothing to fade from; on later passes of a loop it fades in from the last frame,
     taking the last frame's fade if it has none of its own, so loops are seamless."""
 
-    def __init__(self, keyframes, speed=1.0, loop=False, maxLoops=0):
+    def __init__(self, keyframes, speed=1.0, loop=False, maxLoops=0, smoothing=0.0):
+        """smoothing: 0-1, at least that share of each keyframe's time (fade + hold) is spent fading into it
+        from the one before, taken from its hold so the timing stays the same. 1 = it never holds, always
+        gliding on to the next colour; 0 = the fades as the keyframes set them."""
         speed = speed if speed > 0 else 1.0
+        smoothing = max(0.0, min(1.0, float(smoothing or 0)))
         self.count = len(keyframes)
         self.holds = [max(50, int(kf.get("hold_ms", 200) / speed)) for kf in keyframes]
         fades = [max(0, int(kf.get("fade_ms", 0) / speed)) for kf in keyframes]
+        firstHolds = list(self.holds)  # frame 0 has nothing to fade from on the first pass, so smoothing leaves it be
+        if smoothing > 0:
+            for k in range(self.count):
+                total = fades[k] + self.holds[k]
+                fade = max(fades[k], int(total * smoothing))
+                fades[k], self.holds[k] = fade, total - fade
+                if k > 0:
+                    firstHolds[k] = self.holds[k]
         first = list(fades)
         steady = list(fades)
         if self.count:
@@ -6943,7 +7287,8 @@ class AnimationTimeline:
             if steady[0] == 0:
                 steady[0] = fades[-1]
         self.fades = (first, steady)  # [pass][frame]: pass 0 is the first, 1 any later one
-        self.firstLen = sum(first) + sum(self.holds)
+        self.passHolds = (firstHolds, self.holds)  # [pass][frame], as fades
+        self.firstLen = sum(first) + sum(firstHolds)
         self.loopLen = sum(steady) + sum(self.holds)
         self.loop = loop
         # passes played: None = for ever
@@ -6973,17 +7318,17 @@ class AnimationTimeline:
             kind, u = 0, t
         else:
             kind, u = 1, (t - self.firstLen) % self.loopLen
-        fades = self.fades[kind]
+        fades, holds = self.fades[kind], self.passHolds[kind]
         k = 0
         for k in range(self.count):
-            span = fades[k] + self.holds[k]
+            span = fades[k] + holds[k]
             if u < span:
                 break
             u -= span
         else:
             u = span - 0.001
         if until is None:
-            until = (fades[k] - u) if u < fades[k] else (fades[k] + self.holds[k] - u)
+            until = (fades[k] - u) if u < fades[k] else (fades[k] + holds[k] - u)
         return kind, k, u, until
 
     def fading(self, kind, k, u):
@@ -7042,22 +7387,40 @@ def animationLightCommand(state, briScale=1.0, hueShift=0):
     return cmd
 
 
-def animationOffsets(order, spanMs, offset, colourSpread):
+def animationSuggestion(animName):
+    """(offset 0-100, colour spread 0-100, pattern) an animation file suggests in its "suggest" entry, or None.
+    Picking the animation in the app or on the dashboard sets the controls to these, and the HTTP API uses them
+    when a request leaves them out. Fields it leaves out are 0 and Light order."""
+    anim = next((a for k, a in savedAnimations.items() if k.lower() == str(animName).lower()), None)
+    sug = anim.get("suggest") if isinstance(anim, dict) else None
+    if not isinstance(sug, dict):
+        return None
+    def pct(key):
+        try:
+            return max(0, min(100, int(round(float(sug.get(key, 0))))))
+        except (TypeError, ValueError):
+            return 0
+    return pct("offset"), pct("spread"), resolvePattern(sug.get("pattern"))
+
+
+def animationOffsets(order, spanMs, offset, colourSpread, pattern=LIGHT_ORDER):
     """({light: delay ms}, {light: hue shift}) for lights in order: offset spreads them over that share
-    of the loop (1 = evenly round it, a chase), colourSpread over that share of the colour wheel."""
-    n = max(1, len(order))
-    delays = {idx: offset * spanMs * pos / n for pos, idx in enumerate(order)}
-    shifts = {idx: int(round(colourSpread * 360 * pos / n)) % 360 for pos, idx in enumerate(order)}
+    of the loop (1 = evenly round it, a chase), colourSpread over that share of the colour wheel.
+    pattern lays a Nanoleaf's panels out by where they are on the wall (see lightPlaces)."""
+    places = lightPlaces(order, pattern)
+    delays = {idx: offset * spanMs * places[idx] for idx in order}
+    shifts = {idx: int(round(colourSpread * 360 * places[idx])) % 360 for idx in order}
     return delays, shifts
 
 
 def animationEngineThread(animation, loop, speedMultiplier=1.0, loopOverride=None, fps=5, briScale=1.0, maxLoops=0,
-                          offset=0.0, colourSpread=0.0):
+                          offset=0.0, colourSpread=0.0, pattern=LIGHT_ORDER, smoothing=0.0):
     """Main animation playback thread. Each light's colour is worked out from the time since the start,
     so lights can run offset from each other, and sent when it changes.
     maxLoops: 0 = infinite (if shouldLoop), N>0 = play exactly N times then stop.
     offset: 0-1, how far the lights are spread through the loop (0 = all in step).
-    colourSpread: 0-1, how far their hues are spread round the colour wheel."""
+    colourSpread: 0-1, how far their hues are spread round the colour wheel.
+    pattern: how the lights are laid out for both (see lightPlaces)."""
     global animationRunning, animationStopFlag, currentAnimationName, preAnimationStates, threadAction, _animChainStop
 
     animationRunning = True
@@ -7080,23 +7443,24 @@ def animationEngineThread(animation, loop, speedMultiplier=1.0, loopOverride=Non
         return
 
     printDebugString("Animation '" + animName + "' starting (" + str(len(keyframes)) + " keyframes, loop=" + str(shouldLoop) + ", speed=" + str(speedMultiplier) + "x, rate=" + str(fps) + "/s, bri=" + str(int(briScale * 100)) + "%"
-                     + (", offset=" + str(int(offset * 100)) + "%" if offset else "") + (", colour spread=" + str(int(colourSpread * 100)) + "%" if colourSpread else "") + ")")
+                     + (", offset=" + str(int(offset * 100)) + "%" if offset else "") + (", colour spread=" + str(int(colourSpread * 100)) + "%" if colourSpread else "")
+                     + (", pattern=" + pattern if pattern != LIGHT_ORDER else "") + (", smoothing=" + str(int(smoothing * 100)) + "%" if smoothing else "") + ")")
 
-    timeline = AnimationTimeline(keyframes, speedMultiplier, shouldLoop, maxLoops)
+    timeline = AnimationTimeline(keyframes, speedMultiplier, shouldLoop, maxLoops, smoothing)
     spanMs = timeline.loopLen if shouldLoop else timeline.firstLen
     totalFrames = len(keyframes)
-    lightCount = -1
+    lightCount = None
     params, order, delays, shifts, lastSent = {}, [], {}, {}, {}
     lastGUIUpdate = 0  # throttle GUI updates to avoid cross-thread blocking
     start = time.perf_counter()
 
     try:
         while not animationStopFlag:
-            if len(availableLights) != lightCount:  # a light connected or dropped: work out who is where again
-                lightCount = len(availableLights)
+            if (len(availableLights), nanoleafLayoutGeneration) != lightCount:  # a light connected or dropped, or Nanoleaf panels came or went: work out who is where again
+                lightCount = (len(availableLights), nanoleafLayoutGeneration)
                 params = animationLightParams(keyframes)
                 order = sorted(params)
-                delays, shifts = animationOffsets(order, spanMs, offset, colourSpread)
+                delays, shifts = animationOffsets(order, spanMs, offset, colourSpread, pattern)
                 lastSent = {}
 
             now = (time.perf_counter() - start) * 1000.0
@@ -7170,10 +7534,11 @@ def animationEngineThread(animation, loop, speedMultiplier=1.0, loopOverride=Non
 
 
 def startAnimation(animName, loop, speedMultiplier=1.0, loopOverride=None, fps=5, briScale=1.0, maxLoops=0,
-                   offset=0.0, colourSpread=0.0):
+                   offset=0.0, colourSpread=0.0, pattern=LIGHT_ORDER, smoothing=0.0):
     """Start an animation by name. Stops any currently running animation first.
     maxLoops: 0 = use animation's loop setting, N>0 = play N times then stop.
-    offset, colourSpread: 0-1, how far the lights are spread through the loop and round the colour wheel."""
+    offset, colourSpread: 0-1, how far the lights are spread through the loop and round the colour wheel.
+    pattern: how the lights are laid out for both, a name from nanoleaf.PATTERNS (see lightPlaces)."""
     global animationStopFlag, savedAnimations, preAnimationStates, _animChainStop
 
     # Case-insensitive name lookup, HTTP args get lowercased by the argument parser
@@ -7201,9 +7566,11 @@ def startAnimation(animName, loop, speedMultiplier=1.0, loopOverride=None, fps=5
             if light[3] is not None and isinstance(light[3], list) and len(light[3]) > 0:
                 preAnimationStates[i] = list(light[3])
 
+    resetRandomPattern()  # a Random pattern deals the lights new places each time one starts
     animation = savedAnimations[animName].copy()
     t = threading.Thread(target=animationEngineThread,
-                         args=(animation, asyncioEventLoop, speedMultiplier, loopOverride, fps, briScale, maxLoops, offset, colourSpread),
+                         args=(animation, asyncioEventLoop, speedMultiplier, loopOverride, fps, briScale, maxLoops, offset, colourSpread,
+                               resolvePattern(pattern), smoothing),
                          name="animationThread", daemon=True)
     t.start()
     return True
@@ -7457,10 +7824,13 @@ def loadLightAliases():
     Prefs file format: customName|colorTempRange|onlyCCTMode[|lastSettings][|preferredID]
     """
     global lightAliases
-    lightAliases = {}
+    # Built aside and swapped in whole: the animation and HTTP threads read the table while the worker
+    # reloads it (rows moving under a running animation), and must never see it half filled.
+    aliases = {}
 
     prefsDir = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs"
     if not os.path.isdir(prefsDir):
+        lightAliases = aliases
         return
 
     for filename in os.listdir(prefsDir):
@@ -7488,13 +7858,14 @@ def loadLightAliases():
                     pass
 
             if customName or preferredID > 0:
-                lightAliases[mac] = {"id": preferredID, "name": customName}
+                aliases[mac] = {"id": preferredID, "name": customName}
         except (IOError, OSError):
             pass
 
-    if lightAliases:
+    lightAliases = aliases
+    if aliases:
         parts = []
-        for mac, info in lightAliases.items():
+        for mac, info in aliases.items():
             label = info["name"] if info["name"] else mac
             if info["id"] > 0:
                 label += " (#" + str(info["id"]) + ")"
@@ -7513,6 +7884,22 @@ def deleteAnimationFile(name):
             return True
     except OSError as e:
         printDebugString("Error deleting animation: " + str(e))
+    return False
+
+
+def httpIPAccepted(clientIP):
+    """True if clientIP is one of acceptable_HTTP_IPs, or in a range given by its first parts ("192.168.",
+    "10." or "10"). Whole parts from the start, not a substring: "10." must not let in 8.8.10.1, and
+    "192.168.1.1" does not let in 192.168.1.10. Blank entries (an empty line in the field) match nothing."""
+    clientIP = str(clientIP)
+    if clientIP.lower().startswith("::ffff:"):  # an IPv4 address seen through an IPv6 socket
+        clientIP = clientIP[7:]
+    for entry in acceptable_HTTP_IPs:
+        entry = (entry or "").strip()
+        if not entry:
+            continue
+        if clientIP == entry or clientIP.startswith(entry if entry.endswith(".") else entry + "."):
+            return True
     return False
 
 
@@ -7550,12 +7937,7 @@ class NLPythonServer(BaseHTTPRequestHandler):
 
             # CHECK TO SEE IF THE IP REQUESTING ACCESS IS IN THE LIST OF "acceptable_HTTP_IPs"
             clientIP = self.client_address[0] # the IP address of the machine making the request
-            acceptedIP = False
-
-            for check in range(len(acceptable_HTTP_IPs)): # check all the "accepted" IP addresses against the current requesting IP
-                if acceptedIP != True: # if we haven't found the IP in the accepted list, then keep checking
-                    if acceptable_HTTP_IPs[check] in clientIP:
-                        acceptedIP = True # if we're good to go, then we can just move on
+            acceptedIP = httpIPAccepted(clientIP)
 
             # IF THE IP MAKING THE REQUEST IS NOT IN THE LIST OF APPROVED ADDRESSES, THEN RETURN A "FORBIDDEN" ERROR
             if acceptedIP == False:
@@ -7631,7 +8013,8 @@ class NLPythonServer(BaseHTTPRequestHandler):
                                          "description": aData.get("description", ""),
                                          "frames": len(aData.get("keyframes", [])),
                                          "loop": aData.get("loop", False),
-                                         "modes": sorted(modes)})
+                                         "modes": sorted(modes),
+                                         "suggest": animationSuggestion(aName)})
 
                     import json as _json
                     # Build preset data for web dashboard
@@ -7873,11 +8256,7 @@ class NLPythonServer(BaseHTTPRequestHandler):
         """
         # IP CHECK (same as do_GET)
         clientIP = self.client_address[0]
-        acceptedIP = False
-        for check in range(len(acceptable_HTTP_IPs)):
-            if acceptedIP != True:
-                if acceptable_HTTP_IPs[check] in clientIP:
-                    acceptedIP = True
+        acceptedIP = httpIPAccepted(clientIP)
 
         if acceptedIP == False:
             self.send_error(403, "Forbidden - IP " + clientIP + " is not in the list of accepted addresses")
@@ -7940,6 +8319,7 @@ class NLPythonServer(BaseHTTPRequestHandler):
                 if "parallel" in body:
                     global animParallelWrites
                     animParallelWrites = bool(body.get("parallel", True))
+                resolvedAnimName = None  # stays None with no name given: answered as not found below
                 if animName:
                     # Case-insensitive name resolution
                     resolvedAnimName = None
@@ -7950,12 +8330,15 @@ class NLPythonServer(BaseHTTPRequestHandler):
                 if resolvedAnimName:
                     animName = resolvedAnimName
                     maxLoops = int(body.get("maxLoops", body.get("max_loops", 0)))
+                    sug = animationSuggestion(animName) or (0, 0, LIGHT_ORDER)
                     # Handle revert flag from web UI
                     if "revert" in body:
                         global animRevertOnFinish
                         animRevertOnFinish = bool(body.get("revert", True))
                     startAnimation(animName, asyncioEventLoop, speed, loop, fps=int(fps), briScale=briScale, maxLoops=maxLoops,
-                                   offset=float(body.get("offset", 0)) / 100.0, colourSpread=float(body.get("spread", 0)) / 100.0)
+                                   offset=float(body.get("offset", sug[0])) / 100.0, colourSpread=float(body.get("spread", sug[1])) / 100.0,
+                                   pattern=str(body.get("pattern", sug[2])),
+                                   smoothing=float(body.get("smoothing", 0)) / 100.0)
                     resultData = {"success": True, "action": "play", "animation": animName}
                 else:
                     resultData = {"success": False, "error": "Animation '" + str(animName) + "' not found",
@@ -8075,7 +8458,7 @@ def writeHTMLSections(self, theSection, errorMsg = ""):
         self.wfile.write(bytes("<STRONG>list_animations</STRONG> - list all saved custom animations<BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?list_animations</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>animate=</STRONG> - play a saved animation by name (URL-encode spaces as %20)<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;Optionally append |speed|rate|brightness|loop|maxLoops|revert|offset|spread (e.g. animate=Police%20Flash|2.0|10|50); offset and spread (0-100) stagger the lights through the loop and round the colour wheel<BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;Optionally append |speed|rate|brightness|loop|maxLoops|revert|offset|spread|pattern|smoothing (e.g. animate=Police%20Flash|2.0|10|50); offset and spread (0-100) stagger the lights through the loop and round the colour wheel; pattern (left-to-right, right-to-left, top-to-bottom, bottom-to-top, centre-out, edges-in, around) lays a Nanoleaf's panels out by where they are on the wall, random gives every light a random place; smoothing (0-100) is how much of each keyframe glides from the one before<BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?animate=Police%20Flash</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?animate=Color%20Cycle|0.5</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>stop_animate</STRONG> - stop the currently playing animation<BR>\n", "utf-8"))
