@@ -2,7 +2,7 @@
 
 Changes relative to upstream [NeewerLite-Python v0.12d](https://github.com/taburineagle/NeewerLite-Python).
 
-## Unreleased
+## v1.5.0 - 2026-11-16
 
 ### Renamed
 - **Puppi3's NeewerLux is now Puppi3Lux**, since it drives more than Neewer lights. The app is `Puppi3Lux.py` (`Puppi3Lux.exe` in releases), the HTTP API lives at `/Puppi3Lux/`, and the repository moved to [puppi3-music/Puppi3Lux](https://github.com/puppi3-music/Puppi3Lux), where update checks and Releases links now point (the old address redirects). Old `/Puppi3sNeewerLux/` and `/NeewerLux/` URLs still work, and on first launch `Puppi3sNeewerLux.prefs`, `.geometry` and `.log` in `light_prefs` (or the older `NeewerLux.*` files) are renamed to `Puppi3Lux.*`.
