@@ -440,31 +440,64 @@ def updateSaved(deviceId, path=None, **fields):
 
 
 def addSaved(entry, path=None):
-    """Add or replace (by id) one paired device. Keeps perPanel from an existing entry."""
+    """Add or replace (by id) one paired device. A device paired again keeps its perPanel choice; a new one
+    shows one light per panel unless the entry says otherwise."""
     devices = loadSaved(path)
     for i, d in enumerate(devices):
         if d["id"] == entry["id"]:
             merged = dict(d)
-            merged.update(entry)
+            merged.update({k: v for k, v in entry.items() if k != "perPanel" or "perPanel" not in d})
             devices[i] = merged
             break
     else:
-        devices.append(dict({"perPanel": False}, **entry))
+        devices.append(dict({"perPanel": True}, **entry))
     saveSaved(devices, path)
     return devices
 
 
 def pairAndDescribe(ip, port=API_PORT, name=None, deviceId=None):
-    """Pair, then read the device's name, model and serial. Returns a saved-device entry. Blocking."""
+    """Pair, then read the device's name, model, serial and panel layout. Returns a saved-device entry,
+    set to show one light per panel. Blocking.
+
+    The layout is read now so the panel rows can be listed straight away. If it can't be read, or the device
+    has no light panels, the entry is set to one light instead (Light Preferences can switch it later)."""
     token = pair(ip, port)
     status, info = _request("GET", "http://%s:%d/api/v1/%s/" % (ip, port, token))
     info = info if isinstance(info, dict) else {}
+    panels = []
+    try:
+        status, layout = _request("GET", "http://%s:%d/api/v1/%s/panelLayout" % (ip, port, token))
+        if status == 200 and isinstance(layout, dict) and isinstance(layout.get("layout"), dict):
+            orientation = layout.get("globalOrientation", {})
+            orientation = orientation.get("value", 0) if isinstance(orientation, dict) else 0
+            panels = orderPanels(layout["layout"], orientation)
+    except NanoleafError:
+        pass
     # The serial number is the id whenever the device reports one, so pairing from discovery and
     # pairing by IP give the same address. The discovery id is only a fallback.
-    return {"id": normaliseDeviceId(info.get("serialNo") or deviceId or ip),
-            "name": name or info.get("name") or "Nanoleaf",
-            "model": info.get("model", ""),
-            "ip": ip, "port": port, "token": token, "perPanel": False}
+    entry = {"id": normaliseDeviceId(info.get("serialNo") or deviceId or ip),
+             "name": name or info.get("name") or "Nanoleaf",
+             "model": info.get("model", ""),
+             "ip": ip, "port": port, "token": token, "perPanel": bool(panels)}
+    if panels:
+        entry["panels"] = panels
+    return entry
+
+
+def savedEntry(devices, deviceId):
+    """The entry for deviceId in a list from loadSaved() or addSaved(), or None."""
+    return next((d for d in devices if d.get("id") == deviceId), None)
+
+
+def listingText(entry):
+    """How a saved device is listed, for messages after pairing: 'its 9 panels are listed as separate
+    lights' or 'it is listed as one light'."""
+    panels = entry.get("panels") or []
+    if entry.get("perPanel") and panels:
+        if len(panels) == 1:
+            return "its panel is listed as its own light"
+        return "its %d panels are listed as separate lights" % len(panels)
+    return "it is listed as one light"
 
 
 def isAddress(address):

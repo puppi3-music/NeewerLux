@@ -3127,12 +3127,13 @@ try: # try to load the GUI
                 global threadAction
                 try:
                     entry = nanoleaf.pairAndDescribe(ip, port)
-                    nanoleaf.addSaved(entry)
+                    saved = nanoleaf.savedEntry(nanoleaf.addSaved(entry), entry["id"]) or entry
                 except Exception as e:
                     self._nanoleafDialogCall("setBusy", False, str(e))
                     return
-                printDebugString("Paired Nanoleaf [" + entry["name"] + "] NL:" + entry["id"] + " at " + ip)
-                self._nanoleafDialogCall("setBusy", False, "Paired " + entry["name"] + " (NL:" + entry["id"] + "). "
+                printDebugString("Paired Nanoleaf [" + entry["name"] + "] NL:" + entry["id"] + " at " + ip + ": " + nanoleaf.listingText(saved))
+                self._nanoleafDialogCall("setBusy", False, "Paired " + entry["name"] + " (NL:" + entry["id"] + "): "
+                                         + nanoleaf.listingText(saved) + " (Light Preferences can change this). "
                                          "It is added to the light table; pair another or close this window.")
                 if threadAction == "": # list it now
                     threadAction = "discover"
@@ -6278,8 +6279,8 @@ def pairNanoleafFromCLI(hostText, waitSeconds=60):
         print("Cancelled.")
         _finish(1)
 
-    nanoleaf.addSaved(entry)
-    print("Paired " + entry["name"] + " (" + (entry["model"] or "Nanoleaf") + ").")
+    saved = nanoleaf.savedEntry(nanoleaf.addSaved(entry), entry["id"]) or entry
+    print("Paired " + entry["name"] + " (" + (entry["model"] or "Nanoleaf") + "): " + nanoleaf.listingText(saved) + ".")
     print("Its address is NL:" + entry["id"] + " - use it with --light, in batch strings and the HTTP API.")
     print("Saved to " + nanoleaf.defaultSavedPath())
     _finish(0)
