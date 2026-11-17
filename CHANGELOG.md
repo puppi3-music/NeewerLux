@@ -2,7 +2,7 @@
 
 Changes relative to upstream [NeewerLite-Python v0.12d](https://github.com/taburineagle/NeewerLite-Python).
 
-## Unreleased
+## v1.6.0 - 2026-11-17
 
 ### Changed
 - **Chase drum rolls are faster.** The deep flash now sweeps round a Nanoleaf's panels as a band, so the next panel is already up before the last one goes down. The panels together never dim between steps, so as one area they no longer count as flashing. That lets the chase move a panel per hit, even at the Standard flash limit, where it used to step once a beat. Each panel's own flashes stay within Standard. Sets of two or three panels step every 2 or 4 hits to keep within it. At **Show** and **Off** the chase pops instead: a deep flash on each panel in turn, fading before the next, as fast as the level allows. At Show that's every hit up to 10 a second. It goes back to the sweep once its 4-second burst is used up.
