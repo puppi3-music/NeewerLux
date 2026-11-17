@@ -1,5 +1,5 @@
 [project]
-name = "puppi3s-neewerlux"
+name = "puppi3lux"
 version = "1.4.0"
 description = "Cross-platform control of Neewer Bluetooth LED lights and Nanoleaf panels, with a keyframe animation engine, sound reactive mode, preset system, and HTTP/web dashboard"
 readme = "README.md"
@@ -26,8 +26,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/puppi3-music/NeewerLux"
-Changelog = "https://github.com/puppi3-music/NeewerLux/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/puppi3-music/Puppi3Lux"
+Changelog = "https://github.com/puppi3-music/Puppi3Lux/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 # The desktop application. Installed by default, see tool.uv.default-groups.
@@ -41,7 +41,7 @@ audio = [
 ]
 
 [tool.uv]
-# Puppi3's NeewerLux is a flat-layout script application, not an installable package.
+# Puppi3Lux is a flat-layout script application, not an installable package.
 # This keeps uv from trying to build a wheel for the project itself while
 # still resolving and locking its dependencies.
 package = false

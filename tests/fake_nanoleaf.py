@@ -1,6 +1,6 @@
 """A fake Nanoleaf panel controller for tests and for trying the app without hardware.
 
-Implements the parts of the Open API that puppi3s_neewerlux_nanoleaf uses: pairing, /state,
+Implements the parts of the Open API that puppi3lux_nanoleaf uses: pairing, /state,
 /panelLayout, /effects, and a UDP listener that decodes extControl v2 frames.
 Standard library only. Run from the repo root:
 
@@ -22,7 +22,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from puppi3s_neewerlux_nanoleaf import decodeFrameV2  # noqa: E402
+from puppi3lux_nanoleaf import decodeFrameV2  # noqa: E402
 
 TOKEN = "fakeToken0123456789abcdef"
 

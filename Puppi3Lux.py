@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 ############################################################
-## Puppi3's NeewerLux
+## Puppi3Lux
 ## A fork of NeewerLux by PoizenJam, a NeewerLite-Python Extension
 ############################################################
 ## Based on NeewerLite-Python ver. 0.12d by Zach Glenwright
@@ -10,7 +10,7 @@
 ## > https://github.com/keefo/NeewerLite <
 ##
 ## This fork with sound reactive mode: Copyright (c) 2026 puppi3-music
-## > https://github.com/puppi3-music/NeewerLux/ <
+## > https://github.com/puppi3-music/Puppi3Lux/ <
 ## Licensed under AGPL-3.0-only, see LICENSE. Includes MIT-licensed
 ## code by Zach Glenwright and PoizenJam, see LICENSE-MIT.
 ############################################################
@@ -20,15 +20,18 @@
 ##          Windows, Linux/Ubuntu, MacOS and RPi
 ############################################################
 
-NEEWERLUX_VERSION = "1.4.0"
-NEEWERLUX_REPO_URL = "https://github.com/puppi3-music/NeewerLux/"
-NEEWERLUX_RELEASES_API = "https://api.github.com/repos/puppi3-music/NeewerLux/releases/latest"
-APP_NAME = "Puppi3's NeewerLux" # the name users see; file names, modules and URLs use "Puppi3sNeewerLux"
+PUPPI3LUX_VERSION = "1.4.0"
+PUPPI3LUX_REPO_URL = "https://github.com/puppi3-music/Puppi3Lux/"
+PUPPI3LUX_RELEASES_API = "https://api.github.com/repos/puppi3-music/Puppi3Lux/releases/latest"
+APP_NAME = "Puppi3Lux" # the name users see, and the one file names, modules and URLs use
 
-# HTTP API paths. Versions up to 1.3 served /NeewerLux/, and NeewerLite-Python /NeewerLite-Python/.
-# Both are still accepted, so saved Stream Deck buttons and scripts keep working.
-HTTP_PATH_PREFIX = "/Puppi3sNeewerLux/"
-LEGACY_HTTP_PATH_PREFIXES = ("/NeewerLux/", "/NeewerLite-Python/")
+# Names used for files and URLs before Puppi3Lux, newest first: Puppi3's NeewerLux, then NeewerLux.
+OLD_FILE_NAMES = ("Puppi3sNeewerLux", "NeewerLux")
+
+# HTTP API paths. Earlier versions served /Puppi3sNeewerLux/ and /NeewerLux/, and NeewerLite-Python
+# /NeewerLite-Python/. All are still accepted, so saved Stream Deck buttons and scripts keep working.
+HTTP_PATH_PREFIX = "/Puppi3Lux/"
+LEGACY_HTTP_PATH_PREFIXES = tuple("/" + name + "/" for name in OLD_FILE_NAMES) + ("/NeewerLite-Python/",)
 
 def modernHTTPPath(path):
     """Rewrite a request path that starts with an old prefix to the current one."""
@@ -85,7 +88,7 @@ except ModuleNotFoundError as e:
 
 # NANOLEAF PANEL SUPPORT (standard library only; stand-ins for the Bleak objects)
 try:
-    import puppi3s_neewerlux_nanoleaf as nanoleaf
+    import puppi3lux_nanoleaf as nanoleaf
 except Exception as e:
     print(f"  [DEBUG] Nanoleaf module import failed: {type(e).__name__}: {e}")
     nanoleaf = None
@@ -127,9 +130,9 @@ except Exception as e:
 
 # IMPORT THE GUI ITSELF
 try:
-    from puppi3s_neewerlux_ui import Ui_MainWindow
-    from puppi3s_neewerlux_theme import getThemeQSS
-    from puppi3s_neewerlux_webui import getWebDashboardHTML
+    from puppi3lux_ui import Ui_MainWindow
+    from puppi3lux_theme import getThemeQSS
+    from puppi3lux_webui import getWebDashboardHTML
 except Exception as e:
     print(f"  [DEBUG] GUI module import failed: {type(e).__name__}: {e}")
     if importError != 1: # if we don't already have a PySide issue
@@ -137,7 +140,7 @@ except Exception as e:
 
 # IMPORT SYSTEM TRAY SUPPORT
 try:
-    from puppi3s_neewerlux_ui import QSystemTrayIcon, QMenu
+    from puppi3lux_ui import QSystemTrayIcon, QMenu
 except ImportError:
     QSystemTrayIcon = None
     QMenu = None
@@ -145,12 +148,12 @@ except ImportError:
 # SET WINDOWS APP ID SO THE TASKBAR SHOWS OUR ICON INSTEAD OF PYTHON'S
 try:
     import ctypes
-    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("puppi3-music.Puppi3sNeewerLux." + NEEWERLUX_VERSION)
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("puppi3-music.Puppi3Lux." + PUPPI3LUX_VERSION)
 except Exception:
     pass  # not Windows
 
 # CONSOLE MANAGEMENT
-# When launched via pythonw.exe (or Puppi3sNeewerLux.bat), there is no console, these are no-ops.
+# When launched via pythonw.exe (or Puppi3Lux.bat), there is no console, these are no-ops.
 # When launched via python.exe directly, SW_HIDE works on legacy conhost but NOT on
 # Windows Terminal (which intercepts and downgrades to minimize).
 _hasConsole = False
@@ -188,7 +191,7 @@ except Exception as e:
 
 # IMPORT WEB DASHBOARD
 try:
-    from puppi3s_neewerlux_webui import getWebDashboardHTML
+    from puppi3lux_webui import getWebDashboardHTML
 except ImportError:
     getWebDashboardHTML = None
 
@@ -328,9 +331,9 @@ customKeys = [] # custom keymappings for keyboard shortcuts, set on launch by th
 whiteListedMACs = [] # whitelisted list of MAC addresses to add to the light list
 enableTabsOnLaunch = False # whether or not to enable tabs on startup (even with no lights connected)
 
-lockFile = tempfile.gettempdir() + os.sep + "Puppi3sNeewerLux.lock"
+lockFile = tempfile.gettempdir() + os.sep + "Puppi3Lux.lock"
 anotherInstance = False # whether or not we're using a new instance (for the Singleton check)
-globalPrefsFile = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "Puppi3sNeewerLux.prefs" # the global preferences file for saving/loading
+globalPrefsFile = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "Puppi3Lux.prefs" # the global preferences file for saving/loading
 customLightPresetsFile = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "customLights.prefs"
 # Shipped template used to seed customLightPresetsFile on first run. The live file is
 # user state and is not tracked in the repository, so the defaults live here instead.
@@ -338,26 +341,32 @@ defaultLightPresetsFile = customLightPresetsFile + ".default"
 # Records that seeding already happened, so a later deliberate reset or delete is not
 # undone by copying the shipped presets back in.
 presetsSeededMarkerFile = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + ".presets_seeded"
-geometryPrefsFile = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "Puppi3sNeewerLux.geometry"
+geometryPrefsFile = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "Puppi3Lux.geometry"
 soundPresetsFile = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "sound_presets.json"
 # Shipped Sound presets, shown until the user first saves, updates or deletes one. That
 # writes the whole list to soundPresetsFile, which is read from then on, so deleting
 # every preset leaves an empty file and the shipped ones don't come back.
 defaultSoundPresetsFile = soundPresetsFile + ".default"
 soundPalettesFile = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "sound_palettes.json"  # palettes saved from the Colours menu
-logFilePath = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "Puppi3sNeewerLux.log"
+logFilePath = os.path.dirname(os.path.abspath(sys.argv[0])) + os.sep + "light_prefs" + os.sep + "Puppi3Lux.log"
 
 def migrateRenamedPrefsFiles():
-    """Versions up to 1.3 (named NeewerLux) saved NeewerLux.prefs, .geometry and .log in light_prefs.
-    Rename each to its Puppi3sNeewerLux.* name, unless a file with the new name is already there."""
+    """Earlier versions saved their .prefs, .geometry and .log in light_prefs as Puppi3sNeewerLux.* or,
+    up to 1.3, NeewerLux.*. Rename the newest old file to its Puppi3Lux.* name, unless a file with the
+    new name is already there."""
     for newPath in (globalPrefsFile, geometryPrefsFile, logFilePath):
-        oldPath = os.path.join(os.path.dirname(newPath), "NeewerLux" + os.path.splitext(newPath)[1])
-        if os.path.exists(oldPath) and not os.path.exists(newPath):
+        if os.path.exists(newPath):
+            continue
+        for oldName in OLD_FILE_NAMES:
+            oldPath = os.path.join(os.path.dirname(newPath), oldName + os.path.splitext(newPath)[1])
+            if not os.path.exists(oldPath):
+                continue
             try:
                 os.replace(oldPath, newPath)
                 print("Renamed " + oldPath + " to " + os.path.basename(newPath))
             except OSError as e:
                 print("Could not rename " + oldPath + " (" + str(e) + "), starting from defaults")
+            break
 
 # FILE LOCKING FOR SINGLE INSTANCE
 def singleInstanceLock():
@@ -496,9 +505,9 @@ try: # try to load the GUI
         def __init__(self):
             QMainWindow.__init__(self)
             self.setupUi(self) # set up the main UI
-            self.setWindowTitle(APP_NAME + " " + NEEWERLUX_VERSION)
+            self.setWindowTitle(APP_NAME + " " + PUPPI3LUX_VERSION)
             # Inject version into Info tab
-            self.infoText.setHtml(self.infoText.toHtml().replace("{VERSION}", NEEWERLUX_VERSION))
+            self.infoText.setHtml(self.infoText.toHtml().replace("{VERSION}", PUPPI3LUX_VERSION))
             self.connectMe() # connect the function handlers to the widgets
 
             # The light table can hold group rows (a Nanoleaf shown one row per panel), so table rows and
@@ -535,7 +544,7 @@ try: # try to load the GUI
             self._fitToolbar()
 
             # Set window icon (shown in taskbar and title bar)
-            for _iconName in ("io.github.puppi3_music.Puppi3sNeewerLux.png", "io.github.puppi3_music.Puppi3sNeewerLux.ico"):
+            for _iconName in ("io.github.puppi3_music.Puppi3Lux.png", "io.github.puppi3_music.Puppi3Lux.ico"):
                 _iconPath = _resource_path(_iconName)
                 if os.path.exists(_iconPath):
                     self.setWindowIcon(QIcon(_iconPath))
@@ -567,7 +576,7 @@ try: # try to load the GUI
 
         def createPresetButtons(self):
             """Create (or recreate) all preset button widgets in an 8-column grid with a + placeholder."""
-            from puppi3s_neewerlux_ui import customPresetButton
+            from puppi3lux_ui import customPresetButton
 
             # Clear existing layout
             for btn in self.presetButtons:
@@ -737,7 +746,7 @@ try: # try to load the GUI
         def _openPresetEditor(self, idx):
             """Open a dialog to edit preset settings. Mirrors the animation editor layout."""
             global customLightPresets
-            from puppi3s_neewerlux_ui import GradientSlider as GSL
+            from puppi3lux_ui import GradientSlider as GSL
             if PYSIDE_VERSION == 6:
                 from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QVBoxLayout, QHBoxLayout,
                     QGridLayout as QGL, QLabel, QLineEdit, QComboBox, QSpinBox,
@@ -1551,9 +1560,9 @@ try: # try to load the GUI
                 return
 
             try:
-                from puppi3s_neewerlux_anim_editor import AnimationEditorDialog
+                from puppi3lux_anim_editor import AnimationEditorDialog
             except ImportError:
-                printDebugString("Could not import puppi3s_neewerlux_anim_editor, falling back to JSON editor")
+                printDebugString("Could not import puppi3lux_anim_editor, falling back to JSON editor")
                 self._animEditJSON(name)
                 return
 
@@ -1628,7 +1637,7 @@ try: # try to load the GUI
 
             layout.addWidget(QL("<b>Keyframes (JSON)</b>, edit directly:"))
             jsonEdit = QTE()
-            from puppi3s_neewerlux_ui import _monoFont
+            from puppi3lux_ui import _monoFont
             jsonEdit.setFont(_monoFont(9))
             jsonEdit.setPlainText(json.dumps(anim.get("keyframes", []), indent=2))
             layout.addWidget(jsonEdit)
@@ -2724,7 +2733,7 @@ try: # try to load the GUI
                 print("There are no preferences to save (all preferences are currently set to their default values).")
                 
                 if os.path.exists(globalPrefsFile): # if a previous preferences file exists
-                    print("Since all preferences are set to their defaults, we are deleting the Puppi3sNeewerLux.prefs file.")
+                    print("Since all preferences are set to their defaults, we are deleting the Puppi3Lux.prefs file.")
                     os.remove(globalPrefsFile) # ...delete it!
 
         def setupShortcutKeys(self):
@@ -3006,12 +3015,12 @@ try: # try to load the GUI
             def _doCheck():
                 try:
                     import urllib.request, json as _json
-                    req = urllib.request.Request(NEEWERLUX_RELEASES_API,
-                        headers={"User-Agent": "Puppi3sNeewerLux/" + NEEWERLUX_VERSION, "Accept": "application/vnd.github.v3+json"})
+                    req = urllib.request.Request(PUPPI3LUX_RELEASES_API,
+                        headers={"User-Agent": "Puppi3Lux/" + PUPPI3LUX_VERSION, "Accept": "application/vnd.github.v3+json"})
                     with urllib.request.urlopen(req, timeout=10) as resp:
                         data = _json.loads(resp.read().decode("utf-8"))
                     tag = data.get("tag_name", "").lstrip("vV")
-                    url = data.get("html_url", NEEWERLUX_REPO_URL + "releases")
+                    url = data.get("html_url", PUPPI3LUX_REPO_URL + "releases")
                     body = data.get("body", "")[:200]
                     self._updateResultSignal.emit(tag, url, body, "")
                 except Exception as e:
@@ -3028,10 +3037,10 @@ try: # try to load the GUI
                 self.updateBanner.setText("Could not check for updates: " + err)
                 self.updateBanner.setStyleSheet("QLabel { background-color: #3a2a1a; color: #ff9800; padding: 8px; border: 1px solid #ff9800; border-radius: 4px; }")
                 self.updateBanner.setVisible(True)
-            elif tag and tag != NEEWERLUX_VERSION:
+            elif tag and tag != PUPPI3LUX_VERSION:
                 try:
                     remote = tuple(int(x) for x in tag.split("."))
-                    local = tuple(int(x) for x in NEEWERLUX_VERSION.split("."))
+                    local = tuple(int(x) for x in PUPPI3LUX_VERSION.split("."))
                     if remote > local:
                         notePreview = (": " + body.split("\n")[0]) if body else ""
                         self.updateBanner.setText(
@@ -3042,11 +3051,11 @@ try: # try to load the GUI
                         return
                 except (ValueError, TypeError):
                     pass
-                self.updateBanner.setText("You are running " + APP_NAME + " v" + NEEWERLUX_VERSION + " (latest: v" + tag + ")")
+                self.updateBanner.setText("You are running " + APP_NAME + " v" + PUPPI3LUX_VERSION + " (latest: v" + tag + ")")
                 self.updateBanner.setStyleSheet("QLabel { background-color: #1a2a3a; color: #64b5f6; padding: 8px; border: 1px solid #64b5f6; border-radius: 4px; }")
                 self.updateBanner.setVisible(True)
             else:
-                self.updateBanner.setText("You are running the latest version (v" + NEEWERLUX_VERSION + ")")
+                self.updateBanner.setText("You are running the latest version (v" + PUPPI3LUX_VERSION + ")")
                 self.updateBanner.setStyleSheet("QLabel { background-color: #1a3a1a; color: #4caf50; padding: 8px; border: 1px solid #4caf50; border-radius: 4px; }")
                 self.updateBanner.setVisible(True)
 
@@ -3084,7 +3093,7 @@ try: # try to load the GUI
         # NANOLEAF PAIRING: the dialog asks, the network work runs on its own thread,
         # and the results come back to the GUI thread through runOnGui
         def openNanoleafPairDialog(self):
-            from puppi3s_neewerlux_ui import NanoleafPairDialog
+            from puppi3lux_ui import NanoleafPairDialog
             dlg = getattr(self, "_nanoleafDialog", None)
             if dlg is None:
                 dlg = NanoleafPairDialog(nanoleaf.PAIRING_HINT, self)
@@ -3456,7 +3465,7 @@ try: # try to load the GUI
                 return self.DEFAULT_FONT_SCALE
 
         def setFontScale(self, scale):
-            from puppi3s_neewerlux_theme import FONT_SCALE_MIN, FONT_SCALE_MAX
+            from puppi3lux_theme import FONT_SCALE_MIN, FONT_SCALE_MAX
             self._fontScale = round(max(FONT_SCALE_MIN, min(FONT_SCALE_MAX, scale)), 2)
             QApplication.instance().setStyleSheet(getThemeQSS(self._isDarkTheme, self._fontScale))
             self._fitToolbar()
@@ -3465,7 +3474,7 @@ try: # try to load the GUI
 
         # === SOUND REACTIVE ===
         def soundSetup(self):
-            from puppi3s_neewerlux_audio import MODES, MODE_HELP, AUDIO_AVAILABLE, AUDIO_IMPORT_ERROR
+            from puppi3lux_audio import MODES, MODE_HELP, AUDIO_AVAILABLE, AUDIO_IMPORT_ERROR
             self._soundModeHelp = MODE_HELP
             self.soundModeCombo.addItems(MODES)
             self.soundModeCombo.currentTextChanged.connect(self._soundSettingsChanged)
@@ -3674,7 +3683,7 @@ try: # try to load the GUI
                 self._soundPresetsRefresh()
 
         def soundRefreshDevices(self):
-            from puppi3s_neewerlux_audio import listInputDevices, preferredDeviceIndex, AUDIO_AVAILABLE
+            from puppi3lux_audio import listInputDevices, preferredDeviceIndex, AUDIO_AVAILABLE
             current = self.soundDeviceCombo.currentText()
             self.soundDeviceCombo.clear()
             devices = listInputDevices(rescan=soundEngine is None or not soundEngine.running)
@@ -3691,7 +3700,7 @@ try: # try to load the GUI
             self.soundRefreshMidi()
 
         def soundRefreshMidi(self):
-            from puppi3s_neewerlux_midi import listPorts, MIDI_AVAILABLE
+            from puppi3lux_midi import listPorts, MIDI_AVAILABLE
             combo = self.soundBeatSourceCombo
             want = getattr(self, "_soundSavedBeatSource", None)
             if want is None:
@@ -3719,7 +3728,7 @@ try: # try to load the GUI
             return ports
 
         def _soundMidiRefreshClicked(self):
-            from puppi3s_neewerlux_midi import MIDI_AVAILABLE
+            from puppi3lux_midi import MIDI_AVAILABLE
             n = len(self.soundRefreshMidi())
             if MIDI_AVAILABLE:
                 self.statusBar.showMessage("Found " + str(n) + " MIDI input" + ("" if n == 1 else "s"), 3000)
@@ -3736,7 +3745,7 @@ try: # try to load the GUI
             err = ""
             if port and soundEngine is not None and soundEngine.running:
                 if clock is None:
-                    from puppi3s_neewerlux_midi import MidiClock
+                    from puppi3lux_midi import MidiClock
                     clock = self._midiClock = MidiClock()
                 if clock.portName != port:
                     err = clock.open(port)
@@ -3955,15 +3964,15 @@ try: # try to load the GUI
             self._trayIcon = QSystemTrayIcon(self)
 
             # Try to use the app icon, fall back to a generic one
-            iconPath = _resource_path("io.github.puppi3_music.Puppi3sNeewerLux.png")
+            iconPath = _resource_path("io.github.puppi3_music.Puppi3Lux.png")
             if not os.path.exists(iconPath):
-                iconPath = _resource_path("io.github.puppi3_music.Puppi3sNeewerLux.ico")
+                iconPath = _resource_path("io.github.puppi3_music.Puppi3Lux.ico")
             if os.path.exists(iconPath):
                 self._trayIcon.setIcon(QIcon(iconPath))
             else:
                 self._trayIcon.setIcon(self.windowIcon())
 
-            self._trayIcon.setToolTip(APP_NAME + " " + NEEWERLUX_VERSION)
+            self._trayIcon.setToolTip(APP_NAME + " " + PUPPI3LUX_VERSION)
 
             trayMenu = QMenu()
             showAction = trayMenu.addAction("Show / Hide")
@@ -6472,7 +6481,7 @@ def pairNanoleafFromCLI(hostText, waitSeconds=60):
         singleInstanceUnlockandQuit(code)
 
     if nanoleaf is None:
-        print("The Nanoleaf module (puppi3s_neewerlux_nanoleaf.py) could not be loaded.")
+        print("The Nanoleaf module (puppi3lux_nanoleaf.py) could not be loaded.")
         _finish(1)
     try:
         ip, port = nanoleaf.parseHostPort(hostText)
@@ -7127,7 +7136,7 @@ def signalWorkerSend(changedLights, waitSeconds=2.0):
 
 
 # ============================================================================
-# SOUND REACTIVE - puppi3s_neewerlux_audio analyses an input device, this sends the colours
+# SOUND REACTIVE - puppi3lux_audio analyses an input device, this sends the colours
 # ============================================================================
 
 soundEngine = None  # created on first use, see getSoundEngine()
@@ -7242,7 +7251,7 @@ def soundLightGroup(lightIdx):
 def getSoundEngine():
     global soundEngine
     if soundEngine is None:
-        from puppi3s_neewerlux_audio import SoundEngine
+        from puppi3lux_audio import SoundEngine
         soundEngine = SoundEngine(soundSendFrame, printDebugString)
         soundEngine.lightInterval = soundLightInterval
         soundEngine.lightGroup = soundLightGroup
@@ -7954,21 +7963,21 @@ class NLPythonServer(BaseHTTPRequestHandler):
                     self.send_header("Content-Type", "text/html;charset=UTF-8")
                     self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
                     self.end_headers()
-                    self.wfile.write(getWebDashboardHTML(version=NEEWERLUX_VERSION).encode("utf-8"))
+                    self.wfile.write(getWebDashboardHTML(version=PUPPI3LUX_VERSION).encode("utf-8"))
                 else:
                     self.send_response(302)
                     self.send_header('Location', acceptableURL)
                     self.end_headers()
 
                 return
-            else: # if the URL contains "/Puppi3sNeewerLux/doAction?" then it's a valid URL
+            else: # if the URL contains "/Puppi3Lux/doAction?" then it's a valid URL
                 # Check for JSON API endpoints first
                 queryPart = self.path.replace(acceptableURL, "")
 
                 # Redirect old ?list to new dashboard
                 if queryPart == "list" or queryPart.startswith("list&"):
                     self.send_response(302)
-                    self.send_header('Location', '/Puppi3sNeewerLux/')
+                    self.send_header('Location', '/Puppi3Lux/')
                     self.end_headers()
                     return
 
@@ -8150,7 +8159,7 @@ class NLPythonServer(BaseHTTPRequestHandler):
                         self.wfile.write(bytes("        document.getElementById('refreshDisplay').innerText = 'This page will auto-refresh in 1 second';\n", "utf-8"))
                         self.wfile.write(bytes("      }\n", "utf-8"))
                         self.wfile.write(bytes("    } else {\n", "utf-8"))
-                        self.wfile.write(bytes("      location.assign('/Puppi3sNeewerLux/doAction?list');\n", "utf-8"))
+                        self.wfile.write(bytes("      location.assign('/Puppi3Lux/doAction?list');\n", "utf-8"))
                         self.wfile.write(bytes("    }\n", "utf-8"))
                         self.wfile.write(bytes("  }\n\n", "utf-8"))
                         self.wfile.write(bytes("  function editLight(lightNum, lightType, previousName) {\n", "utf-8"))
@@ -8237,9 +8246,9 @@ class NLPythonServer(BaseHTTPRequestHandler):
                 writeHTMLSections(self, "htmlendheaders") # add the ending section to the very bottom
 
     def do_POST(self):
-        """Handle JSON POSTs to /Puppi3sNeewerLux/batch and /Puppi3sNeewerLux/animate.
+        """Handle JSON POSTs to /Puppi3Lux/batch and /Puppi3Lux/animate.
 
-        POST /Puppi3sNeewerLux/batch
+        POST /Puppi3Lux/batch
         Content-Type: application/json
 
         Request body:
@@ -8264,8 +8273,8 @@ class NLPythonServer(BaseHTTPRequestHandler):
 
         # ONLY ACCEPT REQUESTS TO SUPPORTED POST ENDPOINTS (the old /NeewerLux/ and /NeewerLite-Python/ paths still work)
         self.path = modernHTTPPath(self.path)
-        if self.path not in ("/Puppi3sNeewerLux/batch", "/Puppi3sNeewerLux/animate"):
-            self.send_error(404, "POST requests are supported at /Puppi3sNeewerLux/batch and /Puppi3sNeewerLux/animate")
+        if self.path not in ("/Puppi3Lux/batch", "/Puppi3Lux/animate"):
+            self.send_error(404, "POST requests are supported at /Puppi3Lux/batch and /Puppi3Lux/animate")
             return
 
         # READ AND PARSE THE JSON BODY
@@ -8286,7 +8295,7 @@ class NLPythonServer(BaseHTTPRequestHandler):
 
         resultData = {}
 
-        if self.path == "/Puppi3sNeewerLux/batch":
+        if self.path == "/Puppi3Lux/batch":
             commands = body.get("commands", [])
             if not isinstance(commands, list) or len(commands) == 0:
                 self.send_error(400, "Request must contain a non-empty 'commands' array")
@@ -8306,7 +8315,7 @@ class NLPythonServer(BaseHTTPRequestHandler):
                 finally:
                     threadAction = ""
 
-        elif self.path == "/Puppi3sNeewerLux/animate":
+        elif self.path == "/Puppi3Lux/animate":
             action = body.get("action", "play")  # play, stop, list, create
             printDebugString("POST animate request from " + clientIP + ": " + action)
 
@@ -8395,7 +8404,7 @@ def writeHTMLSections(self, theSection, errorMsg = ""):
     elif theSection == "htmlheaders":
         self.wfile.write(bytes("<!DOCTYPE html>\n", "utf-8"))
         self.wfile.write(bytes("<HTML>\n<HEAD>\n", "utf-8"))
-        self.wfile.write(bytes("<TITLE>" + APP_NAME + " " + NEEWERLUX_VERSION + ", based on NeewerLite-Python by Zach Glenwright / NeewerLite by Xu Lian</TITLE>\n</HEAD>\n", "utf-8"))
+        self.wfile.write(bytes("<TITLE>" + APP_NAME + " " + PUPPI3LUX_VERSION + ", based on NeewerLite-Python by Zach Glenwright / NeewerLite by Xu Lian</TITLE>\n</HEAD>\n", "utf-8"))
         self.wfile.write(bytes("<BODY>\n", "utf-8"))
     elif theSection == "errorHelp":
         self.wfile.write(bytes("<H1>Invalid request!</H1>\n", "utf-8"))
@@ -8403,38 +8412,38 @@ def writeHTMLSections(self, theSection, errorMsg = ""):
         self.wfile.write(bytes(errorMsg + "<BR><BR>\n", "utf-8"))
         self.wfile.write(bytes("Valid parameters to use -<BR>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>list</STRONG> - list the current lights " + APP_NAME + " has available to it and the custom presets it can use<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?list</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?list</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>discover</STRONG> - tell " + APP_NAME + " to scan for new lights<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?discover</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?discover</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>nopage</STRONG> - send a command to the HTTP server, but don't render the webpage showing the results (<EM>useful, for example, on a headless Raspberry Pi where you don't necessarily want to see the results page</EM>)<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?nopage</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?nopage</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>link=</STRONG> - (value: <EM>index of light to link to</EM>) manually link to a specific light - you can specify multiple lights with semicolons (so link=1;2 would try to link to both lights 1 and 2)<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?link=1</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?link=1</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>light=</STRONG> - the MAC address (or current index of the light) you want to send a command to - you can specify multiple lights with semicolons (so light=1;2 would send a command to both lights 1 and 2)<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?light=11:22:33:44:55:66</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?light=11:22:33:44:55:66</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>mode=</STRONG> - the mode (value: <EM>HSI, CCT, and either ANM or SCENE</EM>) - the color mode to switch the light to<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?mode=CCT</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?mode=CCT</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>use_preset=</STRONG> - (value: <EM>1-" + str(numOfPresets) + "</EM>) - use a custom global or snapshot preset<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?use_preset=2</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?use_preset=2</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("(CCT mode only) <STRONG>temp=</STRONG> or <STRONG>temperature=</STRONG> - (value: <EM>3200 to 8500</EM>) the color temperature in CCT mode to set the light to<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?temp=5200</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?temp=5200</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("(HSI mode only) <STRONG>hue=</STRONG> - (value: <EM>0 to 360</EM>) the hue value in HSI mode to set the light to<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?hue=240</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?hue=240</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("(HSI mode only) <STRONG>sat=</STRONG> or <STRONG>saturation=</STRONG> - (value: <EM>0 to 100</EM>) the color saturation value in HSI mode to set the light to<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?sat=65</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?sat=65</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("(ANM/SCENE mode only) <STRONG>scene=</STRONG> - (value: <EM>1 to 9</EM>) which animation (scene) to switch the light to<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?scene=3</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?scene=3</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("(CCT/HSI/ANM modes) <STRONG>bri=</STRONG>, <STRONG>brightness=</STRONG> or <STRONG>intensity=</STRONG> - (value: <EM>0 to 100</EM>) how bright you want the light<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?brightness=80</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?brightness=80</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<BR><BR>More examples -<BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Set the light with MAC address <EM>11:22:33:44:55:66</EM> to <EM>CCT</EM> mode, with a color temperature of <EM>5200</EM> and brightness of <EM>40</EM><BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3sNeewerLux/doAction?light=11:22:33:44:55:66&mode=CCT&temp=5200&bri=40</EM><BR><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3Lux/doAction?light=11:22:33:44:55:66&mode=CCT&temp=5200&bri=40</EM><BR><BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Set the light with MAC address <EM>11:22:33:44:55:66</EM> to <EM>HSI</EM> mode, with a hue of <EM>70</EM>, saturation of <EM>50</EM> and brightness of <EM>10</EM><BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3sNeewerLux/doAction?light=11:22:33:44:55:66&mode=HSI&hue=70&sat=50&bri=10</EM><BR><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3Lux/doAction?light=11:22:33:44:55:66&mode=HSI&hue=70&sat=50&bri=10</EM><BR><BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Set the first light available to <EM>SCENE</EM> mode, using the <EM>first</EM> animation and brightness of <EM>55</EM><BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3sNeewerLux/doAction?light=1&mode=SCENE&scene=1&bri=55</EM><BR><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3Lux/doAction?light=1&mode=SCENE&scene=1&bri=55</EM><BR><BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Use the 2nd custom preset, but don't render the webpage showing the results<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3sNeewerLux/doAction?use_preset=2&nopage</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3Lux/doAction?use_preset=2&nopage</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<BR><HR><BR>\n", "utf-8"))
         self.wfile.write(bytes("<H2>Batch Commands (multiple lights, different settings)</H2>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>batch=</STRONG> - send different commands to different lights in a single request<BR>\n", "utf-8"))
@@ -8444,26 +8453,26 @@ def writeHTMLSections(self, theSection, errorMsg = ""):
         self.wfile.write(bytes("&nbsp;&nbsp;CCT temp values: use either short (56) or full (5600) format; both become 5600K<BR><BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Examples:<BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Set light 1 to red and light 2 to blue:<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3sNeewerLux/doAction?batch=1:HSI:0:100:100;2:HSI:240:100:100</EM><BR><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3Lux/doAction?batch=1:HSI:0:100:100;2:HSI:240:100:100</EM><BR><BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Set light 1 to warm CCT, turn light 2 off:<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3sNeewerLux/doAction?batch=1:CCT:32:80;2:OFF</EM><BR><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3Lux/doAction?batch=1:CCT:32:80;2:OFF</EM><BR><BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Set all lights to 5600K at 50% brightness:<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3sNeewerLux/doAction?batch=*:CCT:56:50</EM><BR><BR>\n", "utf-8"))
-        self.wfile.write(bytes("<STRONG>POST /Puppi3sNeewerLux/batch</STRONG> - same as above, but using a JSON body for richer control<BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;<EM>http://(server address)/Puppi3Lux/doAction?batch=*:CCT:56:50</EM><BR><BR>\n", "utf-8"))
+        self.wfile.write(bytes("<STRONG>POST /Puppi3Lux/batch</STRONG> - same as above, but using a JSON body for richer control<BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Send a POST request with Content-Type: application/json<BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Body: <EM>{\"commands\": [{\"light\": \"1\", \"mode\": \"HSI\", \"hue\": 0, \"sat\": 100, \"bri\": 50}, ...]}</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Returns a JSON response with per-command results<BR>\n", "utf-8"))
         self.wfile.write(bytes("<BR><HR><BR>\n", "utf-8"))
         self.wfile.write(bytes("<H2>Custom Animations</H2>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>list_animations</STRONG> - list all saved custom animations<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?list_animations</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?list_animations</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>animate=</STRONG> - play a saved animation by name (URL-encode spaces as %20)<BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Optionally append |speed|rate|brightness|loop|maxLoops|revert|offset|spread|pattern|smoothing (e.g. animate=Police%20Flash|2.0|10|50); offset and spread (0-100) stagger the lights through the loop and round the colour wheel; pattern (left-to-right, right-to-left, top-to-bottom, bottom-to-top, centre-out, edges-in, around) lays a Nanoleaf's panels out by where they are on the wall, random gives every light a random place; smoothing (0-100) is how much of each keyframe glides from the one before<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?animate=Police%20Flash</EM><BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?animate=Color%20Cycle|0.5</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?animate=Police%20Flash</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?animate=Color%20Cycle|0.5</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("<STRONG>stop_animate</STRONG> - stop the currently playing animation<BR>\n", "utf-8"))
-        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3sNeewerLux/doAction?stop_animate</EM><BR>\n", "utf-8"))
-        self.wfile.write(bytes("<STRONG>POST /Puppi3sNeewerLux/animate</STRONG> - JSON API for animation control<BR>\n", "utf-8"))
+        self.wfile.write(bytes("&nbsp;&nbsp;&nbsp;&nbsp;Example: <EM>http://(server address)/Puppi3Lux/doAction?stop_animate</EM><BR>\n", "utf-8"))
+        self.wfile.write(bytes("<STRONG>POST /Puppi3Lux/animate</STRONG> - JSON API for animation control<BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Actions: play, stop, list, create, status<BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Play: <EM>{\"action\": \"play\", \"name\": \"Police Flash\", \"speed\": 1.0, \"loop\": true, \"rate\": 5}</EM><BR>\n", "utf-8"))
         self.wfile.write(bytes("&nbsp;&nbsp;Create: <EM>{\"action\": \"create\", \"animation\": {\"name\": \"...\", \"loop\": true, \"keyframes\": [...]}}</EM><BR>\n", "utf-8"))
@@ -8477,7 +8486,7 @@ def writeHTMLSections(self, theSection, errorMsg = ""):
         if theSection == "quicklinks-timer": # write the "This page will refresh..." timer
             self.wfile.write(bytes("<CENTER><strong><em><span id='refreshDisplay'><BR></span></em></strong></CENTER><HR>\n", "utf-8"))
     elif theSection == "htmlendheaders":
-        self.wfile.write(bytes("<CENTER><A HREF='https://github.com/puppi3-music/NeewerLux/'>" + APP_NAME + " " + NEEWERLUX_VERSION + "</A> (source, AGPL-3.0) by puppi3-music<BR>fork of <A HREF='https://github.com/poizenjam/NeewerLux/'>NeewerLux</A> by PoizenJam, based on <A HREF='https://github.com/taburineagle/NeewerLite-Python/'>NeewerLite-Python</A> (v0.12d) by Zach Glenwright / originally from <A HREF='https://github.com/keefo/NeewerLite'>NeewerLite</A> by Xu Lian<BR></CENTER>\n", "utf-8"))
+        self.wfile.write(bytes("<CENTER><A HREF='https://github.com/puppi3-music/Puppi3Lux/'>" + APP_NAME + " " + PUPPI3LUX_VERSION + "</A> (source, AGPL-3.0) by puppi3-music<BR>fork of <A HREF='https://github.com/poizenjam/NeewerLux/'>NeewerLux</A> by PoizenJam, based on <A HREF='https://github.com/taburineagle/NeewerLite-Python/'>NeewerLite-Python</A> (v0.12d) by Zach Glenwright / originally from <A HREF='https://github.com/keefo/NeewerLite'>NeewerLite</A> by Xu Lian<BR></CENTER>\n", "utf-8"))
         self.wfile.write(bytes("</BODY>\n</HTML>", "utf-8"))
 
 def formatStringForConsole(theString, maxLength):
@@ -8698,9 +8707,9 @@ def loadPrefsFile(globalPrefsFile = ""):
 if __name__ == '__main__':
     # Display the version we're running
     print("---------------------------------------------------------")
-    print("          " + APP_NAME + " ver. " + NEEWERLUX_VERSION)
+    print("          " + APP_NAME + " ver. " + PUPPI3LUX_VERSION)
     print("  Cross-platform Neewer and Nanoleaf light control")
-    print("  https://github.com/puppi3-music/NeewerLux/")
+    print("  https://github.com/puppi3-music/Puppi3Lux/")
     print("  By puppi3-music, licensed under AGPL-3.0")
     print("")
     print("  Fork of NeewerLux by PoizenJam")
@@ -8710,7 +8719,7 @@ if __name__ == '__main__':
     print("---------------------------------------------------------")
 
     singleInstanceLock() # make a lockfile if one doesn't exist yet, and quit out if one does
-    migrateRenamedPrefsFiles() # pick up settings saved under the old NeewerLux name
+    migrateRenamedPrefsFiles() # pick up settings saved under the old Puppi3sNeewerLux or NeewerLux names
 
     if os.path.exists(globalPrefsFile):
         loadPrefsFile(globalPrefsFile) # if a preferences file exists, process it and load the preferences
@@ -8777,7 +8786,7 @@ if __name__ == '__main__':
         if cmdReturn[0] == "LIST":
             doAnotherInstanceCheck() # check to see if another instance is running, and if it is, then error out and quit
 
-            print(APP_NAME + " " + NEEWERLUX_VERSION + ", fork of NeewerLux by PoizenJam, based on NeewerLite-Python 0.12d by Zach Glenwright / NeewerLite by Xu Lian")
+            print(APP_NAME + " " + PUPPI3LUX_VERSION + ", fork of NeewerLux by PoizenJam, based on NeewerLite-Python 0.12d by Zach Glenwright / NeewerLite by Xu Lian")
             print("Searching for nearby lights...")
             asyncioEventLoop.run_until_complete(findDevices())
 
@@ -8862,7 +8871,7 @@ if __name__ == '__main__':
 
                 # Mouse wheel scrolls the page instead of changing sliders/dropdowns; touch drag-to-scroll
                 try:
-                    from puppi3s_neewerlux_ui import installInputGuard
+                    from puppi3lux_ui import installInputGuard
                     app._inputGuard = installInputGuard(app)
                 except Exception as e:
                     print(f"  [DEBUG] Input guard not installed: {type(e).__name__}: {e}")
@@ -8957,9 +8966,9 @@ if __name__ == '__main__':
                 print(" but using " + APP_NAME + " with the GUI requires PySide6 (or PySide2).")
                 print()
                 print(" If you have already installed PySide6 but are still getting this error message,")
-                print(" Make sure you have the puppi3s_neewerlux_ui.py script in the same directory as Puppi3sNeewerLux.py")
+                print(" Make sure you have the puppi3lux_ui.py script in the same directory as Puppi3Lux.py")
                 print(" If you don't know where that file is, redownload the " + APP_NAME + " package from GitHub here:")
-                print("    https://github.com/puppi3-music/NeewerLux/")
+                print("    https://github.com/puppi3-music/Puppi3Lux/")
 
                 sys.exit(1) # quit out, we can't run the program without PySide or the GUI (for the GUI version, at least)
     else: # don't launch the GUI, send command to a light/lights and quit out

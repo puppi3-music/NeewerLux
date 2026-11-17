@@ -366,7 +366,7 @@ wheels = [
 ]
 
 [[package]]
-name = "puppi3s-neewerlux"
+name = "puppi3lux"
 version = "1.4.0"
 source = { virtual = "." }
 default-groups = ["audio", "gui"]

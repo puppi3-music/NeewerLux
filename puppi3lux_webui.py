@@ -1,4 +1,4 @@
-"""Web dashboard served by the Puppi3's NeewerLux HTTP server.
+"""Web dashboard served by the Puppi3Lux HTTP server.
 
 Light control, animation playback, preset recall, and status monitoring.
 """
@@ -13,7 +13,7 @@ WEB_DASHBOARD_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Puppi3's NeewerLux Control Panel</title>
+<title>Puppi3Lux Control Panel</title>
 <style>
 :root {
     --bg: #1e1e2e;
@@ -334,7 +334,7 @@ select:focus, input:focus { border-color: var(--accent); outline: none; }
 <body>
 
 <div class="header">
-    <h1>Puppi3's <span>Neewer</span>Lux <small style="color:#888;font-size:12px">{NLVERSION}</small></h1>
+    <h1>Puppi3<span>Lux</span> <small style="color:#888;font-size:12px">{NLVERSION}</small></h1>
     <div class="spacer"></div>
     <span class="status-pill" id="connStatus">Loading...</span>
     <button class="refresh-btn" onclick="scanForLights()" title="Scan for new Bluetooth lights">Scan</button>
@@ -524,10 +524,10 @@ select:focus, input:focus { border-color: var(--accent); outline: none; }
     <!-- INFO (collapsible) -->
     <div class="card full-width">
         <div class="card-header" style="cursor:pointer" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">
-            About Puppi3's NeewerLux
+            About Puppi3Lux
         </div>
         <div class="card-body" style="display:none">
-            <h3 style="color:var(--accent);margin-top:0">Puppi3's NeewerLux {NLVERSION}</h3>
+            <h3 style="color:var(--accent);margin-top:0">Puppi3Lux {NLVERSION}</h3>
             <p>This dashboard controls the same lights as the desktop app, over HTTP.
             Anything here can also be driven by a plain URL, which is how hardware like a
             Stream Deck talks to it. See the API Reference below for the full list.</p>
@@ -540,9 +540,9 @@ select:focus, input:focus { border-color: var(--accent); outline: none; }
             </div>
             <hr style="border-color:var(--border)">
             <p style="color:var(--muted);font-size:0.9em;">
-                <b>Repository:</b> <a href="https://github.com/puppi3-music/NeewerLux/" style="color:var(--accent)">github.com/puppi3-music/NeewerLux</a><br>
-                <b>Releases:</b> <a href="https://github.com/puppi3-music/NeewerLux/releases" style="color:var(--accent)">github.com/puppi3-music/NeewerLux/releases</a><br><br>
-                Puppi3's NeewerLux by puppi3-music. Licensed under AGPL-3.0.<br>
+                <b>Repository:</b> <a href="https://github.com/puppi3-music/Puppi3Lux/" style="color:var(--accent)">github.com/puppi3-music/Puppi3Lux</a><br>
+                <b>Releases:</b> <a href="https://github.com/puppi3-music/Puppi3Lux/releases" style="color:var(--accent)">github.com/puppi3-music/Puppi3Lux/releases</a><br><br>
+                Puppi3Lux by puppi3-music. Licensed under AGPL-3.0.<br>
                 Fork of NeewerLux by <a href="https://github.com/poizenjam/NeewerLux/" style="color:var(--accent)">PoizenJam</a>.
                 Based on <a href="https://github.com/taburineagle/NeewerLite-Python/" style="color:var(--accent)">NeewerLite-Python</a> (v0.12d) by Zach Glenwright.
                 Originally from <a href="https://github.com/keefo/NeewerLite" style="color:var(--accent)">NeewerLite</a> by Xu Lian
@@ -559,41 +559,41 @@ select:focus, input:focus { border-color: var(--accent); outline: none; }
             <div class="api-section">
                 <h3>Light Control</h3>
                 <div class="api-desc">Set CCT mode</div>
-                <div class="api-code">GET /Puppi3sNeewerLux/doAction?light=1&amp;mode=CCT&amp;temp=5600&amp;bri=80</div>
+                <div class="api-code">GET /Puppi3Lux/doAction?light=1&amp;mode=CCT&amp;temp=5600&amp;bri=80</div>
                 <div class="api-desc">Set HSI mode</div>
-                <div class="api-code">GET /Puppi3sNeewerLux/doAction?light=1&amp;mode=HSI&amp;hue=240&amp;sat=100&amp;bri=50</div>
+                <div class="api-code">GET /Puppi3Lux/doAction?light=1&amp;mode=HSI&amp;hue=240&amp;sat=100&amp;bri=50</div>
                 <div class="api-desc">Set Scene mode</div>
-                <div class="api-code">GET /Puppi3sNeewerLux/doAction?light=1&amp;mode=SCENE&amp;scene=3&amp;bri=80</div>
+                <div class="api-code">GET /Puppi3Lux/doAction?light=1&amp;mode=SCENE&amp;scene=3&amp;bri=80</div>
             </div>
             <div class="api-section">
                 <h3>Batch Commands</h3>
                 <div class="api-desc">Different settings per light in one request</div>
-                <div class="api-code">GET /Puppi3sNeewerLux/doAction?batch=Key:HSI:0:100:50;Fill:CCT:56:80</div>
+                <div class="api-code">GET /Puppi3Lux/doAction?batch=Key:HSI:0:100:50;Fill:CCT:56:80</div>
                 <div class="api-desc">Lights can be addressed by index, alias name, or MAC address</div>
             </div>
             <div class="api-section">
                 <h3>Animations</h3>
                 <div class="api-desc">Play by name (GET). Format: <code>Name|speed|rate|bri|loop|maxLoops|revert|offset|spread|pattern|smoothing</code> (offset, spread: 0-100%, staggering the lights through the loop and round the colour wheel; pattern: left-to-right, right-to-left, top-to-bottom, bottom-to-top, centre-out, edges-in or around, laying a Nanoleaf's panels out by where they are on the wall, or random; smoothing: 0-100%, how much of each keyframe glides from the one before)</div>
-                <div class="api-code">GET /Puppi3sNeewerLux/doAction?animate=Concert%20Sweep|1.0|10|80</div>
+                <div class="api-code">GET /Puppi3Lux/doAction?animate=Concert%20Sweep|1.0|10|80</div>
                 <div class="api-desc">With loop control: play twice then revert</div>
-                <div class="api-code">GET /Puppi3sNeewerLux/doAction?animate=Halloween|1.0|10|50|true|2|true</div>
+                <div class="api-code">GET /Puppi3Lux/doAction?animate=Halloween|1.0|10|50|true|2|true</div>
                 <div class="api-desc">Play/stop/list (POST JSON)</div>
-                <div class="api-code">POST /Puppi3sNeewerLux/animate {"action":"play","name":"Concert Sweep","loop":true,"maxLoops":3,"revert":true}</div>
-                <div class="api-code">POST /Puppi3sNeewerLux/animate {"action":"stop"}</div>
+                <div class="api-code">POST /Puppi3Lux/animate {"action":"play","name":"Concert Sweep","loop":true,"maxLoops":3,"revert":true}</div>
+                <div class="api-code">POST /Puppi3Lux/animate {"action":"stop"}</div>
             </div>
             <div class="api-section">
                 <h3>Utility</h3>
-                <div class="api-code">GET /Puppi3sNeewerLux/doAction?list</div>
-                <div class="api-code">GET /Puppi3sNeewerLux/doAction?discover</div>
-                <div class="api-code">GET /Puppi3sNeewerLux/doAction?link=1</div>
-                <div class="api-code">GET /Puppi3sNeewerLux/doAction?nopage (suppress HTML response)</div>
+                <div class="api-code">GET /Puppi3Lux/doAction?list</div>
+                <div class="api-code">GET /Puppi3Lux/doAction?discover</div>
+                <div class="api-code">GET /Puppi3Lux/doAction?link=1</div>
+                <div class="api-code">GET /Puppi3Lux/doAction?nopage (suppress HTML response)</div>
             </div>
         </div>
     </div>
 </div>
 
 <script>
-const BASE = '/Puppi3sNeewerLux/doAction?';
+const BASE = '/Puppi3Lux/doAction?';
 let selectedAnim = '';
 let activeSceneBtn = null;
 
@@ -691,7 +691,7 @@ function playAnimation() {
     const pattern = document.getElementById('animPattern').value;
     const smoothing = parseFloat(document.getElementById('animSmooth').value) || 0;
 
-    fetch('/Puppi3sNeewerLux/animate', {
+    fetch('/Puppi3Lux/animate', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({action:'play', name:selectedAnim, speed:parseFloat(speed), rate:parseInt(rate), brightness:parseInt(bri), loop:loop, maxLoops:maxLoops, revert:revert, offset:offset, spread:spread, pattern:pattern, smoothing:smoothing})
@@ -702,7 +702,7 @@ function playAnimation() {
     }).catch(e => logMsg('Animation error: ' + e.message, 'err'));
 }
 function stopAnimation() {
-    fetch('/Puppi3sNeewerLux/animate', {
+    fetch('/Puppi3Lux/animate', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({action:'stop'})
@@ -893,12 +893,12 @@ async function checkForUpdates() {
     el.textContent = 'Checking...';
     el.style.color = 'var(--muted)';
     try {
-        const r = await fetch('https://api.github.com/repos/puppi3-music/NeewerLux/releases/latest',
+        const r = await fetch('https://api.github.com/repos/puppi3-music/Puppi3Lux/releases/latest',
             {headers: {'Accept': 'application/vnd.github.v3+json'}});
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const data = await r.json();
         const tag = (data.tag_name || '').replace(/^[vV]/, '');
-        const url = data.html_url || 'https://github.com/puppi3-music/NeewerLux/releases';
+        const url = data.html_url || 'https://github.com/puppi3-music/Puppi3Lux/releases';
         const local = '{NLVERSION}';
         if (tag && tag !== local) {
             const rv = tag.split('.').map(Number);
@@ -996,9 +996,9 @@ window.addEventListener('load', () => {
 });
 </script>
 <div style="text-align:center;padding:16px 0 8px;font-size:11px;color:var(--muted);">
-    Puppi3's NeewerLux {NLVERSION}<br>
-    <a href="https://github.com/puppi3-music/NeewerLux/" style="color:var(--accent)">github.com/puppi3-music/NeewerLux</a><br>
-    Puppi3's NeewerLux by puppi3-music. Licensed under AGPL-3.0.<br>
+    Puppi3Lux {NLVERSION}<br>
+    <a href="https://github.com/puppi3-music/Puppi3Lux/" style="color:var(--accent)">github.com/puppi3-music/Puppi3Lux</a><br>
+    Puppi3Lux by puppi3-music. Licensed under AGPL-3.0.<br>
     Fork of NeewerLux by <a href="https://github.com/poizenjam/NeewerLux/" style="color:var(--accent)">PoizenJam</a>.
     Based on <a href="https://github.com/taburineagle/NeewerLite-Python/" style="color:var(--accent)">NeewerLite-Python</a> (v0.12d) by Zach Glenwright.
     Originally from <a href="https://github.com/keefo/NeewerLite" style="color:var(--accent)">NeewerLite</a> by Xu Lian

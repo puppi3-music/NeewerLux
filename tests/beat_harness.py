@@ -47,7 +47,7 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-import puppi3s_neewerlux_audio as na  # noqa: E402
+import puppi3lux_audio as na  # noqa: E402
 
 RATE = 48000
 BLOCK = 480  # samples per simulated audio callback, 10 ms

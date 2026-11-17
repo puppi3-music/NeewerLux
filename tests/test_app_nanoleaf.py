@@ -1,4 +1,4 @@
-"""Nanoleaf paths through Puppi3sNeewerLux.py itself, against tests/fake_nanoleaf.py. Run from the repo root:
+"""Nanoleaf paths through Puppi3Lux.py itself, against tests/fake_nanoleaf.py. Run from the repo root:
 
     uv run --no-sync python -m unittest tests.test_app_nanoleaf
 
@@ -21,11 +21,11 @@ sys.path.insert(0, HERE)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import puppi3s_neewerlux_nanoleaf as nl  # noqa: E402
+import puppi3lux_nanoleaf as nl  # noqa: E402
 from fake_nanoleaf import FakeNanoleaf, TOKEN  # noqa: E402
 
 try:
-    import Puppi3sNeewerLux as app
+    import Puppi3Lux as app
 except Exception:  # bleak or PySide missing
     app = None
 
@@ -34,7 +34,7 @@ async def noBluetooth(*args, **kwargs):
     raise OSError("No Bluetooth adapters found.")
 
 
-@unittest.skipIf(app is None, "Puppi3sNeewerLux.py could not be imported")
+@unittest.skipIf(app is None, "Puppi3Lux.py could not be imported")
 class AppTestCase(unittest.TestCase):
     """Fresh fake, saved file and app globals for each test."""
 
@@ -128,8 +128,8 @@ class AppPathTests(AppTestCase):
         self.assertEqual(app.availableLights, [])
 
     def test_nanoleaf_pair_argument(self):
-        for argv, expected in ((["Puppi3sNeewerLux.py", "--nanoleaf_pair", "10.0.0.152"], "10.0.0.152"),
-                               (["Puppi3sNeewerLux.py", "nanoleaf_pair=10.0.0.152:16021"], "10.0.0.152:16021")):
+        for argv, expected in ((["Puppi3Lux.py", "--nanoleaf_pair", "10.0.0.152"], "10.0.0.152"),
+                               (["Puppi3Lux.py", "nanoleaf_pair=10.0.0.152:16021"], "10.0.0.152:16021")):
             with mock.patch.object(sys, "argv", argv):
                 self.assertEqual(app.processCommands(), ["NANOLEAF_PAIR", True, expected])
 
@@ -142,7 +142,7 @@ class PerPanelTests(AppTestCase):
     def setUp(self):
         super().setUp()
         # sidecar prefs live next to sys.argv[0]; keep them in the temporary folder
-        patcher = mock.patch.object(sys, "argv", [os.path.join(self.tmp.name, "Puppi3sNeewerLux.py")])
+        patcher = mock.patch.object(sys, "argv", [os.path.join(self.tmp.name, "Puppi3Lux.py")])
         patcher.start()
         self.addCleanup(patcher.stop)
         lightAliases = mock.patch.object(app, "lightAliases", {})
@@ -349,7 +349,7 @@ class LightTableGroupTests(AppTestCase):
 
     def setUp(self):
         super().setUp()
-        patcher = mock.patch.object(sys, "argv", [os.path.join(self.tmp.name, "Puppi3sNeewerLux.py")])
+        patcher = mock.patch.object(sys, "argv", [os.path.join(self.tmp.name, "Puppi3Lux.py")])
         patcher.start()
         self.addCleanup(patcher.stop)
         # one device per panel (its panels already known, so nothing needs to link) and one whole device

@@ -16,12 +16,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import puppi3s_neewerlux_audio as na  # noqa: E402
-import puppi3s_neewerlux_nanoleaf as nl  # noqa: E402
+import puppi3lux_audio as na  # noqa: E402
+import puppi3lux_nanoleaf as nl  # noqa: E402
 from fake_nanoleaf import FakeNanoleaf, TOKEN  # noqa: E402
 
 try:
-    import Puppi3sNeewerLux as app
+    import Puppi3Lux as app
 except Exception:  # bleak or PySide missing
     app = None
 
@@ -96,7 +96,7 @@ def panelLights(positions=DIAMOND, deviceId="S1"):
     return [[d] for d in c.devices()]
 
 
-@unittest.skipIf(app is None, "Puppi3sNeewerLux.py could not be imported")
+@unittest.skipIf(app is None, "Puppi3Lux.py could not be imported")
 class LightPlacesTests(unittest.TestCase):
     def test_light_order_is_unchanged(self):
         with mock.patch.object(app, "availableLights", panelLights()):
@@ -158,7 +158,7 @@ class LightPlacesTests(unittest.TestCase):
         self.assertGreater(found, 10)
 
     def test_ui_lists_the_same_patterns(self):
-        import puppi3s_neewerlux_ui as ui
+        import puppi3lux_ui as ui
         self.assertEqual(tuple(ui.LIGHT_PATTERNS), nl.PATTERNS)
         self.assertEqual(app.LIGHT_ORDER, nl.LIGHT_ORDER)
         self.assertEqual(na.LIGHT_ORDER, nl.LIGHT_ORDER)

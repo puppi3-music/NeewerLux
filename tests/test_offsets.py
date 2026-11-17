@@ -15,10 +15,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import puppi3s_neewerlux_audio as na  # noqa: E402
+import puppi3lux_audio as na  # noqa: E402
 
 try:
-    import Puppi3sNeewerLux as app
+    import Puppi3Lux as app
 except Exception:  # bleak or PySide missing
     app = None
 
@@ -34,7 +34,7 @@ KEYFRAMES = [
 ]
 
 
-@unittest.skipIf(app is None, "Puppi3sNeewerLux.py could not be imported")
+@unittest.skipIf(app is None, "Puppi3Lux.py could not be imported")
 class TimelineTests(unittest.TestCase):
     def test_first_pass_and_loop_lengths(self):
         tl = app.AnimationTimeline(KEYFRAMES, loop=True)
@@ -107,7 +107,7 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(app.animationLightCommand(cct, 1.0, 90), cct)  # white isn't turned
 
 
-@unittest.skipIf(app is None, "Puppi3sNeewerLux.py could not be imported")
+@unittest.skipIf(app is None, "Puppi3Lux.py could not be imported")
 class EngineTests(unittest.TestCase):
     """The playback thread, with three fake lights and the worker replaced by a recorder."""
 

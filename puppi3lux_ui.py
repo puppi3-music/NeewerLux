@@ -1,7 +1,7 @@
-"""Puppi3's NeewerLux main window UI.
+"""Puppi3Lux main window UI.
 
 Builds the widget tree and layouts. Widget attribute names are the
-contract with Puppi3sNeewerLux.py, which connects the signal handlers.
+contract with Puppi3Lux.py, which connects the signal handlers.
 """
 
 import json
@@ -42,7 +42,7 @@ except ImportError:
         )
         customSignal = Signal
     except ImportError:
-        raise  # let it propagate, Puppi3sNeewerLux.py will handle the error
+        raise  # let it propagate, Puppi3Lux.py will handle the error
 
 
 # === INPUT GUARD (mouse wheel + touchscreen) ===
@@ -188,7 +188,7 @@ class SpinBoxWithButtons(QWidget):
         if suffix:
             self._spin.setSuffix(suffix)
         self._spin.setButtonSymbols(QSpinBox.NoButtons)
-        self._spin.setProperty("externalButtons", True)  # theme gives the hidden arrows a size, see puppi3s_neewerlux_theme
+        self._spin.setProperty("externalButtons", True)  # theme gives the hidden arrows a size, see puppi3lux_theme
         self._spin.valueChanged.connect(self.valueChanged.emit)
 
         btnStyle = "QPushButton { font-size: 14px; font-weight: bold; min-width: 28px; }"
@@ -1183,7 +1183,7 @@ class PaletteEditor(QWidget):
             self._edited()
 
 
-# The Pattern choices, as puppi3s_neewerlux_nanoleaf.PATTERNS (kept here so the UI does not import it).
+# The Pattern choices, as puppi3lux_nanoleaf.PATTERNS (kept here so the UI does not import it).
 LIGHT_PATTERNS = ["Light order", "Left to right", "Right to left", "Top to bottom", "Bottom to top", "Centre out", "Edges in", "Around", "Random"]
 
 
@@ -1276,7 +1276,7 @@ class Ui_MainWindow(object):
         # === WINDOW ===
         MainWindow.setMinimumSize(780, 620)
         MainWindow.resize(900, 800)
-        MainWindow.setWindowTitle("Puppi3's NeewerLux")
+        MainWindow.setWindowTitle("Puppi3Lux")
 
         self.centralwidget = QWidget(MainWindow)
         MainWindow.setCentralWidget(self.centralwidget)
@@ -1856,7 +1856,7 @@ class Ui_MainWindow(object):
         self.globalPrefsLay.addRow(QLabel("<br><strong>Logging</strong>"))
         self.enableLogTab_check = QCheckBox("Enable Log tab (show debug output in GUI)")
         self.enableLogTab_check.setChecked(True)
-        self.logToFile_check = QCheckBox("Also write log to file (light_prefs/Puppi3sNeewerLux.log)")
+        self.logToFile_check = QCheckBox("Also write log to file (light_prefs/Puppi3Lux.log)")
         self.logHeartbeat_check = QCheckBox("Log a background heartbeat every 30 seconds")
         self.globalPrefsLay.addRow(self.enableLogTab_check)
         self.globalPrefsLay.addRow(self.logToFile_check)
@@ -1891,14 +1891,14 @@ class Ui_MainWindow(object):
         infoLay.addWidget(self.updateBanner)
 
         self.checkUpdateButton = QPushButton("Check for Updates")
-        self.checkUpdateButton.setToolTip("Check GitHub for a newer version of Puppi3's NeewerLux")
+        self.checkUpdateButton.setToolTip("Check GitHub for a newer version of Puppi3Lux")
         infoLay.addWidget(self.checkUpdateButton)
 
         self.infoText = QTextBrowser()
         self.infoText.setReadOnly(True)
         self.infoText.setOpenExternalLinks(True)
         self.infoText.setHtml("""
-<h2>Puppi3's NeewerLux {VERSION}</h2>
+<h2>Puppi3Lux {VERSION}</h2>
 
 <h3>Lights</h3>
 <p>Scan for Neewer lights over Bluetooth and control them in CCT, HSI, or Scene mode.
@@ -1941,7 +1941,7 @@ copied between installations.</p>
 <hr>
 
 <h3>HTTP reference</h3>
-<p><b>Base URL:</b> <code>http://localhost:8080/Puppi3sNeewerLux/doAction?</code></p>
+<p><b>Base URL:</b> <code>http://localhost:8080/Puppi3Lux/doAction?</code></p>
 <table cellpadding="4">
 <tr><td><b>discover</b></td><td>Scan for new lights</td></tr>
 <tr><td><b>link=N</b></td><td>Connect to light N, or <code>all</code></td></tr>
@@ -1957,15 +1957,15 @@ copied between installations.</p>
 <tr><td><b>stop_animate</b></td><td>Stop the running animation</td></tr>
 <tr><td><b>list / list_json</b></td><td>List lights, presets, and animations</td></tr>
 </table>
-<p>POST to <code>/Puppi3sNeewerLux/batch</code> for multi-light JSON commands, or to
-<code>/Puppi3sNeewerLux/animate</code> for JSON animation control.</p>
+<p>POST to <code>/Puppi3Lux/batch</code> for multi-light JSON commands, or to
+<code>/Puppi3Lux/animate</code> for JSON animation control.</p>
 
 <hr>
 
 <p style="color:#888; font-size:0.9em;">
-<b>Repository:</b> <a href="https://github.com/puppi3-music/NeewerLux/">github.com/puppi3-music/NeewerLux</a><br>
-<b>Releases:</b> <a href="https://github.com/puppi3-music/NeewerLux/releases">github.com/puppi3-music/NeewerLux/releases</a><br><br>
-Puppi3's NeewerLux by puppi3-music. Licensed under AGPL-3.0.<br>
+<b>Repository:</b> <a href="https://github.com/puppi3-music/Puppi3Lux/">github.com/puppi3-music/Puppi3Lux</a><br>
+<b>Releases:</b> <a href="https://github.com/puppi3-music/Puppi3Lux/releases">github.com/puppi3-music/Puppi3Lux/releases</a><br><br>
+Puppi3Lux by puppi3-music. Licensed under AGPL-3.0.<br>
 Fork of NeewerLux by <a href="https://github.com/poizenjam/NeewerLux/">PoizenJam</a>.
 Based on <a href="https://github.com/taburineagle/NeewerLite-Python/">NeewerLite-Python</a> (v0.12d) by Zach Glenwright.
 Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by Xu Lian.
@@ -1997,7 +1997,7 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         self.ColorModeTabWidget.addTab(self.logTab, "Log")
 
         # --- SOUND REACTIVE ---
-        # Added last so the indexes of the tabs above (used throughout Puppi3sNeewerLux.py) stay the same.
+        # Added last so the indexes of the tabs above (used throughout Puppi3Lux.py) stay the same.
         self.soundTab = QWidget()
         sndLay = QVBoxLayout(self.soundTab)
         sndLay.setContentsMargins(10, 10, 10, 10)
@@ -2191,7 +2191,7 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
             "Standard: at most 4. A flashing-lights notice is still recommended.\n"
             "Show: at most 10 in bursts of about 4 s, then 4 until about 8 s below that have passed. Only with a notice posted.\n"
             "Off: no limit at all, only with a notice posted.\n"
-            "Show and Off go back to Standard each time Puppi3's NeewerLux starts.")
+            "Show and Off go back to Standard each time Puppi3Lux starts.")
         flashL = QLabel("Flash limit:"); flashL.setFont(mainFont); flashL.setToolTip(self.soundFlashLevelCombo.toolTip()); sg.addWidget(flashL, 15, 2)
         sg.addWidget(self.soundFlashLevelCombo, 15, 3)
         sndLay.addLayout(sg)
@@ -2248,4 +2248,4 @@ Originally from <a href="https://github.com/keefo/NeewerLite">NeewerLite</a> by 
         # === STATUS BAR ===
         self.statusBar = QStatusBar()
         MainWindow.setStatusBar(self.statusBar)
-        self.statusBar.showMessage("Welcome to Puppi3's NeewerLux!")
+        self.statusBar.showMessage("Welcome to Puppi3Lux!")

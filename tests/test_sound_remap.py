@@ -6,7 +6,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import puppi3s_neewerlux_audio as audio
+import puppi3lux_audio as audio
 
 
 class RemapLightsTest(unittest.TestCase):

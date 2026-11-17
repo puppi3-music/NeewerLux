@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (c) 2026 puppi3-music
-"""MIDI clock input for the Sound tab of Puppi3's NeewerLux.
+"""MIDI clock input for the Sound tab of Puppi3Lux.
 
 DJ software and drum machines can send MIDI clock: 24 ticks per beat plus Start,
 Stop and Continue messages. Following it gives the exact tempo and beat position,

@@ -1,4 +1,4 @@
-"""Nanoleaf panel support for Puppi3's NeewerLux.
+"""Nanoleaf panel support for Puppi3Lux.
 
 Drives Nanoleaf panel controllers (Shapes, Canvas, Lines, Elements, Light Panels) through
 their local Open API: HTTP on port 16021 for state, UDP extControl streaming for per-panel

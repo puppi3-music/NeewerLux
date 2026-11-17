@@ -15,11 +15,11 @@ sys.path.insert(0, HERE)
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import puppi3s_neewerlux_nanoleaf as nl  # noqa: E402
+import puppi3lux_nanoleaf as nl  # noqa: E402
 from test_app_nanoleaf import AppTestCase, app  # noqa: E402
 
 
-@unittest.skipIf(app is None, "Puppi3sNeewerLux.py could not be imported")
+@unittest.skipIf(app is None, "Puppi3Lux.py could not be imported")
 class SmoothingTests(unittest.TestCase):
     KEYFRAMES = [{"hold_ms": 800, "fade_ms": 200}, {"hold_ms": 1000, "fade_ms": 0}]
 
@@ -67,7 +67,7 @@ class Row:
         self.address = address
 
 
-@unittest.skipIf(app is None, "Puppi3sNeewerLux.py could not be imported")
+@unittest.skipIf(app is None, "Puppi3Lux.py could not be imported")
 class RandomPatternTests(unittest.TestCase):
     def setUp(self):
         lights = [[Row("AA:%02d" % i)] for i in range(8)]
@@ -87,7 +87,7 @@ class RandomPatternTests(unittest.TestCase):
         self.assertIn("Random", nl.PATTERNS)
 
 
-@unittest.skipIf(app is None, "Puppi3sNeewerLux.py could not be imported")
+@unittest.skipIf(app is None, "Puppi3Lux.py could not be imported")
 class HTTPAcceptedIPTests(unittest.TestCase):
     def check(self, allowed, ip):
         with mock.patch.object(app, "acceptable_HTTP_IPs", allowed):
@@ -113,7 +113,7 @@ class HTTPAcceptedIPTests(unittest.TestCase):
 class PanelChangeTests(AppTestCase):
     def setUp(self):
         super().setUp()
-        patcher = mock.patch.object(sys, "argv", [os.path.join(self.tmp.name, "Puppi3sNeewerLux.py")])
+        patcher = mock.patch.object(sys, "argv", [os.path.join(self.tmp.name, "Puppi3Lux.py")])
         patcher.start()
         self.addCleanup(patcher.stop)
         for name, value in (("lightAliases", {}), ("preAnimationStates", {}), ("animationRunning", False)):
