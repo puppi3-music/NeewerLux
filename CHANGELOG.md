@@ -2,6 +2,15 @@
 
 Changes relative to upstream [NeewerLite-Python v0.12d](https://github.com/taburineagle/NeewerLite-Python).
 
+## v1.5.2 - 2026-11-19
+
+### Added
+- **Remove lights from the light list.** Select one or more lights and click **Remove from light list…** in Light Preferences, or right-click the light table. Removed lights are unlinked and taken out of the table, and scans leave them out from then on. They're kept in `light_prefs/removed_lights.json`. To bring them back, right-click the light table and choose **Restore removed lights**, which scans straight away.
+
+### Fixed
+- **A Nanoleaf that stops answering no longer holds up every other light.** All lights are sent to from one thread, so each panel's write, or each status poll, used to wait out a 3-second timeout. Now, once the device misses a call, further calls to it fail at once for 30 seconds. An unlinked Nanoleaf is checked on a thread of its own before it's linked again automatically.
+- **After a missed call, a Nanoleaf gets its effect back when sound or an animation stops.** If the device had missed a single call (a status poll or stream check) in the 30 seconds before, putting back the effect from before streaming failed straight away. The panels stayed on the last streamed colours. Putting the effect back now always asks the device, and if that fails, the next session's stop tries again.
+
 ## v1.5.1 - 2026-11-17
 
 ### Changed
