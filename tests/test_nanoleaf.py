@@ -564,6 +564,43 @@ class FakeControllerTests(unittest.TestCase):
         self.assertEqual(self.fake.lastStatePut()["hue"], {"value": 123})
         self.assertEqual(self.fake.state["brightness"]["value"], 60)
 
+    def test_restore_after_missed_call(self):
+        # a status poll or stream check that went unanswered a moment ago must not stop the effect coming back
+        self.fake.effect = "*Solid*"
+        self.fake.state["colorMode"] = "hs"
+        self.fake.state["hue"]["value"] = 123
+        c = self.makeController(perPanel=True)
+
+        async def run():
+            await c.loadLayout()
+            client = nl.NanoleafClient(c.devices()[0])
+            await client.connect()
+            await client.write_gatt_char(UUID, hsiBytes(0, 100, 100))
+            await asyncio.to_thread(self.fake.waitForFrames, 1)
+            c._unreachableUntil = time.monotonic() + 60
+            await client.disconnect()
+
+        asyncio.run(run())
+        self.assertEqual(self.fake.lastStatePut()["hue"], {"value": 123})
+
+    def test_failed_restore_is_kept(self):
+        c = self.makeController(perPanel=True)
+
+        async def run():
+            await c.loadLayout()
+            client = nl.NanoleafClient(c.devices()[0])
+            await client.connect()
+            await client.write_gatt_char(UUID, hsiBytes(0, 100, 100))
+            await asyncio.to_thread(self.fake.waitForFrames, 1)
+            saved = c._saved
+            port, c.port = c.port, 1  # nothing listens there
+            with self.assertRaises(nl.NanoleafError):
+                await c.stopStreaming()
+            self.assertEqual(c._saved, saved)  # the next stream's stop puts it back
+            c.port = port
+
+        asyncio.run(run())
+
     def test_whole_device_colour_joins_stream(self):
         c = self.makeController(perPanel=True)
 
