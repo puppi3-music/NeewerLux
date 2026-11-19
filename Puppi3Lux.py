@@ -314,6 +314,8 @@ soundLatestLock = threading.Lock()
 nanoleafPerPanelRequests = []  # (Nanoleaf device id, perPanel) for the worker to apply, see setNanoleafPerPanel
 nanoleafPerPanelLock = threading.Lock()
 nanoleafUnpairRequests = []  # Nanoleaf device ids for the worker to forget, see unpairNanoleaf (under nanoleafPerPanelLock)
+removeLightRequests = []  # lists of light addresses for the worker to remove, see removeLights (under nanoleafPerPanelLock)
+removedLights = set()  # upper-case addresses taken out of the light list; scans leave them out (light_prefs/removed_lights.json)
 animParallelWrites = True  # send BLE commands to all lights simultaneously during animations
 animRevertOnFinish = True  # revert lights to pre-animation state when a non-looping animation finishes
 preAnimationStates = {}    # {light_index: byte_list} saved before animation starts
@@ -1819,6 +1821,9 @@ try: # try to load the GUI
             self.saveLightPrefsButton.clicked.connect(self.checkLightPrefs)
             self.nanoleafPerPanelCheck.clicked.connect(self.toggleNanoleafPerPanel)
             self.nanoleafUnpairButton.clicked.connect(self.unpairSelectedNanoleaf)
+            self.removeLightButton.clicked.connect(self.removeSelectedLights)
+            self.lightTable.setContextMenuPolicy(Qt.CustomContextMenu)
+            self.lightTable.customContextMenuRequested.connect(self._lightTableContextMenu)
 
             self.resetGlobalPrefsButton.clicked.connect(lambda: self.setupGlobalLightPrefsTab(True))
             self.saveGlobalPrefsButton.clicked.connect(self.saveGlobalPrefs)
@@ -2320,6 +2325,54 @@ try: # try to load the GUI
                 showAnimationStopped()
             requestNanoleafUnpair(controller.id)
             self.statusBar.showMessage("Unpairing " + controller.name + "...")
+
+        def _lightTableContextMenu(self, pos):
+            menu = QMenu(self)
+            removeAction = menu.addAction("Remove from light list…")
+            removeAction.setEnabled(bool(self.selectedLights()))
+            restoreAction = menu.addAction("Restore removed lights (" + str(len(removedLights)) + ")…")
+            restoreAction.setEnabled(bool(removedLights))
+            try:
+                action = menu.exec(self.lightTable.viewport().mapToGlobal(pos))
+            except AttributeError:
+                action = menu.exec_(self.lightTable.viewport().mapToGlobal(pos))
+            if action == removeAction:
+                self.removeSelectedLights()
+            elif action == restoreAction:
+                self.restoreRemovedLights()
+
+        def removeSelectedLights(self):
+            rows = [a for a in self.selectedLights() if a < len(availableLights)]
+            if not rows:
+                self.statusBar.showMessage("Select the light(s) to remove")
+                return
+            names = [availableLights[a][2] or availableLights[a][0].name for a in rows]
+            shown = "\n".join("  " + n for n in names[:10]) + ("\n  ...and " + str(len(names) - 10) + " more" if len(names) > 10 else "")
+            answer = QMessageBox.question(self, "Remove lights",
+                "Remove " + ("this light" if len(rows) == 1 else "these " + str(len(rows)) + " lights") + " from the light list?\n\n"
+                + shown + "\n\nScans will leave " + ("it" if len(rows) == 1 else "them") + " out until you restore removed lights "
+                "(right-click the light table).",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if answer != QMessageBox.Yes:
+                return
+            if soundEngine is not None and soundEngine.running:
+                self.soundStop()
+            if animationRunning:
+                stopAnimation()
+                showAnimationStopped()
+            requestRemoveLights([availableLights[a][0].address for a in rows])
+            self.statusBar.showMessage("Removing " + str(len(rows)) + " light(s)...")
+
+        def restoreRemovedLights(self):
+            if not removedLights:
+                return
+            answer = QMessageBox.question(self, "Restore removed lights",
+                "Bring back the " + str(len(removedLights)) + " removed light(s)?\n\n" + "\n".join(sorted(removedLights)[:15])
+                + "\n\nThis scans for lights straight away.", QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+            if answer != QMessageBox.Yes:
+                return
+            restoreRemovedLights()
+            self.startSelfSearch()
 
         def checkLightPrefsEnables(self): # enable/disable fields when clicking on checkboxes
             # allow/deny typing in the "custom name" field if the option is clicked
@@ -5243,6 +5296,8 @@ async def findDevices():
         scan_results = {}
 
     for addr, (d, adv) in scan_results.items(): # go through all of the devices Bleak just found
+        if isRemovedLight(d.address): # taken out of the light list by the user
+            continue
         if d.address in whiteListedMACs: # if the MAC address is in the list of whitelisted addresses, add this device
             printDebugString("Matching whitelisted address found - " + returnMACname() + " " + d.address + ", adding to the list")
             currentScan.append((d, adv))
@@ -5319,7 +5374,7 @@ def addNanoleafLights():
     known = {light[0].address for light in availableLights}
     for controller in nanoleafControllers.values():
         for device in controller.devices():
-            if device.address in known:
+            if device.address in known or isRemovedLight(device.address):
                 continue
             printDebugString("Adding Nanoleaf [" + device.name + "] " + device.address + " at " + controller.ip)
             availableLights.append(nanoleafLightEntry(device))
@@ -5401,6 +5456,36 @@ def setNanoleafPerPanel(_loop, deviceId, perPanel, updateGUI=True):
 NANOLEAF_LAYOUT_CHECK = 5.0  # seconds between looks at a linked per-panel Nanoleaf's layout for panels added or taken off
 NANOLEAF_CHECK_BACKOFF = 60.0  # seconds a Nanoleaf that failed a check is left alone: each try can hold the worker for its timeout
 nanoleafCheckBackoff = {}  # Nanoleaf device id -> time.monotonic() before which the timed checks skip it
+
+NANOLEAF_PROBE_INTERVAL = 15.0  # seconds between reachability probes of an unlinked Nanoleaf, see nanoleafReadyToConnect
+nanoleafProbes = {}  # Nanoleaf device id -> {"ok", "at", "running"}
+
+def _nanoleafProbe(controller, state):
+    ok = False
+    try:
+        ok = controller.probeSync()
+    except Exception as e:
+        printDebugString("Nanoleaf [" + controller.name + "] probe failed: " + str(e))
+    state["ok"], state["at"], state["running"] = ok, time.monotonic(), False
+    if ok:
+        workerWakeEvent.set()
+
+def nanoleafReadyToConnect(controller):
+    """For auto-reconnect: True when linking this Nanoleaf should work now. Linking one that does not answer holds
+    the worker (and every other light's sends) for its retries and timeouts, so reachability is checked on a
+    thread of its own first; until that says yes, this returns False and starts a probe now and then."""
+    if controller._clients:  # some rows are linked already: linking more needs no network
+        return True
+    state = nanoleafProbes.setdefault(controller.id, {"ok": False, "at": float("-inf"), "running": False})
+    if state["running"]:
+        return False
+    if state["ok"]:
+        state["ok"] = False  # used up: if linking still fails, the next try probes again
+        return True
+    if time.monotonic() - state["at"] >= NANOLEAF_PROBE_INTERVAL:
+        state["running"] = True
+        threading.Thread(target=_nanoleafProbe, args=(controller, state), name="nanoleafProbe", daemon=True).start()
+    return False
 
 def _nanoleafCheckDue(controller):
     return time.monotonic() >= nanoleafCheckBackoff.get(controller.id, 0.0)
@@ -5553,6 +5638,69 @@ def unpairNanoleaf(_loop, deviceId, updateGUI=True):
         mainWindow._lightsChangedSignal.emit()
         mainWindow._statusMessageSignal.emit("Unpaired " + controller.name)
     return True
+
+def removedLightsPath():
+    return os.path.join(lightPrefsDir(), "removed_lights.json")
+
+def loadRemovedLights():
+    """Read light_prefs/removed_lights.json into removedLights. A missing or broken file means none removed."""
+    global removedLights
+    try:
+        with open(removedLightsPath(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        removedLights = {str(a).upper() for a in data} if isinstance(data, list) else set()
+    except (OSError, ValueError):
+        removedLights = set()
+
+def saveRemovedLights():
+    path = removedLightsPath()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(sorted(removedLights), f, indent=2)
+    os.replace(tmp, path)
+
+def isRemovedLight(address):
+    return str(address).upper() in removedLights
+
+def requestRemoveLights(addresses):
+    """Ask the worker thread to take these lights out of the light list (see removeLights). Stops animations and
+    sound first, since the rows are about to move."""
+    stopAnimation()
+    stopSoundReactive()
+    with nanoleafPerPanelLock:
+        removeLightRequests.append(list(addresses))
+    workerWakeEvent.set()
+
+def removeLights(_loop, addresses, updateGUI=True):
+    """Unlink the lights with these addresses, drop their rows and remember them in removed_lights.json, so scans
+    leave them out until restoreRemovedLights. Runs on the worker thread. Rows are found by address, as they
+    may have moved since the request. Returns how many rows were removed."""
+    wanted = {str(a).upper() for a in addresses}
+    removedLights.update(wanted)
+    try:
+        saveRemovedLights()
+    except OSError as e:
+        printDebugString("Could not save removed_lights.json: " + str(e) + " (the lights come back on the next start)")
+    with soundLatestLock:
+        soundLatestLights.clear()
+    rows = [i for i, light in enumerate(availableLights) if light[0].address.upper() in wanted]
+    if rows:
+        _loop.run_until_complete(parallelAction("disconnect", rows, False))
+        _remapPreAnimationStates(lambda: [availableLights.pop(i) for i in reversed(rows)])
+    printDebugString("Removed " + str(len(rows)) + " light(s) from the light list: " + ", ".join(sorted(wanted)))
+    if updateGUI and mainWindow is not None:
+        mainWindow._lightsChangedSignal.emit()
+        mainWindow._statusMessageSignal.emit("Removed " + str(len(rows)) + " light(s) from the light list")
+    return len(rows)
+
+def restoreRemovedLights():
+    """Forget every removed light, so the next scan lists them again."""
+    removedLights.clear()
+    try:
+        saveRemovedLights()
+    except OSError as e:
+        printDebugString("Could not save removed_lights.json: " + str(e))
 
 def findNanoleafDevice(address):
     """The NanoleafDevice for an NL: address, from the saved devices, or None."""
@@ -6110,6 +6258,16 @@ def workerThread(_loop):
 
                 lightsNeedingReconnect = [] # collect lights that need reconnection this cycle
                 anyConnected = False
+                nanoleafReady = {}  # one decision per Nanoleaf this cycle, so all its panels link together
+
+                def canAutoReconnect(a):
+                    device = availableLights[a][0]
+                    if nanoleaf is None or not isinstance(device, nanoleaf.NanoleafDevice):
+                        return True
+                    cid = device.controller.id
+                    if cid not in nanoleafReady:
+                        nanoleafReady[cid] = nanoleafReadyToConnect(device.controller)
+                    return nanoleafReady[cid]
 
                 # CHECK EACH LIGHT AGAINST THE TABLE TO SEE IF THERE ARE CONNECTION ISSUES
                 for a in range(len(availableLights)):
@@ -6120,7 +6278,7 @@ def workerThread(_loop):
                                 availableLights[a][1] = "" # clear the Bleak object
 
                                 # Queue this light for auto-reconnect if enabled
-                                if autoReconnectOnDisconnect and a not in reconnectCooldown:
+                                if autoReconnectOnDisconnect and a not in reconnectCooldown and canAutoReconnect(a):
                                     lightsNeedingReconnect.append(a)
                                     reconnectCooldown[a] = 20  # cooldown: skip ~20 cycles (~60s) before retrying this light again
                                     printDebugString("Light " + str(a + 1) + " disconnected - will attempt auto-reconnect")
@@ -6141,7 +6299,7 @@ def workerThread(_loop):
                                     if hasGUI: mainWindow._tableUpdateSignal.emit(["", "", "LINKED", "Waiting to send..."], a)
                         else:
                             # Bleak object is empty - light was previously cleared; check cooldown for retry
-                            if autoReconnectOnDisconnect and a not in reconnectCooldown:
+                            if autoReconnectOnDisconnect and a not in reconnectCooldown and canAutoReconnect(a):
                                 lightsNeedingReconnect.append(a)
                                 reconnectCooldown[a] = 20
 
@@ -6200,6 +6358,14 @@ def workerThread(_loop):
                     unpairNanoleaf(_loop, deviceId, hasGUI)
                 except Exception as e:
                     printDebugString("Unpairing the Nanoleaf failed: " + str(e))
+            with nanoleafPerPanelLock:
+                removeRequests = list(removeLightRequests)
+                removeLightRequests.clear()
+            for addresses in removeRequests:
+                try:
+                    removeLights(_loop, addresses, hasGUI)
+                except Exception as e:
+                    printDebugString("Removing lights failed: " + str(e))
             if time.monotonic() >= nextLayoutCheck:  # panels added to (or taken off) a Nanoleaf in use
                 nextLayoutCheck = time.monotonic() + NANOLEAF_LAYOUT_CHECK
                 before = len(availableLights)
@@ -6213,7 +6379,7 @@ def workerThread(_loop):
                     printDebugString("Nanoleaf layout check failed: " + str(e))
                 if len(availableLights) != before:
                     reconnectCooldown.clear()
-            if perPanelRequests or unpairRequests:
+            if perPanelRequests or unpairRequests or removeRequests:
                 reconnectCooldown.clear() # keyed by row index, and the rows have moved
 
         if threadAction == "":  # sound frames: however many arrived during the last write, only the newest colours go out
@@ -8781,6 +8947,7 @@ if __name__ == '__main__':
 
     singleInstanceLock() # make a lockfile if one doesn't exist yet, and quit out if one does
     seedBundledPrefs() # macOS app: shipped presets and animations, from the bundle to Application Support
+    loadRemovedLights() # lights the user took out of the light list stay out of scans
     migrateRenamedPrefsFiles() # pick up settings saved under the old Puppi3sNeewerLux or NeewerLux names
 
     if os.path.exists(globalPrefsFile):

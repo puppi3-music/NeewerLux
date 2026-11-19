@@ -341,6 +341,111 @@ class PairDialogTests(AppTestCase):
         self.assertIn("already added", dlg.foundList.item(0).text())
 
 
+class ReconnectProbeTests(AppTestCase):
+    """Auto-reconnect links a Nanoleaf only once a probe on its own thread found it answering."""
+
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.object(app, "nanoleafProbes", {})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def waitProbe(self, controller):
+        end = time.monotonic() + 5
+        while app.nanoleafProbes[controller.id]["running"] and time.monotonic() < end:
+            time.sleep(0.02)
+
+    def test_unanswering_device_is_not_linked_on_the_worker(self):
+        self.save()
+        self.run_(app.findDevices())
+        controller = app.availableLights[0][0].controller
+        controller.port = 1  # nothing listens here
+        controller.relocateHosts = []
+        t = time.monotonic()
+        self.assertFalse(app.nanoleafReadyToConnect(controller))  # starts the probe and returns at once
+        self.assertLess(time.monotonic() - t, 0.5)
+        self.waitProbe(controller)
+        self.assertFalse(app.nanoleafReadyToConnect(controller))  # probe said no, and is not repeated straight away
+        self.assertFalse(app.nanoleafProbes[controller.id]["running"])
+
+    def test_answering_device_is_linked_after_its_probe(self):
+        self.save()
+        self.run_(app.findDevices())
+        controller = app.availableLights[0][0].controller
+        self.assertFalse(app.nanoleafReadyToConnect(controller))
+        self.waitProbe(controller)
+        self.assertTrue(app.nanoleafReadyToConnect(controller))
+        self.assertFalse(app.nanoleafReadyToConnect(controller))  # used up
+
+    def test_probe_finds_a_moved_device(self):
+        self.save(ip="127.0.0.2")
+        self.run_(app.findDevices())
+        controller = app.availableLights[0][0].controller
+        controller.relocateHosts = ["127.0.0.1"]
+        self.assertTrue(controller.probeSync(timeout=0.5))
+        self.assertEqual(controller.ip, "127.0.0.1")
+
+
+class FakeBLEDevice:
+    def __init__(self, address, name):
+        self.address, self.name, self.details, self.rssi = address, name, None, -60
+
+
+class RemoveLightTests(AppTestCase):
+    """Lights taken out of the light list stay out of scans until restored."""
+
+    def setUp(self):
+        super().setUp()
+        path = os.path.join(self.tmp.name, "removed_lights.json")
+        for patcher in (mock.patch.object(app, "removedLightsPath", lambda: path),
+                        mock.patch.object(app, "removedLights", set())):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        ble = FakeBLEDevice("AA:BB:CC:DD:EE:01", "NEEWER-RGB660")
+
+        async def oneBluetoothLight(*args, **kwargs):
+            return {ble.address: (ble, None)}
+
+        patcher = mock.patch.object(app.BleakScanner, "discover", oneBluetoothLight)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        nl.saveSaved([{"id": "S12345", "name": "Fake Shapes", "model": "NL42", "ip": "127.0.0.1", "port": self.fake.port,
+                       "token": TOKEN, "perPanel": True, "panels": [5002, 5003, 5001]}], self.saved)
+
+    def addresses(self):
+        return [row[0].address for row in app.availableLights]
+
+    def test_removed_lights_stay_out_until_restored(self):
+        self.run_(app.findDevices())
+        self.assertEqual(len(app.availableLights), 4)
+        self.assertEqual(app.removeLights(self.loop, ["aa:bb:cc:dd:ee:01", "NL:S12345-P5003"], False), 2)
+        self.assertEqual(self.addresses(), ["NL:S12345-P5002", "NL:S12345-P5001"])
+
+        # remembered across a restart, and a rescan leaves them out
+        app.removedLights.clear()
+        app.loadRemovedLights()
+        self.assertEqual(app.removedLights, {"AA:BB:CC:DD:EE:01", "NL:S12345-P5003"})
+        self.run_(app.findDevices())
+        self.assertEqual(self.addresses(), ["NL:S12345-P5002", "NL:S12345-P5001"])
+
+        app.restoreRemovedLights()
+        self.run_(app.findDevices())
+        self.assertEqual(sorted(self.addresses()),
+                         ["AA:BB:CC:DD:EE:01", "NL:S12345-P5001", "NL:S12345-P5002", "NL:S12345-P5003"])
+        app.loadRemovedLights()
+        self.assertEqual(app.removedLights, set())
+
+    def test_removing_a_linked_light_unlinks_it(self):
+        self.run_(app.findDevices())
+        rows = [i for i, row in enumerate(app.availableLights) if row[0].address.startswith("NL:")]
+        self.run_(app.parallelAction("connect", rows, False))
+        controller = app.nanoleafControllers["S12345"]
+        self.assertEqual(len(controller._clients), 3)
+        app.removeLights(self.loop, ["NL:S12345-P5002", "NL:S12345-P5003", "NL:S12345-P5001"], False)
+        self.assertEqual(len(controller._clients), 0)
+        self.assertEqual(self.addresses(), ["AA:BB:CC:DD:EE:01"])
+
+
 @unittest.skipIf(app is None or getattr(app, "importError", 1) != 0, "the GUI could not be imported")
 class LightTableGroupTests(AppTestCase):
     """A device shown one row per panel is listed as a collapsible group in the light table."""

@@ -39,6 +39,9 @@ STREAM_RETRY = 30.0  # after the device refused to stream, PUT for this long bef
 # Streamed frames change the panels at once (no fade). A Shapes set showed clean red/blue swaps at 30 a second
 # this way, so a streaming device keeps up with the sound engine's fastest rate.
 STREAM_INTERVAL = 1 / 30  # seconds per frame a streaming device can show, for the sound engine
+# After the device stops answering, calls that would wait out the HTTP timeout fail at once for this long. Every light is
+# sent to from one worker thread, so a 3 s timeout on each panel's write, or on each status poll, held every light.
+UNREACHABLE_RETRY = 30.0  # seconds
 
 CCT_MIN = 1200  # the Open API's colour temperature range
 CCT_MAX = 6500
@@ -672,6 +675,8 @@ class NanoleafController:
         self.relocateInterval = 60.0  # seconds between searches, so connect retries do not rescan every time
         self._lastRelocate = None
         self._relocating = None  # future while a search runs, shared by rows connecting at once
+        self.unreachableRetry = UNREACHABLE_RETRY  # tests change this
+        self._unreachableUntil = 0.0  # until then, calls fail at once instead of waiting for the timeout
         self.transition = 0  # stream transition time, in 100 ms steps; 0 changes the panels at once
         self.streamPort = STREAM_PORT  # tests point this at the fake
         self.streamAfter = STREAM_AFTER  # tests change these
@@ -728,11 +733,29 @@ class NanoleafController:
     def _url(self, path):
         return "http://%s:%d/api/v1/%s%s" % (self.ip, self.port, self.token, path)
 
-    async def http(self, method, path, body=None):
-        return await asyncio.to_thread(_request, method, self._url(path), body)
+    def _api(self, method, path, body=None, force=False):
+        """Blocking HTTP call to this device. Once it has not answered, further calls fail at once for
+        unreachableRetry seconds rather than each waiting out the timeout; force tries anyway."""
+        if not force:
+            wait = self._unreachableUntil - time.monotonic()
+            if wait > 0:
+                raise NanoleafUnreachable("The Nanoleaf at %s is not answering (trying again in %d s)"
+                                          % (self.ip, math.ceil(wait)))
+        try:
+            result = _request(method, self._url(path), body)
+        except NanoleafUnreachable:
+            self._unreachableUntil = time.monotonic() + self.unreachableRetry
+            raise
+        self._unreachableUntil = 0.0
+        return result
+
+    async def http(self, method, path, body=None, force=False):
+        return await asyncio.to_thread(self._api, method, path, body, force)
 
     async def loadLayout(self):
-        status, body = await self.http("GET", "/panelLayout")
+        # always really asked: it is how connecting (and the timed layout check, which backs off itself) finds the
+        # device is back
+        status, body = await self.http("GET", "/panelLayout", force=True)
         if status == 401 or status == 403:
             raise NanoleafError("The Nanoleaf rejected the saved token; pair it again.")
         if status != 200 or not isinstance(body, dict) or not isinstance(body.get("layout"), dict):
@@ -783,6 +806,7 @@ class NanoleafController:
             hit = await asyncio.to_thread(findMovedDevice, entry, self.relocateHosts)
             if hit and hit != (self.ip, self.port):
                 self.ip, self.port = hit
+                self._unreachableUntil = 0.0
                 moved = True
                 if self.savedPath is not False:
                     try:
@@ -793,6 +817,33 @@ class NanoleafController:
             self._relocating.set_result(moved)
             self._relocating = None
         return moved
+
+    def probeSync(self, timeout=2.0):
+        """Blocking, for a thread of its own: can the device be reached? Tries its saved address, then (at most
+        once per relocateInterval) looks for it at a new one, as relocate does."""
+        try:
+            with socket.create_connection((self.ip, self.port), timeout=timeout):
+                pass
+            return True
+        except OSError:
+            pass
+        now = time.monotonic()
+        if self._relocating is not None or (self._lastRelocate is not None
+                                            and now - self._lastRelocate < self.relocateInterval):
+            return False
+        self._lastRelocate = now
+        hit = findMovedDevice({"id": self.id, "token": self.token, "port": self.port}, self.relocateHosts)
+        if not hit:
+            return False
+        if hit != (self.ip, self.port):
+            self.ip, self.port = hit
+            self._unreachableUntil = 0.0
+            if self.savedPath is not False:
+                try:
+                    updateSaved(self.id, self.savedPath, ip=self.ip, port=self.port)
+                except OSError:
+                    pass
+        return True
 
     # -- connection refcount --------------------------------------------------
 
@@ -911,7 +962,8 @@ class NanoleafController:
                 continue
             try:
                 t = time.monotonic()
-                status, _ = _request("PUT", self._url("/state"), body)
+                # forced: this thread holds no other light up, and the colour should go out once the device is back
+                status, _ = self._api("PUT", "/state", body, force=True)
                 self.putTime += (time.monotonic() - t - self.putTime) * 0.3
                 if status >= 400:
                     raise NanoleafError("The Nanoleaf refused the state change (HTTP %s)" % status)
@@ -1052,8 +1104,7 @@ class NanoleafController:
         await asyncio.to_thread(self._startStreamingSync)
 
     def _startStreamingSync(self):
-        def http(method, path, body=None):
-            return _request(method, self._url(path), body)
+        http = self._api
 
         if self._saved is None:
             status, effect = http("GET", "/effects/select")
