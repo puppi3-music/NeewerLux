@@ -1,6 +1,6 @@
 [project]
 name = "puppi3lux"
-version = "1.5.1"
+version = "1.5.2"
 description = "Cross-platform control of Neewer Bluetooth LED lights and Nanoleaf panels, with a keyframe animation engine, sound reactive mode, preset system, and HTTP/web dashboard"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -1148,9 +1148,20 @@ class NanoleafController:
         if not wasStreaming or saved is None:
             return
         effect, state = saved
+        try:
+            await self._restoreSaved(effect, state)
+        except NanoleafError:
+            self._saved = saved  # still to put back: the next stream keeps it, and its stop tries again
+            raise
+
+    async def _restoreSaved(self, effect, state):
+        # The first call is forced: a single missed status poll or stream check must not leave the panels frozen
+        # on the last streamed colours for good. If it fails too, the rest fail at once (no second timeout).
         body = {}
+        forced = True
         if effect and not effect.startswith("*"):
-            await self.http("PUT", "/effects", {"select": effect})
+            await self.http("PUT", "/effects", {"select": effect}, force=True)
+            forced = False
         else:
             # *Solid* / *Static* / *Dynamic* cannot be re-selected by name; put the colour back instead
             if state.get("colorMode") == "ct" and "ct" in state:
@@ -1163,7 +1174,7 @@ class NanoleafController:
         if "on" in state:
             body["on"] = {"value": bool(state["on"].get("value"))}
         if body:
-            await self.http("PUT", "/state", body)
+            await self.http("PUT", "/state", body, force=forced)
 
 
 # ---------------------------------------------------------------------------
