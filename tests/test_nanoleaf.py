@@ -495,6 +495,56 @@ class FakeControllerTests(unittest.TestCase):
         self.assertEqual(self.fake.state["brightness"]["value"], 60)
         self.assertEqual(nl.loadSaved(self.savedPath)[0]["panels"], [5002, 5003, 5004, 5001])
 
+    def test_unanswering_device_fails_fast(self):
+        # Every light is sent to from one worker thread: a device that stopped answering must not make each panel's
+        # write, or each status poll, wait out the HTTP timeout.
+        c = self.makeController(perPanel=True)
+        calls = []
+        real = nl._request
+
+        def counting(method, url, body=None, timeout=3.0):
+            calls.append(url)
+            return real(method, url, body, timeout)
+
+        nl._request = counting
+        self.addCleanup(setattr, nl, "_request", real)
+
+        async def run():
+            await c.loadLayout()
+            clients = [nl.NanoleafClient(d) for d in c.devices()]
+            for cl in clients:
+                await cl.connect()
+            port, c.port = c.port, 1  # nothing listens there
+            calls.clear()
+            for frame in range(3):
+                for cl in clients:  # writeToLight's way: one panel after another
+                    with self.assertRaises(nl.NanoleafUnreachable):
+                        await cl.write_gatt_char(UUID, hsiBytes(frame * 40, 100, 100), False)
+            whole = nl.NanoleafClient(nl.NanoleafDevice(c))
+            whole._connected = True
+            with self.assertRaises(nl.NanoleafUnreachable):
+                await whole.write_gatt_char(UUID, bytearray([120, 133, 0, 253]))  # a status poll
+            self.assertEqual(len(calls), 1)  # only the first write asked the device
+
+            # once the wait is over it is asked again, and the panels take the newest colours
+            c.port, c._unreachableUntil = port, 0.0
+            await asyncio.gather(*[cl.write_gatt_char(UUID, hsiBytes(0, 100, 100), False) for cl in clients])
+            await asyncio.sleep(0)
+            frames = await asyncio.to_thread(self.fake.waitForFrames, 1)
+            self.assertEqual({rgb for _, rgb, _ in frames[-1]}, {(255, 0, 0)})
+            for cl in clients:
+                await cl.disconnect()
+
+        asyncio.run(run())
+
+    def test_connect_still_asks_while_unanswering(self):
+        c = self.makeController()
+        c._unreachableUntil = time.monotonic() + 60  # it failed a moment ago, but is back now
+        client = nl.NanoleafClient(nl.NanoleafDevice(c))
+        asyncio.run(client.connect())
+        self.assertTrue(client.is_connected)
+        self.assertEqual(c._unreachableUntil, 0.0)
+
     def test_restore_solid_colour(self):
         self.fake.effect = "*Solid*"
         self.fake.state["colorMode"] = "hs"

@@ -1702,6 +1702,10 @@ class Ui_MainWindow(object):
             "and tells the controller to drop this app's token. Use Add Nanoleaf to pair it again.")
         self.nanoleafUnpairButton.setVisible(False)
         lpLay.addWidget(self.nanoleafUnpairButton, alignment=Qt.AlignLeft)
+        self.removeLightButton = QPushButton("Remove from light list…")
+        self.removeLightButton.setToolTip("Takes the selected light(s) out of the light table, and scans leave them out\n"
+            "from now on. Right-click the light table to restore removed lights.")
+        lpLay.addWidget(self.removeLightButton, alignment=Qt.AlignLeft)
         lpLay.addStretch(1)
         self.saveLightPrefsButton = QPushButton("Save Preferences")
         lpLay.addWidget(self.saveLightPrefsButton, alignment=Qt.AlignRight)
